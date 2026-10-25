@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><EnableWindowsTargeting>true</EnableWindowsTargeting><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>Wisp</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Wisp.Core/Wisp.Core.csproj" /><PackageReference Include="NAudio" Version="2.2.1" /><PackageReference Include="Concentus" Version="1.1.7" /></ItemGroup>
+</Project>
