@@ -10,6 +10,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
     dotnet test tests/Wisp.Core.Tests/Wisp.Core.Tests.csproj -c $Configuration --no-restore
     if ($LASTEXITCODE -ne 0) { throw 'Core tests failed.' }
+    dotnet test tests/Wisp.Desktop.Tests/Wisp.Desktop.Tests.csproj -c $Configuration --no-restore
+    if ($LASTEXITCODE -ne 0) { throw 'Windows theme tests failed.' }
     dotnet build src/Wisp.Desktop/Wisp.Desktop.csproj -c $Configuration --no-restore
     if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed.' }
     $output = Join-Path 'artifacts' "Wisp-$Runtime"

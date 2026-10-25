@@ -4,7 +4,7 @@ using Wisp.Core;
 
 namespace Wisp.Desktop;
 
-public sealed class AuthWindow : Window
+public sealed class AuthWindow : ThemedWindow
 {
     public UserProfile? Profile { get; private set; }
     public AuthWindow(LocalStore store)
@@ -27,7 +27,7 @@ public sealed class AuthWindow : Window
     }
 }
 
-public sealed class FormDialog : Window
+public sealed class FormDialog : ThemedWindow
 {
     private readonly StackPanel panel = new() { Margin = new Thickness(24) };
     public FormDialog(Window owner, string title, double width = 460)

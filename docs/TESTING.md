@@ -9,10 +9,13 @@
 ```powershell
 dotnet restore Wisp.sln
 dotnet test tests/Wisp.Core.Tests/Wisp.Core.Tests.csproj -c Release --no-restore
+dotnet test tests/Wisp.Desktop.Tests/Wisp.Desktop.Tests.csproj -c Release --no-restore
 dotnet build src/Wisp.Desktop/Wisp.Desktop.csproj -c Release --no-restore
 ```
 
 `build.ps1` выполняет эти шаги и публикует переносимую сборку. Workflow `Windows build` делает то же на `windows-latest`, сохраняет результаты тестов и ZIP. Статус выполнения нужно смотреть у конкретного запуска GitHub Actions.
+
+`Wisp.Desktop.Tests` выполняется только на Windows: STA-тест создаёт производное окно и настоящий экран входа, проверяет тёмный фон и читаемый текст, переключение палитры уже открытых окон, восстановление сохранённого выбора и тёмную тему при отсутствии/повреждении настройки.
 
 Из Linux можно собрать проект Windows с `EnableWindowsTargeting`, но нельзя подтвердить работу WPF-интерфейса, драйверов NAudio и захвата окон. Результаты сборки сами по себе не означают успешное прохождение следующих проверок.
 

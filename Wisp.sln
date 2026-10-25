@@ -8,6 +8,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Wisp.Desktop", "src\Wisp.De
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Wisp.Core.Tests", "tests\Wisp.Core.Tests\Wisp.Core.Tests.csproj", "{3D8EE18D-D8FA-4B72-BB66-4E8666FDFF14}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Wisp.Desktop.Tests", "tests\Wisp.Desktop.Tests\Wisp.Desktop.Tests.csproj", "{618AE9FC-1CF3-4411-9CAD-8580A36992E5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,5 +28,9 @@ Global
 		{3D8EE18D-D8FA-4B72-BB66-4E8666FDFF14}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3D8EE18D-D8FA-4B72-BB66-4E8666FDFF14}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3D8EE18D-D8FA-4B72-BB66-4E8666FDFF14}.Release|Any CPU.Build.0 = Release|Any CPU
+		{618AE9FC-1CF3-4411-9CAD-8580A36992E5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{618AE9FC-1CF3-4411-9CAD-8580A36992E5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{618AE9FC-1CF3-4411-9CAD-8580A36992E5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{618AE9FC-1CF3-4411-9CAD-8580A36992E5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

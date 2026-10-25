@@ -12,6 +12,7 @@ public partial class App : System.Windows.Application
         try
         {
             store = new LocalStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Wisp"));
+            ThemeManager.Initialize(store.RootDirectory);
             var auth = new AuthWindow(store);
             if (auth.ShowDialog() != true || auth.Profile is null) { Shutdown(); return; }
             var window = new MainWindow(store, auth.Profile);

@@ -14,7 +14,7 @@ using Image = System.Windows.Controls.Image;
 
 namespace Wisp.Desktop;
 
-public sealed class MainWindow : Window
+public sealed class MainWindow : ThemedWindow
 {
     private readonly LocalStore store;
     private UserProfile profile;
@@ -44,7 +44,7 @@ public sealed class MainWindow : Window
     private Channel? selectedChannel;
     private string? voiceChannelId, sessionCommunityId, pendingAttachment;
     private string? currentInvite;
-    private bool muted, deafened, sharing, closing, light;
+    private bool muted, deafened, sharing, closing;
     private string? recordedPath;
     private bool sendingRecording;
     private IReadOnlyList<PeerPresence> presence = Array.Empty<PeerPresence>();
@@ -100,7 +100,6 @@ public sealed class MainWindow : Window
         userName.Text = profile.Username; RenderServers();
         var first = store.GetCommunities().FirstOrDefault(); if (first is not null) SetCommunity(first); else { serverTitle.Text = "Добро пожаловать"; channelTitle.Text = "Место для своих"; Notify("Создай сообщество кнопкой + слева или присоединись по приглашению ↗."); }
         UpdateStatus();
-        try { if (File.Exists(Path.Combine(store.RootDirectory, "light-theme"))) ToggleTheme(); } catch { }
     }
 
     private void EnqueueIncoming(WireMessage m)
@@ -345,7 +344,7 @@ public sealed class MainWindow : Window
             using var stream = new MemoryStream(jpeg); var image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad; image.DecodePixelWidth = 1280; image.StreamSource = stream; image.EndInit(); image.Freeze();
             if (!viewers.TryGetValue(peerId, out var view))
             {
-                var target = new Image { Stretch = Stretch.Uniform }; var name = presence.FirstOrDefault(x => x.Profile.Id == peerId)?.Profile.Username ?? "Участник"; var window = new Window { Owner = this, Title = $"{name} · Демонстрация", Width = 1000, Height = 640, Content = target }; view = (window, target); viewers[peerId] = view; window.Closed += (_, _) => viewers.Remove(peerId); window.Show();
+                var target = new Image { Stretch = Stretch.Uniform }; var name = presence.FirstOrDefault(x => x.Profile.Id == peerId)?.Profile.Username ?? "Участник"; var window = new ThemedWindow { Owner = this, Title = $"{name} · Демонстрация", Width = 1000, Height = 640, Content = target }; view = (window, target); viewers[peerId] = view; window.Closed += (_, _) => viewers.Remove(peerId); window.Show();
             }
             view.Image.Source = image;
         }
@@ -405,9 +404,8 @@ public sealed class MainWindow : Window
     private static BitmapImage LoadImage(string path, int width) { using var stream = File.OpenRead(path); var b = new BitmapImage(); b.BeginInit(); b.CacheOption = BitmapCacheOption.OnLoad; b.DecodePixelWidth = width; b.StreamSource = stream; b.EndInit(); b.Freeze(); return b; }
     private void ToggleTheme()
     {
-        light = !light; var colors = light ? new[] { "#FFFFFF", "#F1F2F6", "#E2E3EC", "#181923", "#626577", "#6350DA" } : new[] { "#000000", "#101114", "#1C1D23", "#EDEDF2", "#9899AA", "#8B78FF" }; var keys = new[] { "Bg", "Panel", "Card", "Fg", "Muted", "Accent" };
-        for (int i = 0; i < keys.Length; i++) System.Windows.Application.Current.Resources[keys[i]] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colors[i]));
-        var setting = Path.Combine(store.RootDirectory, "light-theme"); if (light) File.WriteAllText(setting, "1"); else File.Delete(setting); sounds.Play("message");
+        ThemeManager.Toggle();
+        sounds.Play("message");
     }
     private async void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
