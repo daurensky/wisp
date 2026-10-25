@@ -40,7 +40,7 @@ public sealed class LocalStoreTests : IDisposable
         using var store = new LocalStore(directory);
         store.Register("alice", "same password");
         store.Register("bobby", "same password");
-        using var database = new SqliteConnection($"Data Source={Path.Combine(directory, "wisp.db")}");
+        using var database = new SqliteConnection($"Data Source={Path.Combine(directory, "wisp.db")};Pooling=False");
         database.Open();
         using var command = database.CreateCommand();
         command.CommandText = "SELECT hex(salt),hex(password_hash),iterations FROM accounts";
