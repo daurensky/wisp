@@ -27,6 +27,7 @@ public sealed class MainWindow : ThemedWindow
     private IReadOnlyList<PeerPresence> DisplayPresence => presence.Concat(cloudPresence).GroupBy(p => p.Profile.Id).Select(g => g.First()).ToArray();
     private UserProfile profile;
     private readonly PeerNode node;
+    private readonly RtcMesh? rtc;
     private readonly VoiceService voice = new();
     private readonly VoiceRecorder recorder = new();
     private readonly ScreenShareService screen = new();
@@ -62,6 +63,7 @@ public sealed class MainWindow : ThemedWindow
     public MainWindow(LocalStore store, UserProfile profile, FirebaseBackend? cloud = null)
     {
         this.store = store; this.profile = profile; this.cloud = cloud; savedRefreshToken = cloud?.RefreshToken; node = new PeerNode(profile, store.RootDirectory);
+        rtc = cloud is null ? null : new RtcMesh(cloud);
         Title = "Wisp"; Width = 1360; Height = 860; MinWidth = 1060; MinHeight = 650; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) }); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) }); root.ColumnDefinitions.Add(new ColumnDefinition()); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) }); Content = root;
         var rail = new DockPanel { Margin = new Thickness(8, 14, 8, 8) }; root.Children.Add(rail);
@@ -87,9 +89,22 @@ public sealed class MainWindow : ThemedWindow
         composer.KeyDown += (_, e) => { if (e.Key == Key.Enter && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) { e.Handled = true; Run(SendMessage); } };
         _ = Task.Run(ProcessIncoming);
         node.MessageReceived += EnqueueIncoming;
+        if (rtc is not null)
+        {
+            rtc.MessageReceived += EnqueueIncoming;
+            rtc.Error += message => Dispatcher.BeginInvoke(() => { if (!closing) Notify(message, true); });
+            rtc.Changed += () => Dispatcher.BeginInvoke(() =>
+            {
+                if (closing) return;
+                if (!rtc.Joined) { cloudChannelId = null; if (voiceChannelId is not null) StopVoice(); }
+                var active = rtc.ConnectedPeerIds; voice.SynchronizePeers(active);
+                foreach (var id in viewers.Keys.Where(id => !active.Contains(id)).ToList()) if (viewers.Remove(id, out var gone)) gone.Window.Close();
+                UpdateStatus();
+            });
+        }
         node.PresenceChanged += p => Dispatcher.BeginInvoke(() =>
         {
-            if (closing) return; var hasNew = p.Any(x => x.Profile.Id != profile.Id && !presence.Any(old => old.Profile.Id == x.Profile.Id)); presence = p;
+            if (closing || rtc is not null) return; var hasNew = p.Any(x => x.Profile.Id != profile.Id && !presence.Any(old => old.Profile.Id == x.Profile.Id)); presence = p;
             RenderMembers(); RenderChannels(); if (voiceChannelId is not null && !p.Any(x => x.Profile.Id == profile.Id && x.VoiceChannelId == voiceChannelId)) StopVoice();
             foreach (var v in viewers.Keys.Where(id => !p.Any(x => x.Profile.Id == id && x.VoiceChannelId == voiceChannelId)).ToList()) if (viewers.Remove(v, out var gone)) gone.Window.Close();
             voice.SynchronizePeers(p.Where(x => x.VoiceChannelId == voiceChannelId && x.Profile.Id != profile.Id).Select(x => x.Profile.Id));
@@ -126,12 +141,12 @@ public sealed class MainWindow : ThemedWindow
         if (m.Type == "audio") { if (voiceChannelId == m.ChannelId) voice.Receive(m.SenderId, m.Payload); return; }
         if (m.Type == "screen")
         {
-            if (voiceChannelId != m.ChannelId || m.Payload.Length > 2 * 1024 * 1024) return;
+            if (voiceChannelId != m.ChannelId || m.Payload.Length > 2 * 1024 * 1024 || (rtc is not null && !rtc.ConnectedPeerIds.Contains(m.SenderId))) return;
             latestFrames[m.SenderId] = m;
             if (Interlocked.Exchange(ref frameScheduled, 1) == 0) Dispatcher.BeginInvoke(() =>
             {
                 Interlocked.Exchange(ref frameScheduled, 0);
-                foreach (var id in latestFrames.Keys) if (latestFrames.TryRemove(id, out var frame) && !closing && frame.ChannelId == voiceChannelId) ShowFrame(id, frame.Payload);
+                foreach (var id in latestFrames.Keys) if (latestFrames.TryRemove(id, out var frame) && !closing && frame.ChannelId == voiceChannelId && (rtc is null || rtc.ConnectedPeerIds.Contains(frame.SenderId))) ShowFrame(id, frame.Payload);
             });
             return;
         }
@@ -202,11 +217,11 @@ public sealed class MainWindow : ThemedWindow
     private void UpdateStatus() { var inVoice = voiceChannelId is not null;
         leaveButton.Visibility = inVoice || cloudChannelId is not null ? Visibility.Visible : Visibility.Collapsed;
         foreach (var button in new[] { micButton, deafenButton, shareButton }) button.Visibility = inVoice ? Visibility.Visible : Visibility.Collapsed;
-        connection.Text = voiceChannelId is not null ? "● В канале: " + (community is null ? "" : store.GetChannels(community.Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name) : cloudChannelId is not null ? "● В канале · голос ещё не подключён" : cloud is not null ? "● Firebase подключён" : node.IsConnected ? "● P2P-сессия подключена" : "○ Локальный режим"; userName.Text = profile.Username; micButton.Content = muted || deafened ? "Микр. ×" : "Микр. ✓"; deafenButton.Content = deafened ? "Звук ×" : "Звук ✓"; }
+        connection.Text = voiceChannelId is not null ? "● В канале: " + (community is null ? "" : store.GetChannels(community.Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name) + (rtc is null ? "" : $" · WebRTC: {rtc.ConnectedCount} соединений") : cloudChannelId is not null ? "● В канале · голос ещё не подключён" : cloud is not null ? "● Firebase подключён" : node.IsConnected ? "● P2P-сессия подключена" : "○ Локальный режим"; userName.Text = profile.Username; micButton.Content = muted || deafened ? "Микр. ×" : "Микр. ✓"; deafenButton.Content = deafened ? "Звук ×" : "Звук ✓"; }
     private void CreateCommunity()
     {
         var d = new FormDialog(this, "Создать сообщество"); var name = d.Field("Название"); d.Accept("Создать"); if (d.ShowDialog() != true) return;
-        if (node.IsConnected) { Notify("Сначала отключись от текущей сессии.", true); return; } SetCommunity(store.CreateCommunity(name.Text, profile.Id));
+        if (node.IsConnected || rtc?.Joined == true) { Notify("Сначала выйди из голосового канала.", true); return; } SetCommunity(store.CreateCommunity(name.Text, profile.Id));
         if (cloud is not null) Run(async () => { await cloud.CreateCommunityAsync(new CommunitySnapshot(community!, store.GetChannels(community!.Id), new List<UserProfile> { profile })); await RefreshCloud(); });
         sounds.Play("connect");
     }
@@ -224,7 +239,7 @@ public sealed class MainWindow : ThemedWindow
     private async Task JoinCommunity()
     {
         EnsureNoRecording();
-        var d = new FormDialog(this, "Присоединиться"); var invite = d.Field(cloud is null ? "Приглашение wisp://" : "Приглашение wisp-cloud:", "", true); d.Note(cloud is null ? "Для голоса нужен прямой доступ к компьютеру друга." : "Приглашение даёт доступ к сообществу и чату. Голос пока требует прямого соединения; WebRTC/TURN ещё не подключены."); d.Accept("Подключиться"); if (d.ShowDialog() != true) return;
+        var d = new FormDialog(this, "Присоединиться"); var invite = d.Field(cloud is null ? "Приглашение wisp://" : "Приглашение wisp-cloud:", "", true); d.Note(cloud is null ? "Для голоса нужен прямой доступ к компьютеру друга." : "Приглашение даёт доступ к сообществу и чату. Голос использует WebRTC с Google STUN без TURN. В некоторых сетях прямое соединение невозможно."); d.Accept("Подключиться"); if (d.ShowDialog() != true) return;
         IsEnabled = false;
         try { await Disconnect();
             if (cloud is not null && invite.Text.Trim().StartsWith("wisp-cloud:"))
@@ -233,6 +248,7 @@ public sealed class MainWindow : ThemedWindow
                 var snapshot = await cloud.GetAsync<CommunitySnapshot>($"communities/{id}/snapshot") ?? throw new InvalidOperationException("Сообщество не найдено.");
                 store.SaveSnapshot(snapshot); store.UpsertMember(snapshot.Community.Id, profile); SetCommunity(snapshot.Community); await RefreshCloud(); return;
             }
+            if (cloud is not null) throw new ArgumentException("Используй приглашение wisp-cloud: для сообщества Firebase.");
             await node.JoinAsync(invite.Text.Trim()); sounds.Play("connect"); UpdateStatus(); await Dispatcher.InvokeAsync(() => { }); await PublishProfile(); }
         finally { if (!closing) IsEnabled = true; }
     }
@@ -244,16 +260,21 @@ public sealed class MainWindow : ThemedWindow
     }
     private async Task JoinVoice(Channel c)
     {
-        if (cloud is not null && community is not null)
+        if (rtc is not null && cloud is not null && community is not null)
         {
-            if (DisplayPresence.Count(p => p.VoiceChannelId == c.Id && p.Profile.Id != profile.Id) >= 5) throw new InvalidOperationException("В канале уже 5 участников.");
-            cloudChannelId = c.Id; await cloud.PresenceAsync(community.Id, profile, c.Id); await RefreshCloud(); UpdateStatus();
-            if (!node.IsConnected && community.OwnerId != profile.Id)
+            if (voiceChannelId == c.Id && rtc.Joined) return;
+            EnsureNoRecording(); StopVoice();
+            try
             {
-                var endpoint = await cloud.GetAsync<string>($"communities/{community.Id}/endpoint");
-                if (endpoint is null) { Notify("Ты в канале. Владелец ещё не подключил голосовую сессию."); return; }
-                await node.JoinAsync(endpoint);
+                await rtc.EnterAsync(community.Id, c.Id, muted, deafened);
+                voice.Muted = muted; voice.Deafened = deafened; voice.Start();
+                voiceChannelId = c.Id; cloudChannelId = c.Id;
+                await cloud.PresenceAsync(community.Id, profile, c.Id);
+                await RefreshCloud(); RenderChannels(); UpdateStatus(); sounds.Play("connect");
+                Notify("WebRTC · Google STUN · без TURN. Соединение с участниками устанавливается напрямую.");
             }
+            catch { StopVoice(); cloudChannelId = null; await rtc.LeaveAsync(); throw; }
+            return;
         }
         if (!node.IsConnected)
         {
@@ -271,7 +292,7 @@ public sealed class MainWindow : ThemedWindow
         }
         else { cloudChannelId = null; if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); UpdateStatus(); Notify("Канал заполнен: максимум 5 человек.", true); }
     }
-    private async Task LeaveVoice() { cloudChannelId = null; cloudPresence = cloudPresence.Where(p => p.Profile.Id != profile.Id).ToList(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); if (node.IsConnected) await node.SetVoiceChannelAsync(null, muted, deafened); StopVoice(); presence = node.Presence; RenderChannels(); sounds.Play("disconnect"); }
+    private async Task LeaveVoice() { if (rtc is not null) await rtc.LeaveAsync(); cloudChannelId = null; cloudPresence = cloudPresence.Where(p => p.Profile.Id != profile.Id).ToList(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); if (node.IsConnected) await node.SetVoiceChannelAsync(null, muted, deafened); StopVoice(); presence = node.Presence; RenderChannels(); sounds.Play("disconnect"); }
     private void RestoreFromTray() { Show(); WindowState = WindowState.Normal; Activate(); foreach (var v in viewers.Values) v.Window.Show(); }
     private async Task SignOut()
     {
@@ -281,9 +302,9 @@ public sealed class MainWindow : ThemedWindow
         try { await Disconnect(); } finally { exitRequested = true; Close(); }
     }
     private void StopVoice() { StopSharing(); voice.Stop(); voiceChannelId = null; foreach (var v in viewers.Values.ToList()) v.Window.Close(); viewers.Clear(); UpdateStatus(); }
-    private async Task Disconnect() { cloudChannelId = null; cloudPresence = Array.Empty<PeerPresence>(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); Interlocked.Increment(ref sessionEpoch); latestFrames.Clear(); StopVoice(); await node.DisconnectAsync(); presence = Array.Empty<PeerPresence>(); sessionCommunityId = null; currentInvite = null; RenderMembers(); RenderChannels(); UpdateStatus(); sounds.Play("disconnect"); }
-    private async Task ToggleMic() { muted = !muted; voice.Muted = muted; if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(muted ? "mute" : "unmute"); UpdateStatus(); }
-    private async Task ToggleDeafen() { deafened = !deafened; voice.Deafened = deafened; if (deafened) sounds.StopFile(); if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(deafened ? "deafen" : "undeafen"); UpdateStatus(); }
+    private async Task Disconnect() { if (rtc is not null) await rtc.LeaveAsync(); cloudChannelId = null; cloudPresence = Array.Empty<PeerPresence>(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); Interlocked.Increment(ref sessionEpoch); latestFrames.Clear(); StopVoice(); await node.DisconnectAsync(); presence = Array.Empty<PeerPresence>(); sessionCommunityId = null; currentInvite = null; RenderMembers(); RenderChannels(); UpdateStatus(); sounds.Play("disconnect"); }
+    private async Task ToggleMic() { muted = !muted; voice.Muted = muted; if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(muted ? "mute" : "unmute"); UpdateStatus(); }
+    private async Task ToggleDeafen() { deafened = !deafened; voice.Deafened = deafened; if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (deafened) sounds.StopFile(); if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(deafened ? "deafen" : "undeafen"); UpdateStatus(); }
     private async Task UpdateGame()
     {
         var game = GamePresenceService.DetectGame(); if (game == profile.Game) return; profile = profile with { Game = game }; store.SaveProfile(profile); await node.UpdateProfileAsync(profile); RenderMembers();
@@ -326,7 +347,7 @@ public sealed class MainWindow : ThemedWindow
     {
         if (community is null) return null; var asset = store.ImportAsset(community.Id, path, kind);
         IsEnabled = false;
-        try { if (node.IsConnected) await BroadcastAsset(asset); return asset; } finally { if (!closing) IsEnabled = true; }
+        try { if (node.IsConnected || rtc?.Joined == true) await BroadcastAsset(asset); return asset; } finally { if (!closing) IsEnabled = true; }
     }
     private async Task AttachFile()
     {
@@ -381,13 +402,15 @@ public sealed class MainWindow : ThemedWindow
                     if (!string.Equals(Convert.ToHexString(hash.GetHashAndReset()), incoming.Id, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Неверный идентификатор вложения.");
                 }
                 var dir = Path.Combine(store.RootDirectory, "incoming", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(dir); var temporary = Path.Combine(dir, incoming.Name);
-                try { await File.WriteAllBytesAsync(temporary, incoming.Data); var a = store.ImportAsset(communityId, temporary, incoming.Kind); if (a.Id != incoming.Id) Notify("Вложение отклонено: неверный идентификатор.", true); } finally { Directory.Delete(dir, true); } break;
+                try { await File.WriteAllBytesAsync(temporary, incoming.Data); var a = store.ImportAsset(communityId, temporary, incoming.Kind); if (a.Id != incoming.Id) Notify("Вложение отклонено: неверный идентификатор.", true);
+                    else if (selectedChannel is not null && store.GetMessages(selectedChannel.Id).Any(msg => msg.AttachmentId == a.Id))
+                    { var history = store.GetMessages(selectedChannel.Id); messages.Children.Clear(); renderedMessages.Clear(); foreach (var msg in history) AddMessage(msg); } } finally { Directory.Delete(dir, true); } break;
             case "sound":
                 if (deafened || voiceChannelId != m.ChannelId) return; var sound = store.GetAsset(Encoding.UTF8.GetString(m.Payload)); if (sound?.Kind == "sound" && sound.CommunityId == community?.Id) sounds.PlayFile(sound.LocalPath); break;
         }
     }
-    private void SendRealtime(string type, byte[] payload) { if (voiceChannelId is null || !node.IsConnected) return; _ = SendRealtimeSafe(type, voiceChannelId, payload); }
-    private async Task SendRealtimeSafe(string type, string channel, byte[] data) { try { await node.SendAsync(new WireMessage(type, profile.Id, channel, data)); } catch { /* Disconnect/presence events surface connection failure. */ } }
+    private void SendRealtime(string type, byte[] payload) { if (voiceChannelId is null || (!node.IsConnected && rtc?.Joined != true)) return; _ = SendRealtimeSafe(type, voiceChannelId, payload); }
+    private async Task SendRealtimeSafe(string type, string channel, byte[] data) { try { await SendPacket(new WireMessage(type, profile.Id, channel, data)); } catch { /* Disconnect/presence events surface connection failure. */ } }
     private void ShareScreen()
     {
         if (sharing) { StopSharing(); return; } if (voiceChannelId is null) throw new InvalidOperationException("Сначала подключись к голосовому каналу.");
@@ -416,11 +439,12 @@ public sealed class MainWindow : ThemedWindow
         foreach (var a in store.GetAssets(community.Id, "emoji")) d.Action($":{Path.GetFileNameWithoutExtension(a.Name)}:", () => { pendingAttachment = a.Id; d.Close(); Run(async () => { await BroadcastAsset(a); await SendMessage(); }); });
         d.Action("+ Загрузить эмодзи", () => { var f = new Microsoft.Win32.OpenFileDialog { Filter = "Изображения|*.png;*.jpg;*.jpeg;*.gif", Title = "Эмодзи · до 256 КБ" }; if (f.ShowDialog(d) != true) return; if (new FileInfo(f.FileName).Length > 256 * 1024) throw new InvalidOperationException("Эмодзи должен быть меньше 256 КБ."); d.Close(); Run(async () => { await ImportAndSend(f.FileName, "emoji"); sounds.Play("message"); }); }); d.ShowDialog();
     }
-    private async Task BroadcastAsset(MediaAsset a) { if (node.IsConnected) await node.SendAsync(new WireMessage("asset", profile.Id, null, JsonSerializer.SerializeToUtf8Bytes(new AssetTransfer(a.Id, a.Name, a.Kind, await File.ReadAllBytesAsync(a.LocalPath))))); }
+    private Task SendPacket(WireMessage message) => rtc?.Joined == true ? rtc.SendAsync(message) : node.IsConnected ? node.SendAsync(message) : Task.CompletedTask;
+    private async Task BroadcastAsset(MediaAsset a) { if (node.IsConnected || rtc?.Joined == true) await SendPacket(new WireMessage("asset", profile.Id, null, JsonSerializer.SerializeToUtf8Bytes(new AssetTransfer(a.Id, a.Name, a.Kind, await File.ReadAllBytesAsync(a.LocalPath))))); }
     private void SoundPanel()
     {
         if (community is null) return; var d = new FormDialog(this, "Звуковая панель"); d.Note("Звуки слышат участники твоего голосового канала. WAV или MP3, максимум 2 МБ. Вне звонка доступно локальное прослушивание.");
-        foreach (var a in store.GetAssets(community.Id, "sound")) d.Action($"▶ {a.Name}", () => Run(async () => { if (deafened) return; await BroadcastAsset(a); sounds.PlayFile(a.LocalPath); if (voiceChannelId is not null) await node.SendAsync(new WireMessage("sound", profile.Id, voiceChannelId, Encoding.UTF8.GetBytes(a.Id))); }));
+        foreach (var a in store.GetAssets(community.Id, "sound")) d.Action($"▶ {a.Name}", () => Run(async () => { if (deafened) return; await BroadcastAsset(a); sounds.PlayFile(a.LocalPath); if (voiceChannelId is not null) await SendPacket(new WireMessage("sound", profile.Id, voiceChannelId, Encoding.UTF8.GetBytes(a.Id))); }));
         d.Action("+ Загрузить звук", () => { var f = new Microsoft.Win32.OpenFileDialog { Filter = "Аудио|*.wav;*.mp3", Title = "Звук · до 2 МБ" }; if (f.ShowDialog(d) != true) return; if (new FileInfo(f.FileName).Length > 2 * 1024 * 1024) throw new InvalidOperationException("Звук должен быть меньше 2 МБ."); d.Close(); Run(async () => { await ImportAndSend(f.FileName, "sound"); sounds.Play("message"); }); }); d.ShowDialog();
     }
     private void EditProfile()
@@ -441,7 +465,7 @@ public sealed class MainWindow : ThemedWindow
     private async Task PublishProfile()
     {
         if (closing) return;
-        if (node.IsConnected && community is not null)
+        if ((node.IsConnected || rtc?.Joined == true) && community is not null)
         {
             var capturedProfile = profile;
             var avatar = capturedProfile.AvatarPath is not null && File.Exists(capturedProfile.AvatarPath) ? await ImportAndSend(capturedProfile.AvatarPath, "avatar") : null;
@@ -496,7 +520,7 @@ public sealed class MainWindow : ThemedWindow
         if (closing) return;
         if (!exitRequested) { e.Cancel = true; foreach (var v in viewers.Values) v.Window.Hide(); Hide(); return; }
         e.Cancel = true; closing = true; activityTimer.Stop(); cloudTimer.Stop(); receiveLifetime.Cancel(); incoming.Writer.TryComplete(); latestFrames.Clear();
-        try { if (recorder.IsRecording) { var path = await recorder.StopAsync(); File.Delete(path); } if (recordedPath is not null) File.Delete(recordedPath); recorder.Dispose(); if (cloud is not null && community is not null) { try { await cloud.DeleteAsync($"communities/{community.Id}/presence/{profile.Id}"); if (node.IsHost) await cloud.DeleteAsync($"communities/{community.Id}/endpoint"); } catch { } } StopVoice(); await node.DisposeAsync(); tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); voice.Dispose(); screen.Dispose(); sounds.Dispose(); }
+        try { if (recorder.IsRecording) { var path = await recorder.StopAsync(); File.Delete(path); } if (recordedPath is not null) File.Delete(recordedPath); recorder.Dispose(); if (cloud is not null && community is not null) { try { await cloud.DeleteAsync($"communities/{community.Id}/presence/{profile.Id}"); if (node.IsHost) await cloud.DeleteAsync($"communities/{community.Id}/endpoint"); } catch { } } StopVoice(); if (rtc is not null) await rtc.DisposeAsync(); await node.DisposeAsync(); tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); voice.Dispose(); screen.Dispose(); sounds.Dispose(); }
         catch { } finally { Close(); }
     }
 }

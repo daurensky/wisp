@@ -3,6 +3,7 @@
     <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><EnableWindowsTargeting>true</EnableWindowsTargeting><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>Wisp</AssemblyName>
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="../Wisp.Core/Wisp.Core.csproj" /><PackageReference Include="NAudio" Version="2.2.1" /><PackageReference Include="Concentus" Version="1.1.7" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../Wisp.Core/Wisp.Core.csproj" /><PackageReference Include="NAudio" Version="2.2.1" /><PackageReference Include="Concentus" Version="2.2.2" /></ItemGroup>
   <ItemGroup><None Update="firebase.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="../../docs/licenses/SIPSorcery.md" Link="licenses/SIPSorcery.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
 </Project>

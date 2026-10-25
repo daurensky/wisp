@@ -1,3 +1,9 @@
+# Default Firebase mode: WebRTC mesh
+
+Firebase mode uses `RtcMesh`/`RtcPeer`: up to four direct DTLS/SCTP peer connections per user, Google STUN only, no TURN and no participant forwarding. Firebase authenticates signalling and atomically limits the room to five leased seats. SDP is bound to both peers' current session IDs. See [FIREBASE.md](FIREBASE.md) for setup, permissions, NAT limitations and transport details. There is no guaranteed connectivity through symmetric NAT or blocked UDP.
+
+The following TLS implementation remains a legacy fallback only when Firebase configuration is absent.
+
 # Direct P2P sessions
 
 Wisp uses participant-hosted TLS 1.2/1.3 TCP sessions. One community owner runs the

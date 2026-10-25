@@ -1,5 +1,5 @@
 using Concentus.Enums;
-using Concentus.Structs;
+using Concentus;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
@@ -16,7 +16,7 @@ public sealed class VoiceService : IDisposable
     private WaveInEvent? _input;
     private WaveOutEvent? _output;
     private MixingSampleProvider? _mixer;
-    private OpusEncoder? _encoder;
+    private IOpusEncoder? _encoder;
     private int _captureCount;
     private volatile bool _muted;
     private volatile bool _deafened;
@@ -42,7 +42,7 @@ public sealed class VoiceService : IDisposable
             if (_input is not null) return;
             try
             {
-                _encoder = OpusEncoder.Create(SampleRate, 1, OpusApplication.OPUS_APPLICATION_VOIP);
+                _encoder = OpusCodecFactory.CreateEncoder(SampleRate, 1, OpusApplication.OPUS_APPLICATION_VOIP);
                 _encoder.Bitrate = 32000;
                 _encoder.Complexity = 5;
                 _encoder.UseVBR = true;
@@ -76,6 +76,8 @@ public sealed class VoiceService : IDisposable
     {
         try
         {
+            lock (_gate)
+            {
             if (_muted || _deafened) { _captureCount = 0; return; }
             // WaveIn normally supplies exactly 20ms, but aggregate partial device buffers too.
             for (var offset = 0; offset + 1 < e.BytesRecorded; offset += 2)
@@ -86,8 +88,9 @@ public sealed class VoiceService : IDisposable
                 var packet = new byte[1275];
                 var encoder = _encoder;
                 if (encoder is null) return;
-                var length = encoder.Encode(_captureFrame, 0, FrameSamples, packet, 0, packet.Length);
+                var length = encoder.Encode(_captureFrame.AsSpan(), FrameSamples, packet.AsSpan(), packet.Length);
                 if (length > 0) PacketReady?.Invoke(packet.AsSpan(0, length).ToArray());
+            }
             }
         }
         catch (Exception ex) { Error?.Invoke("Microphone: " + ex.Message); }
@@ -108,7 +111,7 @@ public sealed class VoiceService : IDisposable
             }
             try
             {
-                var samples = peer.Decoder.Decode(packet, 0, packet.Length, peer.Samples, 0, peer.Samples.Length, false);
+                var samples = peer.Decoder.Decode(packet.AsSpan(), peer.Samples.AsSpan(), peer.Samples.Length, false);
                 if (samples <= 0) return;
                 // Discard stale audio rather than allowing latency to grow indefinitely.
                 if (peer.Buffer.BufferedDuration.TotalMilliseconds > 120) peer.Buffer.ClearBuffer();
@@ -130,6 +133,7 @@ public sealed class VoiceService : IDisposable
                 var peer = _peers[id];
                 _mixer?.RemoveMixerInput(peer.SampleProvider);
                 peer.Buffer.ClearBuffer();
+                (peer.Decoder as IDisposable)?.Dispose();
                 _peers.Remove(id);
             }
         }
@@ -146,7 +150,8 @@ public sealed class VoiceService : IDisposable
             _input = null;
             _output = null;
             _mixer = null;
-            _encoder = null;
+            (_encoder as IDisposable)?.Dispose(); _encoder = null;
+            foreach (var peer in _peers.Values) (peer.Decoder as IDisposable)?.Dispose();
             _peers.Clear();
         }
         if (input is not null)
@@ -163,7 +168,7 @@ public sealed class VoiceService : IDisposable
 
     private sealed class PlaybackPeer
     {
-        public readonly OpusDecoder Decoder = OpusDecoder.Create(SampleRate, 1);
+        public readonly IOpusDecoder Decoder = OpusCodecFactory.CreateDecoder(SampleRate, 1);
         public readonly short[] Samples = new short[5760];
         public readonly byte[] Bytes = new byte[11520];
         public readonly BufferedWaveProvider Buffer = new(new WaveFormat(SampleRate, 16, 1))

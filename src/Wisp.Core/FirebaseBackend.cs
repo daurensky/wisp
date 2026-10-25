@@ -78,6 +78,11 @@ public sealed class FirebaseBackend : IDisposable
     {
         using var response = await http.DeleteAsync(await Url(path)); using var result = await Read(response);
     }
+    public async Task PatchAsync<T>(string path, T value)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Patch, await Url(path)) { Content = JsonContent.Create(value, options: new JsonSerializerOptions()) };
+        using var response = await http.SendAsync(request); using var result = await Read(response);
+    }
     public async Task SaveProfileAsync(UserProfile p)
     {
         if (p.Id != Profile?.Id) throw new InvalidOperationException("Чужой профиль.");

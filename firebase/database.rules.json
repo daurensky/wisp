@@ -45,10 +45,35 @@
         },
         "messages": {
           "$channel": {
-            ".indexOn": ["SentAt"],
+            ".indexOn": [
+              "SentAt"
+            ],
             "$message": {
               ".write": "auth != null && !data.exists() && root.child('communities').child($community).child('members').child(auth.uid).val() === true",
               ".validate": "newData.hasChildren(['Id','ChannelId','AuthorId','Text','SentAt']) && newData.child('Id').val() === $message && newData.child('ChannelId').val() === $channel && newData.child('AuthorId').val() === auth.uid && newData.child('Text').isString() && newData.child('Text').val().length <= 8000"
+            }
+          }
+        },
+        "rtcRooms": {
+          "$channel": {
+            ".validate": "newData.numChildren() <= 5",
+            "$uid": {
+              ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && (auth.uid === $uid || data.child('SeenAt').val() < now - 45000)",
+              ".validate": "newData.hasChildren(['SessionId','SeenAt','Muted','Deafened']) && auth.uid === $uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean()"
+            }
+          }
+        }
+      }
+    },
+    "rtcSignals": {
+      "$community": {
+        "$channel": {
+          "$from": {
+            ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && auth.uid === $from && !newData.exists()",
+            "$to": {
+              ".read": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && (auth.uid === $from || auth.uid === $to) && root.child('communities').child($community).child('rtcRooms').child($channel).child(auth.uid).child('SeenAt').val() >= now - 45000",
+              ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && auth.uid === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child($from).child('SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child($to).child('SeenAt').val() >= now - 45000",
+              ".validate": "newData.hasChildren(['FromSession','ToSession','Type','Sdp']) && newData.child('FromSession').val() === root.child('communities').child($community).child('rtcRooms').child($channel).child($from).child('SessionId').val() && newData.child('ToSession').val() === root.child('communities').child($community).child('rtcRooms').child($channel).child($to).child('SessionId').val() && (newData.child('Type').val() === 'offer' || newData.child('Type').val() === 'answer') && newData.child('Sdp').isString() && newData.child('Sdp').val().length <= 64000"
             }
           }
         }
