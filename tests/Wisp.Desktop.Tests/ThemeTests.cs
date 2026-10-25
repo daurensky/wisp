@@ -32,6 +32,11 @@ public sealed class ThemeTests
                 Assert.False(ThemeManager.IsLight);
 
                 using var store = new LocalStore(root);
+                SessionVault.Save(root, "test-session-secret");
+                Assert.Equal("test-session-secret", SessionVault.Read(root));
+                Assert.DoesNotContain("test-session-secret", System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(root, "session.bin"))));
+                SessionVault.Clear(root);
+                Assert.Null(SessionVault.Read(root));
                 derived = new DerivedWindow();
                 auth = new AuthWindow(store);
                 AssertWindowColors(derived, Colors.Black, Color.FromRgb(237, 237, 242));

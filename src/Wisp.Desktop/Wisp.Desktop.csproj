@@ -4,4 +4,5 @@
     <AssemblyName>Wisp</AssemblyName>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Wisp.Core/Wisp.Core.csproj" /><PackageReference Include="NAudio" Version="2.2.1" /><PackageReference Include="Concentus" Version="1.1.7" /></ItemGroup>
+  <ItemGroup><None Update="firebase.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
 </Project>

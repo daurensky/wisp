@@ -17,6 +17,14 @@ namespace Wisp.Desktop;
 public sealed class MainWindow : ThemedWindow
 {
     private readonly LocalStore store;
+    private readonly FirebaseBackend? cloud;
+    private readonly DispatcherTimer cloudTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    private IReadOnlyList<PeerPresence> cloudPresence = Array.Empty<PeerPresence>();
+    private string? cloudChannelId;
+    private bool cloudPolling;
+    private string? savedRefreshToken;
+    private readonly HashSet<string> renderedMessages = new();
+    private IReadOnlyList<PeerPresence> DisplayPresence => presence.Concat(cloudPresence).GroupBy(p => p.Profile.Id).Select(g => g.First()).ToArray();
     private UserProfile profile;
     private readonly PeerNode node;
     private readonly VoiceService voice = new();
@@ -32,7 +40,9 @@ public sealed class MainWindow : ThemedWindow
     private readonly TextBlock notice = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(18, 8, 18, 8) };
     private readonly TextBox composer = new() { AcceptsReturn = true, MaxHeight = 110, MinHeight = 44, TextWrapping = TextWrapping.Wrap, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxLength = 8000 };
     private readonly ScrollViewer messageScroll;
-    private readonly Button micButton, deafenButton, recordButton, shareButton;
+    private readonly Button micButton, deafenButton, recordButton, shareButton, leaveButton;
+    private readonly System.Windows.Forms.NotifyIcon tray;
+    private bool exitRequested;
     private readonly Dictionary<string, (Window Window, Image Image)> viewers = new();
     private readonly SemaphoreSlim inbound = new(1, 1);
     private readonly System.Threading.Channels.Channel<(int Epoch, WireMessage Message)> incoming = System.Threading.Channels.Channel.CreateBounded<(int, WireMessage)>(8);
@@ -49,9 +59,9 @@ public sealed class MainWindow : ThemedWindow
     private bool sendingRecording;
     private IReadOnlyList<PeerPresence> presence = Array.Empty<PeerPresence>();
 
-    public MainWindow(LocalStore store, UserProfile profile)
+    public MainWindow(LocalStore store, UserProfile profile, FirebaseBackend? cloud = null)
     {
-        this.store = store; this.profile = profile; node = new PeerNode(profile, store.RootDirectory);
+        this.store = store; this.profile = profile; this.cloud = cloud; savedRefreshToken = cloud?.RefreshToken; node = new PeerNode(profile, store.RootDirectory);
         Title = "Wisp"; Width = 1360; Height = 860; MinWidth = 1060; MinHeight = 650; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) }); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) }); root.ColumnDefinitions.Add(new ColumnDefinition()); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) }); Content = root;
         var rail = new DockPanel { Margin = new Thickness(8, 14, 8, 8) }; root.Children.Add(rail);
@@ -64,7 +74,7 @@ public sealed class MainWindow : ThemedWindow
         heading.Children.Add(new TextBlock { Text = "ТВОЁ ПРОСТРАНСТВО", FontSize = 10, Opacity = .5, Margin = new Thickness(0, 6, 0, 14) });
         var actions = new WrapPanel(); actions.Children.Add(Btn("Пригласить", HostCommunity)); actions.Children.Add(Btn("+ Канал", CreateChannel)); heading.Children.Add(actions); DockPanel.SetDock(heading, Dock.Top); side.Children.Add(heading);
         var self = new StackPanel { Margin = new Thickness(12) }; self.Children.Add(connection); self.Children.Add(userName);
-        var controls = new WrapPanel(); micButton = Btn("Микр.", ToggleMic, "Выключить / включить микрофон"); deafenButton = Btn("Звук", ToggleDeafen, "Выключить наушники и микрофон"); controls.Children.Add(micButton); controls.Children.Add(deafenButton); controls.Children.Add(Btn("⚙", EditProfile, "Профиль и настройки")); self.Children.Add(controls); self.Children.Add(Btn("Отключиться", Disconnect)); DockPanel.SetDock(self, Dock.Bottom); side.Children.Add(self); side.Children.Add(new ScrollViewer { Content = channels, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        var controls = new WrapPanel(); micButton = Btn("Микр.", ToggleMic, "Выключить / включить микрофон"); deafenButton = Btn("Звук", ToggleDeafen, "Выключить наушники и микрофон"); controls.Children.Add(micButton); controls.Children.Add(deafenButton); controls.Children.Add(Btn("⚙", EditProfile, "Профиль и настройки")); self.Children.Add(controls); leaveButton = Btn("Выйти из канала", LeaveVoice); self.Children.Add(leaveButton); DockPanel.SetDock(self, Dock.Bottom); side.Children.Add(self); side.Children.Add(new ScrollViewer { Content = channels, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         var center = new DockPanel(); Grid.SetColumn(center, 2); root.Children.Add(center);
         var top = new DockPanel { Margin = new Thickness(22, 18, 18, 12) }; top.Children.Add(channelTitle);
         var toolbar = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right }; toolbar.Children.Add(Btn("Эмодзи", EmojiPanel)); toolbar.Children.Add(Btn("Звуки", SoundPanel)); shareButton = Btn("Демонстрация", ShareScreen); toolbar.Children.Add(shareButton); top.Children.Add(toolbar); DockPanel.SetDock(top, Dock.Top); center.Children.Add(top);
@@ -96,9 +106,17 @@ public sealed class MainWindow : ThemedWindow
         screen.FrameReady += p => SendRealtime("screen", p); screen.Error += e => Dispatcher.BeginInvoke(() => { StopSharing(); Notify(e, true); });
         recorder.Completed += path => Dispatcher.BeginInvoke(() => { if (closing || sendingRecording || !File.Exists(path)) return; recordedPath = path; recordButton.Content = "↑ Отправить запись"; Notify("Запись завершена. Нажми «Отправить запись»."); });
         activityTimer.Tick += (_, _) => Run(UpdateGame); activityTimer.Start();
+        tray = new System.Windows.Forms.NotifyIcon { Icon = (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone(), Text = "Wisp", Visible = true };
+        var menu = new System.Windows.Forms.ContextMenuStrip();
+        menu.Items.Add("Открыть Wisp", null, (_, _) => Dispatcher.BeginInvoke(RestoreFromTray));
+        menu.Items.Add("Выйти из аккаунта", null, (_, _) => Dispatcher.BeginInvoke(() => Run(SignOut)));
+        menu.Items.Add("Закрыть Wisp", null, (_, _) => Dispatcher.BeginInvoke(() => { exitRequested = true; Close(); }));
+        tray.ContextMenuStrip = menu;
+        tray.DoubleClick += (_, _) => Dispatcher.BeginInvoke(RestoreFromTray);
+        cloudTimer.Tick += (_, _) => Run(RefreshCloud); if (cloud is not null) cloudTimer.Start();
         Closing += OnClosing;
         userName.Text = profile.Username; RenderServers();
-        var first = store.GetCommunities().FirstOrDefault(); if (first is not null) SetCommunity(first); else { serverTitle.Text = "Добро пожаловать"; channelTitle.Text = "Место для своих"; Notify("Создай сообщество кнопкой + слева или присоединись по приглашению ↗."); }
+        var first = MyCommunities().FirstOrDefault(); if (first is not null) SetCommunity(first); else { serverTitle.Text = "Добро пожаловать"; channelTitle.Text = "Место для своих"; Notify("Создай сообщество кнопкой + слева или присоединись по приглашению ↗."); }
         UpdateStatus();
     }
 
@@ -142,11 +160,12 @@ public sealed class MainWindow : ThemedWindow
     private Button Btn(string text, Func<Task> action, string? tip = null) => Btn(text, () => Run(action), tip);
     private async void Run(Func<Task> action) { if (closing) return; try { await action(); } catch (Exception ex) { if (!closing) Notify(ex.Message, true); } }
     private void Notify(string text, bool error = false) { notice.Text = text; notice.Foreground = error ? Brushes.Salmon : (Brush)FindResource("Muted"); if (error) sounds.Play("error"); }
+    private List<Community> MyCommunities() => cloud is null ? store.GetCommunities() : store.GetCommunities().Where(c => store.GetMembers(c.Id).Any(m => m.Id == profile.Id)).ToList();
     private void RenderServers()
     {
-        servers.Children.Clear(); foreach (var c in store.GetCommunities())
+        servers.Children.Clear(); foreach (var c in MyCommunities())
         {
-            var b = Btn(c.Name[..Math.Min(2, c.Name.Length)].ToUpperInvariant(), async () => { if (node.IsConnected && c.Id != sessionCommunityId) await Disconnect(); SetCommunity(c); }, c.Name);
+            var b = Btn(c.Name[..Math.Min(2, c.Name.Length)].ToUpperInvariant(), async () => { if (community?.Id != c.Id) await Disconnect(); SetCommunity(c); }, c.Name);
             b.Height = 48; if (community?.Id == c.Id) b.SetResourceReference(Control.BackgroundProperty, "Accent"); servers.Children.Add(b);
         }
     }
@@ -160,35 +179,41 @@ public sealed class MainWindow : ThemedWindow
             channels.Children.Add(new TextBlock { Text = voiceKind ? "ГОЛОСОВЫЕ КАНАЛЫ · ДО 5" : "ТЕКСТОВЫЕ КАНАЛЫ", FontSize = 10, Opacity = .55, Margin = new Thickness(16, 18, 0, 8) });
             foreach (var c in store.GetChannels(community.Id).Where(x => x.IsVoice == voiceKind))
             {
-                var count = presence.Count(p => p.VoiceChannelId == c.Id);
+                var count = DisplayPresence.Count(p => p.VoiceChannelId == c.Id);
                 var b = Btn(voiceKind ? $"♫  {c.Name}     {count}/5" : $"#  {c.Name}", async () => { SelectChannel(c); if (c.IsVoice) await JoinVoice(c); });
                 b.HorizontalContentAlignment = HorizontalAlignment.Left; if (c.Id == selectedChannel?.Id) b.SetResourceReference(Control.BackgroundProperty, "Card"); channels.Children.Add(b);
-                if (voiceKind) foreach (var p in presence.Where(p => p.VoiceChannelId == c.Id)) channels.Children.Add(new TextBlock { Text = $"    ● {p.Profile.Username}{(p.Deafened ? " · без звука" : p.Muted ? " · микр. выкл." : "")}", FontSize = 12, Margin = new Thickness(18, 2, 0, 4), Opacity = .7 });
+                if (voiceKind) foreach (var p in DisplayPresence.Where(p => p.VoiceChannelId == c.Id)) channels.Children.Add(new TextBlock { Text = $"    ● {p.Profile.Username}{(p.Deafened ? " · без звука" : p.Muted ? " · микр. выкл." : "")}", FontSize = 12, Margin = new Thickness(18, 2, 0, 4), Opacity = .7 });
             }
         }
     }
-    private void SelectChannel(Channel c) { if (recorder.IsRecording || recordedPath is not null) throw new InvalidOperationException("Сначала отправь голосовую запись."); selectedChannel = c; channelTitle.Text = $"{(c.IsVoice ? "♫" : "#")} {c.Name}"; pendingAttachment = null; messages.Children.Clear(); foreach (var m in store.GetMessages(c.Id)) AddMessage(m); RenderChannels(); Notify(c.IsVoice ? "Голосовой канал · максимум 5 участников. Для связи нужна активная P2P-сессия." : "Сообщения и вложения сохраняются локально. Подключённые участники получают новые сообщения."); }
+    private void SelectChannel(Channel c) { if (recorder.IsRecording || recordedPath is not null) throw new InvalidOperationException("Сначала отправь голосовую запись."); selectedChannel = c; channelTitle.Text = $"{(c.IsVoice ? "♫" : "#")} {c.Name}"; pendingAttachment = null; renderedMessages.Clear(); messages.Children.Clear(); foreach (var m in store.GetMessages(c.Id)) AddMessage(m); RenderChannels(); Notify(c.IsVoice ? "Голосовой канал · максимум 5 участников. Для связи нужна активная P2P-сессия." : "Сообщения и вложения сохраняются локально. Подключённые участники получают новые сообщения."); }
     private void RenderMembers()
     {
         members.Children.Clear(); if (community is null) return;
         var saved = store.GetMembers(community.Id).ToDictionary(x => x.Id); saved[profile.Id] = profile;
-        foreach (var p in presence) saved[p.Profile.Id] = p.Profile;
-        foreach (var p in saved.Values.OrderByDescending(x => x.Id == profile.Id || presence.Any(s => s.Profile.Id == x.Id)).ThenBy(x => x.Username))
+        foreach (var p in DisplayPresence) saved[p.Profile.Id] = p.Profile;
+        foreach (var p in saved.Values.OrderByDescending(x => x.Id == profile.Id || DisplayPresence.Any(s => s.Profile.Id == x.Id)).ThenBy(x => x.Username))
         {
-            var online = p.Id == profile.Id || presence.Any(s => s.Profile.Id == p.Id); var display = new StackPanel(); display.Children.Add(new TextBlock { Text = $"{(online ? "●" : "○")}  {p.Username}", Opacity = online ? 1 : .45 });
+            var online = p.Id == profile.Id || DisplayPresence.Any(s => s.Profile.Id == p.Id); var display = new StackPanel(); display.Children.Add(new TextBlock { Text = $"{(online ? "●" : "○")}  {p.Username}", Opacity = online ? 1 : .45 });
             var game = presence.FirstOrDefault(x => x.Profile.Id == p.Id)?.Profile.Game ?? (p.Id == profile.Id ? profile.Game : null); display.Children.Add(new TextBlock { Text = game is null ? online ? "В сети" : "Не в сети" : $"Играет в {game}", FontSize = 10, Opacity = .5, Margin = new Thickness(18, 3, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
             var b = Btn("", () => ViewProfile(p)); b.Content = display; b.HorizontalContentAlignment = HorizontalAlignment.Stretch; members.Children.Add(b);
         }
     }
-    private void UpdateStatus() { connection.Text = voiceChannelId is not null ? "● Голос подключён · P2P / Opus" : node.IsConnected ? "● P2P-сессия подключена" : "○ Локальный режим"; userName.Text = profile.Username; micButton.Content = muted || deafened ? "Микр. ×" : "Микр. ✓"; deafenButton.Content = deafened ? "Звук ×" : "Звук ✓"; }
+    private void UpdateStatus() { var inVoice = voiceChannelId is not null;
+        leaveButton.Visibility = inVoice || cloudChannelId is not null ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var button in new[] { micButton, deafenButton, shareButton }) button.Visibility = inVoice ? Visibility.Visible : Visibility.Collapsed;
+        connection.Text = voiceChannelId is not null ? "● В канале: " + (community is null ? "" : store.GetChannels(community.Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name) : cloudChannelId is not null ? "● В канале · голос ещё не подключён" : cloud is not null ? "● Firebase подключён" : node.IsConnected ? "● P2P-сессия подключена" : "○ Локальный режим"; userName.Text = profile.Username; micButton.Content = muted || deafened ? "Микр. ×" : "Микр. ✓"; deafenButton.Content = deafened ? "Звук ×" : "Звук ✓"; }
     private void CreateCommunity()
     {
         var d = new FormDialog(this, "Создать сообщество"); var name = d.Field("Название"); d.Accept("Создать"); if (d.ShowDialog() != true) return;
-        if (node.IsConnected) { Notify("Сначала отключись от текущей сессии.", true); return; } SetCommunity(store.CreateCommunity(name.Text, profile.Id)); sounds.Play("connect");
+        if (node.IsConnected) { Notify("Сначала отключись от текущей сессии.", true); return; } SetCommunity(store.CreateCommunity(name.Text, profile.Id));
+        if (cloud is not null) Run(async () => { await cloud.CreateCommunityAsync(new CommunitySnapshot(community!, store.GetChannels(community!.Id), new List<UserProfile> { profile })); await RefreshCloud(); });
+        sounds.Play("connect");
     }
     private async Task HostCommunity()
     {
         if (community is null) return;
+        if (cloud is not null) { var inviteDialog = new FormDialog(this, "Пригласить в сообщество"); var code = "wisp-cloud:" + community.Id; inviteDialog.Field("Приглашение", code); inviteDialog.Action("Скопировать", () => Clipboard.SetText(code)); inviteDialog.Accept("Готово"); inviteDialog.ShowDialog(); return; }
         if (node.IsConnected) { if (node.IsHost && currentInvite is not null) { ShowInvite(currentInvite); return; } throw new InvalidOperationException("Сначала отключись от текущей сессии."); }
         var d = new FormDialog(this, "Открыть P2P-сессию"); var address = d.Field("Твой доступный IP или DNS (необязательно)");
         d.Note("В одной сети адрес обычно определяется автоматически. Через интернет нужен проброс TCP 45832 на этот компьютер или общая VPN-сеть. Разреши Wisp в брандмауэре Windows. Не отправляй приглашение посторонним."); d.Accept("Открыть сессию"); if (d.ShowDialog() != true) return;
@@ -199,31 +224,64 @@ public sealed class MainWindow : ThemedWindow
     private async Task JoinCommunity()
     {
         EnsureNoRecording();
-        var d = new FormDialog(this, "Присоединиться"); var invite = d.Field("Приглашение wisp://", "", true); d.Note("Нужен прямой доступ к компьютеру друга: локальная сеть, VPN или открытый порт. Отпечаток сертификата проверяется автоматически."); d.Accept("Подключиться"); if (d.ShowDialog() != true) return;
+        var d = new FormDialog(this, "Присоединиться"); var invite = d.Field(cloud is null ? "Приглашение wisp://" : "Приглашение wisp-cloud:", "", true); d.Note(cloud is null ? "Для голоса нужен прямой доступ к компьютеру друга." : "Приглашение даёт доступ к сообществу и чату. Голос пока требует прямого соединения; WebRTC/TURN ещё не подключены."); d.Accept("Подключиться"); if (d.ShowDialog() != true) return;
         IsEnabled = false;
-        try { await Disconnect(); await node.JoinAsync(invite.Text.Trim()); sounds.Play("connect"); UpdateStatus(); await Dispatcher.InvokeAsync(() => { }); await PublishProfile(); }
+        try { await Disconnect();
+            if (cloud is not null && invite.Text.Trim().StartsWith("wisp-cloud:"))
+            {
+                var id = invite.Text.Trim()[11..]; await cloud.JoinCommunityAsync(id);
+                var snapshot = await cloud.GetAsync<CommunitySnapshot>($"communities/{id}/snapshot") ?? throw new InvalidOperationException("Сообщество не найдено.");
+                store.SaveSnapshot(snapshot); store.UpsertMember(snapshot.Community.Id, profile); SetCommunity(snapshot.Community); await RefreshCloud(); return;
+            }
+            await node.JoinAsync(invite.Text.Trim()); sounds.Play("connect"); UpdateStatus(); await Dispatcher.InvokeAsync(() => { }); await PublishProfile(); }
         finally { if (!closing) IsEnabled = true; }
     }
     private void CreateChannel()
     {
         if (community is null) return; if (community.OwnerId != profile.Id) throw new InvalidOperationException("Создавать каналы может владелец сообщества.");
         if (node.IsConnected) throw new InvalidOperationException("Для изменения каналов останови сессию, затем открой её снова с новым приглашением.");
-        var d = new FormDialog(this, "Новый канал"); var name = d.Field("Название"); var isVoice = d.Check("Голосовой канал · максимум 5 человек"); d.Accept("Создать"); if (d.ShowDialog() == true) { var c = store.CreateChannel(community.Id, name.Text, isVoice.IsChecked == true); SelectChannel(c); sounds.Play("message"); }
+        var d = new FormDialog(this, "Новый канал"); var name = d.Field("Название"); var isVoice = d.Check("Голосовой канал · максимум 5 человек"); d.Accept("Создать"); if (d.ShowDialog() == true) { var c = store.CreateChannel(community.Id, name.Text, isVoice.IsChecked == true); SelectChannel(c); if (cloud is not null) Run(() => cloud.CreateCommunityAsync(new CommunitySnapshot(community, store.GetChannels(community.Id), store.GetMembers(community.Id)))); sounds.Play("message"); }
     }
     private async Task JoinVoice(Channel c)
     {
-        if (!node.IsConnected) throw new InvalidOperationException("Открой сессию кнопкой «Пригласить» или подключись к другу.");
+        if (cloud is not null && community is not null)
+        {
+            if (DisplayPresence.Count(p => p.VoiceChannelId == c.Id && p.Profile.Id != profile.Id) >= 5) throw new InvalidOperationException("В канале уже 5 участников.");
+            cloudChannelId = c.Id; await cloud.PresenceAsync(community.Id, profile, c.Id); await RefreshCloud(); UpdateStatus();
+            if (!node.IsConnected && community.OwnerId != profile.Id)
+            {
+                var endpoint = await cloud.GetAsync<string>($"communities/{community.Id}/endpoint");
+                if (endpoint is null) { Notify("Ты в канале. Владелец ещё не подключил голосовую сессию."); return; }
+                await node.JoinAsync(endpoint);
+            }
+        }
+        if (!node.IsConnected)
+        {
+            if (community is null || community.OwnerId != profile.Id) throw new InvalidOperationException("Подключись к сообществу по приглашению владельца.");
+            currentInvite = await node.HostAsync(new CommunitySnapshot(community, store.GetChannels(community.Id), store.GetMembers(community.Id)));
+            sessionCommunityId = community.Id;
+            if (cloud is not null) await cloud.PutAsync($"communities/{community.Id}/endpoint", currentInvite);
+        }
         if (c.Id == voiceChannelId) return;
         if (recorder.IsRecording) throw new InvalidOperationException("Сначала закончи голосовую запись.");
         if (await node.SetVoiceChannelAsync(c.Id, muted, deafened))
         {
-            try { StopSharing(); voice.Stop(); voice.Start(); voice.Muted = muted; voice.Deafened = deafened; voiceChannelId = c.Id; sounds.Play("connect"); UpdateStatus(); }
+            try { StopSharing(); voice.Stop(); voice.Start(); voice.Muted = muted; voice.Deafened = deafened; voiceChannelId = c.Id; presence = node.Presence; sounds.Play("connect"); RenderChannels(); RenderMembers(); UpdateStatus(); }
             catch { StopVoice(); await node.SetVoiceChannelAsync(null, muted, deafened); throw; }
         }
-        else Notify("Канал заполнен: максимум 5 человек.", true);
+        else { cloudChannelId = null; if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); UpdateStatus(); Notify("Канал заполнен: максимум 5 человек.", true); }
+    }
+    private async Task LeaveVoice() { cloudChannelId = null; cloudPresence = cloudPresence.Where(p => p.Profile.Id != profile.Id).ToList(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); if (node.IsConnected) await node.SetVoiceChannelAsync(null, muted, deafened); StopVoice(); presence = node.Presence; RenderChannels(); sounds.Play("disconnect"); }
+    private void RestoreFromTray() { Show(); WindowState = WindowState.Normal; Activate(); foreach (var v in viewers.Values) v.Window.Show(); }
+    private async Task SignOut()
+    {
+        var saved = SessionVault.Read(store.RootDirectory);
+        if (saved is not null && !saved.StartsWith("firebase:")) store.RevokeSession(saved);
+        SessionVault.Clear(store.RootDirectory);
+        try { await Disconnect(); } finally { exitRequested = true; Close(); }
     }
     private void StopVoice() { StopSharing(); voice.Stop(); voiceChannelId = null; foreach (var v in viewers.Values.ToList()) v.Window.Close(); viewers.Clear(); UpdateStatus(); }
-    private async Task Disconnect() { Interlocked.Increment(ref sessionEpoch); latestFrames.Clear(); StopVoice(); await node.DisconnectAsync(); presence = Array.Empty<PeerPresence>(); sessionCommunityId = null; currentInvite = null; RenderMembers(); RenderChannels(); UpdateStatus(); sounds.Play("disconnect"); }
+    private async Task Disconnect() { cloudChannelId = null; cloudPresence = Array.Empty<PeerPresence>(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); Interlocked.Increment(ref sessionEpoch); latestFrames.Clear(); StopVoice(); await node.DisconnectAsync(); presence = Array.Empty<PeerPresence>(); sessionCommunityId = null; currentInvite = null; RenderMembers(); RenderChannels(); UpdateStatus(); sounds.Play("disconnect"); }
     private async Task ToggleMic() { muted = !muted; voice.Muted = muted; if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(muted ? "mute" : "unmute"); UpdateStatus(); }
     private async Task ToggleDeafen() { deafened = !deafened; voice.Deafened = deafened; if (deafened) sounds.StopFile(); if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(deafened ? "deafen" : "undeafen"); UpdateStatus(); }
     private async Task UpdateGame()
@@ -234,11 +292,13 @@ public sealed class MainWindow : ThemedWindow
     {
         if (selectedChannel is null || (string.IsNullOrWhiteSpace(composer.Text) && pendingAttachment is null)) return;
         var m = new ChatMessage(Guid.NewGuid().ToString("N"), selectedChannel.Id, profile.Id, profile.Username, composer.Text.Trim(), DateTimeOffset.UtcNow, pendingAttachment);
+        if (cloud is not null && community is not null) await cloud.SendMessageAsync(community.Id, m);
         if (node.IsConnected) await node.SendAsync(new WireMessage("chat", profile.Id, selectedChannel.Id, JsonSerializer.SerializeToUtf8Bytes(m)));
-        store.SaveMessage(m); AddMessage(m); composer.Clear(); pendingAttachment = null; sounds.Play("message"); Notify(node.IsConnected ? "Отправлено участникам сессии." : "Сохранено локально. Для отправки друзьям нужна P2P-сессия.");
+        store.SaveMessage(m); AddMessage(m); composer.Clear(); pendingAttachment = null; sounds.Play("message"); Notify(cloud is not null ? "Отправлено в Firebase." : node.IsConnected ? "Отправлено участникам сессии." : "Сохранено локально. Для отправки друзьям нужна P2P-сессия.");
     }
     private void AddMessage(ChatMessage m)
     {
+        if (!renderedMessages.Add(m.Id)) return;
         var row = new StackPanel { Margin = new Thickness(0, 8, 0, 12) }; var meta = new TextBlock { Text = $"{m.AuthorName}   {m.SentAt.LocalDateTime:dd.MM HH:mm}", FontWeight = FontWeights.SemiBold, FontSize = 12 }; meta.SetResourceReference(TextBlock.ForegroundProperty, "Accent"); row.Children.Add(meta);
         if (!string.IsNullOrEmpty(m.Text)) row.Children.Add(new TextBlock { Text = m.Text, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
         if (m.AttachmentId is not null)
@@ -389,6 +449,7 @@ public sealed class MainWindow : ThemedWindow
             if (profile.Id == capturedProfile.Id && profile.AvatarPath == capturedProfile.AvatarPath && profile.BannerPath == capturedProfile.BannerPath) profile = profile with { AvatarAssetId = avatar?.Id, BannerAssetId = banner?.Id };
         }
         await node.UpdateProfileAsync(profile);
+        if (cloud is not null) await cloud.SaveProfileAsync(profile);
     }
     private void ViewProfile(UserProfile p)
     {
@@ -402,6 +463,29 @@ public sealed class MainWindow : ThemedWindow
         d.Note($"Идентификатор: {p.Id}"); d.Accept("Закрыть"); d.ShowDialog();
     }
     private static BitmapImage LoadImage(string path, int width) { using var stream = File.OpenRead(path); var b = new BitmapImage(); b.BeginInit(); b.CacheOption = BitmapCacheOption.OnLoad; b.DecodePixelWidth = width; b.StreamSource = stream; b.EndInit(); b.Freeze(); return b; }
+    private async Task RefreshCloud()
+    {
+        if (cloud is null || community is null || cloudPolling || closing) return;
+        cloudPolling = true; var id = community.Id; var channelId = selectedChannel?.Id;
+        try
+        {
+            await cloud.PresenceAsync(id, profile, voiceChannelId ?? cloudChannelId);
+            if (savedRefreshToken != cloud.RefreshToken) { SessionVault.Save(store.RootDirectory, "firebase:" + cloud.RefreshToken); savedRefreshToken = cloud.RefreshToken; }
+            var snapshot = await cloud.GetAsync<CommunitySnapshot>($"communities/{id}/snapshot");
+            if (snapshot is not null) store.SaveSnapshot(snapshot);
+            var online = await cloud.GetAsync<Dictionary<string, FirebasePresence>>($"communities/{id}/presence") ?? new();
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (community?.Id != id || closing) return;
+            cloudPresence = online.Values.Where(p => now - p.SeenAt < 45000 && now >= p.SeenAt - 10000).Select(p => new PeerPresence(p.Profile, p.ChannelId, false, false)).ToList();
+            RenderMembers(); RenderChannels(); UpdateStatus();
+            if (channelId is not null)
+            {
+                var history = await cloud.MessagesAsync(id, channelId);
+                foreach (var message in history.OrderBy(m => m.SentAt)) { store.SaveMessage(message); if (selectedChannel?.Id == channelId) AddMessage(message); }
+            }
+        }
+        finally { cloudPolling = false; }
+    }
     private void ToggleTheme()
     {
         ThemeManager.Toggle();
@@ -409,8 +493,10 @@ public sealed class MainWindow : ThemedWindow
     }
     private async void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
-        if (closing) return; e.Cancel = true; closing = true; activityTimer.Stop(); receiveLifetime.Cancel(); incoming.Writer.TryComplete(); latestFrames.Clear();
-        try { if (recorder.IsRecording) { var path = await recorder.StopAsync(); File.Delete(path); } if (recordedPath is not null) File.Delete(recordedPath); recorder.Dispose(); StopVoice(); await node.DisposeAsync(); voice.Dispose(); screen.Dispose(); sounds.Dispose(); }
+        if (closing) return;
+        if (!exitRequested) { e.Cancel = true; foreach (var v in viewers.Values) v.Window.Hide(); Hide(); return; }
+        e.Cancel = true; closing = true; activityTimer.Stop(); cloudTimer.Stop(); receiveLifetime.Cancel(); incoming.Writer.TryComplete(); latestFrames.Clear();
+        try { if (recorder.IsRecording) { var path = await recorder.StopAsync(); File.Delete(path); } if (recordedPath is not null) File.Delete(recordedPath); recorder.Dispose(); if (cloud is not null && community is not null) { try { await cloud.DeleteAsync($"communities/{community.Id}/presence/{profile.Id}"); if (node.IsHost) await cloud.DeleteAsync($"communities/{community.Id}/endpoint"); } catch { } } StopVoice(); await node.DisposeAsync(); tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); voice.Dispose(); screen.Dispose(); sounds.Dispose(); }
         catch { } finally { Close(); }
     }
 }

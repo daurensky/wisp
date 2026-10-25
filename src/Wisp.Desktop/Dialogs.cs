@@ -7,23 +7,28 @@ namespace Wisp.Desktop;
 public sealed class AuthWindow : ThemedWindow
 {
     public UserProfile? Profile { get; private set; }
-    public AuthWindow(LocalStore store)
+    public AuthWindow(LocalStore store, FirebaseBackend? cloud = null)
     {
-        Title = "Wisp · Вход"; Width = 440; Height = 530; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        Title = "Wisp · Вход"; Width = 440; Height = cloud is null ? 570 : 670; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var panel = new StackPanel { Margin = new Thickness(36) }; Content = panel;
         panel.Children.Add(new TextBlock { Text = "wisp", FontSize = 44, FontWeight = FontWeights.Bold });
         panel.Children.Add(new TextBlock { Text = "Место для своих.", Margin = new Thickness(0, 4, 0, 24) });
-        panel.Children.Add(new TextBlock { Text = "Имя пользователя" }); var user = new TextBox(); panel.Children.Add(user);
+        panel.Children.Add(new TextBlock { Text = cloud is null ? "Имя пользователя" : "Email" }); var user = new TextBox(); panel.Children.Add(user);
         panel.Children.Add(new TextBlock { Text = "Пароль · от 8 символов" }); var pass = new PasswordBox(); panel.Children.Add(pass);
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) }; panel.Children.Add(error);
-        void Submit(bool register)
+        TextBox? username = null;
+        if (cloud is not null) { panel.Children.Add(new TextBlock { Text = "Имя пользователя (при регистрации)" }); username = new TextBox { MaxLength = 32 }; panel.Children.Add(username); }
+        async void Submit(bool register)
         {
-            try { Profile = register ? store.Register(user.Text.Trim(), pass.Password) : store.Login(user.Text.Trim(), pass.Password); if (Profile is null) throw new InvalidOperationException("Неверное имя или пароль."); DialogResult = true; }
-            catch (Exception ex) { error.Text = ex.Message; }
+            try { panel.IsEnabled = false;
+                if (register && pass.Password.Length < 8) throw new ArgumentException("Пароль должен содержать минимум 8 символов.");
+                if (cloud is not null && register && !System.Text.RegularExpressions.Regex.IsMatch(username!.Text, @"^[\p{L}\p{N}_\-.]{3,32}$")) throw new ArgumentException("Имя: 3–32 буквы, цифры, _, - или точка.");
+                Profile = cloud is not null ? await cloud.SignInAsync(user.Text.Trim(), pass.Password, register, username?.Text ?? "user") : register ? store.Register(user.Text.Trim(), pass.Password) : store.Login(user.Text.Trim(), pass.Password); if (Profile is null) throw new InvalidOperationException("Неверное имя или пароль."); DialogResult = true; }
+            catch (Exception ex) { error.Text = ex.Message; } finally { panel.IsEnabled = true; }
         }
         var login = new Button { Content = "Войти", IsDefault = true }; login.Click += (_, _) => Submit(false); panel.Children.Add(login);
-        var signup = new Button { Content = "Создать аккаунт на этом компьютере" }; signup.Click += (_, _) => Submit(true); panel.Children.Add(signup);
-        panel.Children.Add(new TextBlock { Text = "Аккаунт и пароль хранятся только на этом ПК.\nОбщего каталога пользователей и восстановления пароля нет.", FontSize = 11, Opacity = .6, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 20, 0, 0) });
+        var signup = new Button { Content = cloud is null ? "Создать аккаунт на этом компьютере" : "Создать аккаунт Firebase" }; signup.Click += (_, _) => Submit(true); panel.Children.Add(signup);
+        panel.Children.Add(new TextBlock { Text = cloud is null ? "Локальный аккаунт. Вход сохраняется на этом ПК на 90 дней." : "Аккаунт хранится в Firebase. Вход будет сохранён на этом ПК.", FontSize = 11, Opacity = .6, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 20, 0, 0) });
     }
 }
 

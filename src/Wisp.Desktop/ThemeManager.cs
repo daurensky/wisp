@@ -6,6 +6,7 @@ public static class ThemeManager
 {
     private static string? preferencePath;
     public static bool IsLight { get; private set; }
+    public static event Action? Changed;
 
     public static void Initialize(string rootDirectory)
     {
@@ -33,5 +34,6 @@ public static class ThemeManager
         var resources = System.Windows.Application.Current.Resources;
         for (int i = 0; i < keys.Length; i++)
             resources[keys[i]] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colors[i]));
+        Changed?.Invoke();
     }
 }

@@ -1,0 +1,58 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "profiles": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['Id','Username']) && newData.child('Id').val() === $uid && newData.child('Username').isString() && newData.child('Username').val().length >= 3 && newData.child('Username').val().length <= 32"
+      }
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "communities": {
+          "$community": {
+            ".write": "auth != null && auth.uid === $uid && root.child('communities').child($community).child('members').child(auth.uid).val() === true",
+            ".validate": "newData.val() === true"
+          }
+        }
+      }
+    },
+    "communities": {
+      "$community": {
+        ".read": "auth != null && data.child('members').child(auth.uid).val() === true",
+        "snapshot": {
+          ".write": "auth != null && ((!data.exists() && newData.child('Community/OwnerId').val() === auth.uid) || data.child('Community/OwnerId').val() === auth.uid)",
+          ".validate": "newData.hasChildren(['Community','Channels','Members']) && newData.child('Community/Id').val() === $community && newData.child('Community/OwnerId').val() === auth.uid"
+        },
+        "members": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('communities').child($community).child('snapshot').exists()",
+            ".validate": "newData.val() === true"
+          }
+        },
+        "endpoint": {
+          ".write": "auth != null && root.child('communities').child($community).child('snapshot/Community/OwnerId').val() === auth.uid",
+          ".validate": "newData.isString() && newData.val().length < 2048"
+        },
+        "presence": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('communities').child($community).child('members').child(auth.uid).val() === true",
+            ".validate": "newData.hasChildren(['Profile','SeenAt']) && newData.child('Profile/Id').val() === $uid && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000"
+          }
+        },
+        "messages": {
+          "$channel": {
+            ".indexOn": ["SentAt"],
+            "$message": {
+              ".write": "auth != null && !data.exists() && root.child('communities').child($community).child('members').child(auth.uid).val() === true",
+              ".validate": "newData.hasChildren(['Id','ChannelId','AuthorId','Text','SentAt']) && newData.child('Id').val() === $message && newData.child('ChannelId').val() === $channel && newData.child('AuthorId').val() === auth.uid && newData.child('Text').isString() && newData.child('Text').val().length <= 8000"
+            }
+          }
+        }
+      }
+    }
+  }
+}

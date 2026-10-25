@@ -114,6 +114,30 @@ public sealed class LocalStore : IDisposable
         }
     }
 
+    public string CreateSession(string profileId)
+    {
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        lock (gate)
+        {
+            Execute("CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES accounts(profile_id), expires_at TEXT NOT NULL)");
+            Execute("INSERT INTO sessions VALUES($hash,$id,$expires)", ("$hash", SessionHash(token)), ("$id", profileId), ("$expires", DateTimeOffset.UtcNow.AddDays(90).ToString("O")));
+        }
+        return token;
+    }
+
+    public UserProfile? RestoreSession(string token)
+    {
+        lock (gate)
+        {
+            Execute("CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES accounts(profile_id), expires_at TEXT NOT NULL)");
+            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id FROM profiles p JOIN sessions s ON p.id=s.profile_id WHERE s.token_hash=$hash AND s.expires_at>$now", ("$hash", SessionHash(token)), ("$now", DateTimeOffset.UtcNow.ToString("O")));
+            using var reader = cmd.ExecuteReader();
+            return reader.Read() ? ReadProfile(reader) : null;
+        }
+    }
+    public void RevokeSession(string token) { lock (gate) Execute("DELETE FROM sessions WHERE token_hash=$hash", ("$hash", SessionHash(token))); }
+    private static string SessionHash(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+
     public void SaveProfile(UserProfile profile)
     {
         ValidateProfile(profile);

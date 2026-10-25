@@ -9,6 +9,24 @@ public sealed class LocalStoreTests : IDisposable
     private readonly string directory = Path.Combine(Path.GetTempPath(), "wisp-tests-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void SavedSessionsRestoreOnlyTheCorrectAccountAndCanBeRevoked()
+    {
+        string session;
+        string id;
+        using (var store = new LocalStore(directory))
+        {
+            var profile = store.Register("Alice", "correct horse battery"); id = profile.Id;
+            session = store.CreateSession(profile.Id);
+            Assert.Equal(id, store.RestoreSession(session)?.Id);
+            Assert.Null(store.RestoreSession("not-a-session"));
+        }
+        using var reopened = new LocalStore(directory);
+        Assert.Equal(id, reopened.RestoreSession(session)?.Id);
+        reopened.RevokeSession(session);
+        Assert.Null(reopened.RestoreSession(session));
+    }
+
+    [Fact]
     public void AccountsPersistAndPasswordsRequireAnExactMatch()
     {
         string id;
