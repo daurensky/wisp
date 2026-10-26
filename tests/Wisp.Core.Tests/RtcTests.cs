@@ -47,14 +47,16 @@ public sealed class RtcTests
     [Fact]
     public async Task TwoPeersConnectDirectlyAndTransferOpusScreenAndFragmentedControl()
     {
-        using var a = new RtcPeer("bob", "room", useGoogleStun: false);
-        using var b = new RtcPeer("alice", "room", useGoogleStun: false);
+        using var a = new RtcPeer("bob", "room", iceServers: Array.Empty<SIPSorcery.Net.RTCIceServer>());
+        using var b = new RtcPeer("alice", "room", iceServers: Array.Empty<SIPSorcery.Net.RTCIceServer>());
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         void Changed(string _) { if (a.Connected && b.Connected) ready.TrySetResult(); }
         a.StateChanged += Changed; b.StateChanged += Changed;
         var offer = await a.OfferAsync(); var answer = await b.AnswerAsync(offer); a.AcceptAnswer(answer);
         if (a.Connected && b.Connected) ready.TrySetResult();
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Equal("host/host", a.SelectedCandidateTypes);
+        Assert.Equal("host/host", b.SelectedCandidateTypes);
         var opus = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var image = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var shareAudio = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);

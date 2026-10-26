@@ -9,6 +9,8 @@ public sealed record RtcSignal(string FromSession, string ToSession, string Type
 public sealed class RtcMesh : IAsyncDisposable
 {
     private readonly FirebaseBackend cloud;
+    private readonly IIceServerProvider iceServers;
+    private IReadOnlyList<SIPSorcery.Net.RTCIceServer> currentIceServers = Array.Empty<SIPSorcery.Net.RTCIceServer>();
     private readonly string uid;
     private readonly ConcurrentDictionary<string, Link> links = new();
     private readonly SemaphoreSlim lifecycle = new(1);
@@ -20,18 +22,20 @@ public sealed class RtcMesh : IAsyncDisposable
     private DateTimeOffset heartbeat { get => DateTimeOffset.FromUnixTimeMilliseconds(Interlocked.Read(ref heartbeatMs)); set => Interlocked.Exchange(ref heartbeatMs, value.ToUnixTimeMilliseconds()); }
     private bool muted, deafened;
     public bool Joined => session is not null && !expired;
+    public IReadOnlyDictionary<string, string> ConnectionPaths => links.Where(p => p.Value.Peer.Connected && p.Value.Peer.SelectedCandidateTypes is not null).ToDictionary(p => p.Key, p => p.Value.Peer.SelectedCandidateTypes!);
     public int ConnectedCount => links.Values.Count(l => l.Peer.Connected);
     public IReadOnlyList<string> ConnectedPeerIds => links.Where(p => !p.Value.Failed && p.Value.Peer.Connected).Select(p => p.Key).ToArray();
     public event Action<WireMessage>? MessageReceived;
     public event Action<string>? Error;
     public event Action? Changed;
-    public RtcMesh(FirebaseBackend cloud) { this.cloud = cloud; uid = cloud.Profile?.Id ?? throw new InvalidOperationException("Firebase login required."); }
+    public RtcMesh(FirebaseBackend cloud, IIceServerProvider? iceServers = null) { this.cloud = cloud; this.iceServers = iceServers ?? new StaticIceServerProvider(); uid = cloud.Profile?.Id ?? throw new InvalidOperationException("Firebase login required."); }
     public async Task EnterAsync(string communityId, string channelId, bool mute, bool deafen)
     {
         await lifecycle.WaitAsync();
         try
         {
             await LeaveCoreAsync();
+            currentIceServers = await iceServers.GetAsync();
             expired = false; community = communityId; channel = channelId; session = Guid.NewGuid().ToString("N"); muted = mute; deafened = deafen;
             try
             {
@@ -98,14 +102,14 @@ public sealed class RtcMesh : IAsyncDisposable
                         if (!links.TryGetValue(entry.Key, out var link))
                         {
                             var remote = entry.Key; var localChannel = channel!;
-                            var peer = new RtcPeer(remote, localChannel);
+                            var peer = new RtcPeer(remote, localChannel, currentIceServers);
                             link = new Link(peer, entry.Value.SessionId, string.CompareOrdinal(uid, remote) < 0);
                             links[remote] = link;
                             peer.StateChanged += state =>
                             {
                                 if (cancellation.IsCancellationRequested) return;
                                 Changed?.Invoke();
-                                if (state is "failed" or "invalid-packet") Fail(remote, link, "Прямое WebRTC-соединение не установлено. В этой сети STUN без TURN может быть недостаточно. Выйди из канала и войди снова для повтора.");
+                                if (state is "failed" or "invalid-packet") Fail(remote, link, "Прямое WebRTC-соединение не установлено. Эта сеть может блокировать прямую связь. Выйди из канала и войди снова для повтора.");
                             };
                             peer.MessageReceived += message =>
                             {
@@ -113,7 +117,7 @@ public sealed class RtcMesh : IAsyncDisposable
                             };
                         }
                         if (!link.Failed && !link.Peer.Connected && DateTimeOffset.UtcNow - link.Created > TimeSpan.FromSeconds(35))
-                            Fail(entry.Key, link, "Не удалось соединиться с участником за 35 секунд. TURN отключён; попробуй другую сеть или повторный вход.");
+                            Fail(entry.Key, link, "Не удалось соединиться с участником за 35 секунд. Попробуй другую сеть или повторный вход.");
                         if (!link.Failed && !link.Peer.Connected && (link.Negotiation is null || link.Negotiation.IsCompleted))
                             link.Negotiation = NegotiateAsync(entry.Key, link, cancellation);
                     }

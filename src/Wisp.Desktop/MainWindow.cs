@@ -34,6 +34,8 @@ public sealed class MainWindow : ThemedWindow
     private bool sendingMessage;
     private DateTimeOffset lastErrorCue = DateTimeOffset.MinValue;
     private readonly FirebaseBackend? cloud;
+    private readonly FileIceServerProvider iceServers;
+    private string lastConnectionPaths = "";
     private readonly DispatcherTimer cloudTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private IReadOnlyList<PeerPresence> cloudPresence = Array.Empty<PeerPresence>();
     private string? cloudChannelId;
@@ -87,7 +89,8 @@ public sealed class MainWindow : ThemedWindow
     {
         if (profile.AvatarRevision is null && profile.AvatarPath is not null && File.Exists(profile.AvatarPath)) profile = profile with { AvatarRevision = AvatarCatalog.Revision(profile.AvatarPath) };
         this.store = store; avatars = new AvatarCatalog(store.RootDirectory, profile.Id); this.profile = profile; this.cloud = cloud; savedRefreshToken = cloud?.RefreshToken; node = new PeerNode(profile, store.RootDirectory);
-        rtc = cloud is null ? null : new RtcMesh(cloud);
+        iceServers = new FileIceServerProvider(store.RootDirectory);
+        rtc = cloud is null ? null : new RtcMesh(cloud, iceServers);
         Title = "Wisp"; Width = 1360; Height = 860; MinWidth = 1060; MinHeight = 650; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) }); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) }); root.ColumnDefinitions.Add(new ColumnDefinition()); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) }); Content = root;
         var rail = new DockPanel { Margin = new Thickness(8, 14, 8, 8) }; root.Children.Add(rail);
@@ -125,6 +128,9 @@ public sealed class MainWindow : ThemedWindow
                 if (closing) return;
                 if (!rtc.Joined) { cloudChannelId = null; if (voiceChannelId is not null) StopVoice(); }
                 var active = rtc.ConnectedPeerIds; voice.SynchronizePeers(active);
+                var paths = string.Join(", ", rtc.ConnectionPaths.Values.OrderBy(path => path));
+                if (paths.Length > 0 && paths != lastConnectionPaths) Notify("Путь прямого соединения: " + paths);
+                lastConnectionPaths = paths;
                 foreach (var id in remoteStreams.Keys.Where(id => !active.Contains(id)).ToList()) StopVideoPeer(id);
                 var peerKey = string.Join("|", active.OrderBy(id => id));
                 if (sharing && peerKey != sharedPeers && screen.CurrentInfo is { } info) { sharedPeers = peerKey; Run(() => SendPacket(new WireMessage("screen-start", profile.Id, voiceChannelId, JsonSerializer.SerializeToUtf8Bytes(info)))); }
@@ -302,7 +308,7 @@ public sealed class MainWindow : ThemedWindow
     private async Task JoinCommunity()
     {
         EnsureNoRecording();
-        var d = new FormDialog(this, "Присоединиться"); var invite = d.Field(cloud is null ? "Приглашение wisp://" : "Приглашение wisp-cloud:", "", true); d.Note(cloud is null ? "Для голоса нужен прямой доступ к компьютеру друга." : "Приглашение даёт доступ к сообществу и чату. Голос использует WebRTC с Google STUN без TURN. В некоторых сетях прямое соединение невозможно."); d.Accept("Подключиться"); if (d.ShowDialog() != true) return;
+        var d = new FormDialog(this, "Присоединиться"); var invite = d.Field(cloud is null ? "Приглашение wisp://" : "Приглашение wisp-cloud:", "", true); d.Note(cloud is null ? "Для голоса нужен прямой доступ к компьютеру друга." : "Приглашение даёт доступ к сообществу и чату. Голос использует прямой WebRTC с настроенными STUN-серверами. В некоторых сетях прямое соединение невозможно."); d.Accept("Подключиться"); if (d.ShowDialog() != true) return;
         IsEnabled = false;
         try { await Disconnect();
             if (cloud is not null && invite.Text.Trim().StartsWith("wisp-cloud:"))
@@ -334,7 +340,7 @@ public sealed class MainWindow : ThemedWindow
                 voiceChannelId = c.Id; cloudChannelId = c.Id;
                 await cloud.PresenceAsync(community.Id, profile, c.Id);
                 await RefreshCloud(); RenderChannels(); UpdateStatus(); sounds.Play("connect");
-                Notify("WebRTC · Google STUN · без TURN. Соединение с участниками устанавливается напрямую.");
+                Notify("WebRTC · STUN. Соединение с участниками устанавливается напрямую.");
             }
             catch { StopVoice(); cloudChannelId = null; await rtc.LeaveAsync(); throw; }
             return;
@@ -657,9 +663,26 @@ public sealed class MainWindow : ThemedWindow
             var destination = Path.Combine(directory, Guid.NewGuid().ToString("N") + Path.GetExtension(f.FileName)); File.Copy(f.FileName, destination);
             if (isAvatar) avatar = destination; else banner = destination; sounds.Play("message");
         }
+        d.Action("Сеть · STUN", () => { d.Close(); EditNetworkSettings(); });
         d.Action("Выбрать аватар", () => Pick(true)); d.Action("Выбрать баннер", () => Pick(false)); d.Action("Удалить аватар и баннер", () => { avatar = null; banner = null; });
         d.Note("Аватар и баннер: до 4 МБ каждый. Изменения отправляются участникам активной сессии."); d.Accept();
         if (d.ShowDialog() != true) return; var proposed = profile with { Username = name.Text.Trim(), About = about.Text.Trim(), AvatarPath = avatar, BannerPath = banner, AvatarAssetId = null, BannerAssetId = null, AvatarRevision = avatar is null ? null : AvatarCatalog.Revision(avatar) }; store.SaveProfile(proposed); profile = proposed; if (community is not null) store.UpsertMember(community.Id, profile); Run(async () => { await PublishProfile(); RenderMembers(); UpdateStatus(); sounds.Play("message"); });
+    }
+    private void EditNetworkSettings()
+    {
+        var dialog = new FormDialog(this, "Прямое соединение · STUN", 600);
+        string[] current;
+        try { current = iceServers.Load().StunUrls; }
+        catch (Exception ex) { Notify(ex.Message, true); current = FileIceServerProvider.Defaults; }
+        dialog.Note("Один STUN URL на строку. Пустой список оставляет только локальные ICE-кандидаты. Адреса STUN и SDP раскрывают IP участников; содержимое разговора защищено DTLS/SRTP.");
+        var urls = dialog.Field("STUN-серверы", string.Join(Environment.NewLine, current), true);
+        dialog.Action("Сохранить", () =>
+        {
+            iceServers.Save(urls.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries));
+            dialog.DialogResult = true;
+        });
+        if (dialog.ShowDialog() == true)
+            Notify("STUN-настройки сохранены. Они будут применены при следующем входе или восстановлении пары.");
     }
     private async Task PublishProfile()
     {

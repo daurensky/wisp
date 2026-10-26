@@ -18,13 +18,22 @@ public sealed class RtcPeer : IDisposable
     private readonly bool[] audioStarted = new bool[2];
     private readonly object audioOrder = new();
     public bool Connected => pc.connectionState == RTCPeerConnectionState.connected && control?.readyState == RTCDataChannelState.open && events?.readyState == RTCDataChannelState.open;
+    public string? SelectedCandidateTypes
+    {
+        get
+        {
+            if (!Connected) return null;
+            var selected = pc.GetRtpChannel()?.NominatedEntry;
+            return selected is null ? null : $"{selected.LocalCandidate.type}/{selected.RemoteCandidate.type}";
+        }
+    }
     public event Action<string>? StateChanged;
     public event Action<WireMessage>? MessageReceived;
     private readonly string remoteId, channelId;
-    public RtcPeer(string remoteId, string channelId, bool useGoogleStun = true)
+    public RtcPeer(string remoteId, string channelId, IReadOnlyList<RTCIceServer>? iceServers = null)
     {
         this.remoteId = remoteId; this.channelId = channelId;
-        pc = new RTCPeerConnection(new RTCConfiguration { iceServers = useGoogleStun ? new List<RTCIceServer> { new() { urls = GoogleStun }, new() { urls = "stun:stun1.l.google.com:19302" } } : new() });
+        pc = new RTCPeerConnection(new RTCConfiguration { iceServers = iceServers?.ToList() ?? FileIceServerProvider.Defaults.Select(url => new RTCIceServer { urls = url }).ToList() });
         pc.addTrack(new MediaStreamTrack(new AudioFormat(111, "opus", 48000, 2, "minptime=10;useinbandfec=1")));
         pc.addTrack(new MediaStreamTrack(new AudioFormat(112, "opus", 48000, 2, "stereo=1;minptime=10")));
         pc.addTrack(new MediaStreamTrack(new VideoFormat(96, "H264", 90000, "packetization-mode=1;profile-level-id=42e02a;level-asymmetry-allowed=1")));

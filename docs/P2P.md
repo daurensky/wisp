@@ -1,6 +1,6 @@
 # Default Firebase mode: WebRTC mesh
 
-Firebase mode uses `RtcMesh`/`RtcPeer`: up to four direct DTLS/SCTP peer connections per user, Google STUN only, no TURN and no participant forwarding. Firebase authenticates signalling and atomically limits the room to five leased seats. SDP is bound to both peers' current session IDs. See [FIREBASE.md](FIREBASE.md) for setup, permissions, NAT limitations and transport details. There is no guaranteed connectivity through symmetric NAT or blocked UDP.
+Firebase mode uses `RtcMesh`/`RtcPeer`: up to four direct DTLS/SRTP peer connections per user with SCTP control/file channels, configurable UDP STUN (Google defaults), no TURN by the owner’s explicit decision and no participant forwarding. Firebase authenticates signalling and atomically limits the room to five leased seats. SDP is bound to both peers' current session IDs. See [FIREBASE.md](FIREBASE.md) for setup, permissions, NAT limitations and transport details. There is no guaranteed connectivity through symmetric NAT or blocked UDP.
 
 The following TLS implementation remains a legacy fallback only when Firebase configuration is absent.
 
@@ -34,3 +34,5 @@ cannot transmit microphone audio. Media queues are bounded and realtime frames
 are dropped on congestion. TCP head-of-line blocking can increase voice latency
 on lossy links; this initial implementation is best suited to LAN/VPN networks.
 Screen sharing sends compressed still frames, not a hardware video codec.
+
+Network settings are local (`network.json`); one string URL per ICE server. STUN servers see public IPs, and SDP stored in Firebase contains ICE addresses. User-facing connection-path notices show candidate types only. No TURN server/API or relay CI job is included in this scope.
