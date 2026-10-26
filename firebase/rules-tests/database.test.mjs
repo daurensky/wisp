@@ -218,3 +218,19 @@ test('wake markers reveal no SDP, reject spoofed sessions, sixth slots and extra
   await assertFails(set(ref(db('alice'), 'communities/room/rtcRooms/voice/events/s0/s5'), marker));
   await assertSucceeds(set(ref(db('alice'), 'communities/room/rtcRooms/voice/events/s0'), null));
 });
+
+test('REST seat ETag can be echoed verbatim; a stale version cannot overwrite the lease', async () => {
+  const token = createMockUserToken({ sub: 'alice', iat: Math.floor(Date.now() / 1000) }, 'demo-wisp-hardening');
+  const url = `http://127.0.0.1:9000/communities/room/rtcRooms/voice/s0.json?ns=demo-wisp-hardening&auth=${encodeURIComponent(token)}`;
+  const current = await fetch(url, { headers: { 'X-Firebase-ETag': 'true' } });
+  assert.equal(current.status, 200);
+  const etag = current.headers.get('etag');
+  assert.ok(etag && etag.length > 0);
+  console.log(`Firebase ETag format: ${etag.startsWith('"') ? 'quoted' : 'unquoted'}`);
+  const seat = await current.json();
+  const options = { method: 'PUT', headers: { 'Content-Type': 'application/json', 'if-match': etag }, body: JSON.stringify({ ...seat, Muted: true, SeenAt: Date.now() }) };
+  assert.equal((await fetch(url, options)).status, 200);
+  const stale = await fetch(url, { ...options, body: JSON.stringify({ ...seat, Muted: false, SeenAt: Date.now() }) });
+  assert.equal(stale.status, 412);
+  assert.equal((await get(ref(db('bob'), 'communities/room/rtcRooms/voice/s0/Muted'))).val(), true);
+});

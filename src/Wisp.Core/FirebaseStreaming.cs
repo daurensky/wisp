@@ -63,8 +63,14 @@ public sealed partial class FirebaseBackend
         request.Headers.TryAddWithoutValidation("X-Firebase-ETag", "true");
         using var response = await http.SendAsync(request, cancellation);
         using var data = await Read(response);
-        var etag = response.Headers.ETag?.Tag
-            ?? throw new InvalidDataException("Firebase не вернул ETag для атомарной записи.");
+        // RTDB can return an unquoted hash or null_etag. HttpResponseHeaders.ETag uses
+        // the strict HTTP entity-tag parser and hides those values as null. Preserve
+        // the actual header verbatim: Firebase must receive the same value in if-match.
+        if (!response.Headers.NonValidated.TryGetValues("ETag", out var values) || values.Count != 1)
+            throw new InvalidDataException("Firebase не вернул ETag для атомарной записи.");
+        var etag = values.First();
+        if (string.IsNullOrWhiteSpace(etag) || etag.Length > 1024 || etag.Any(char.IsControl))
+            throw new InvalidDataException("Firebase вернул некорректный ETag; атомарная запись отменена.");
         return new(data.RootElement.ValueKind == JsonValueKind.Null ? default : data.RootElement.Deserialize<T>(), etag);
     }
 

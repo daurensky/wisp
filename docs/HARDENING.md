@@ -142,6 +142,7 @@ src/Wisp.Desktop/Wisp.Desktop.csproj
 tests/Wisp.Core.Tests/AudioRecoveryTests.cs
 tests/Wisp.Core.Tests/CloudFilesTests.cs
 tests/Wisp.Core.Tests/FirebaseChatTests.cs
+tests/Wisp.Core.Tests/FirebaseEtagTests.cs
 tests/Wisp.Core.Tests/FirebaseRecoveryTests.cs
 tests/Wisp.Core.Tests/IceServerProviderTests.cs
 tests/Wisp.Core.Tests/MediaTimingTests.cs
@@ -149,3 +150,9 @@ tests/Wisp.Core.Tests/RtcTests.cs
 tests/Wisp.Desktop.Tests/VideoCodecTests.cs
 tests/Wisp.Desktop.Tests/Wisp.Desktop.Tests.csproj
 ```
+
+## Исправление после выпуска: ETag Firebase
+
+Ошибка «Firebase не вернул ETag для атомарной записи» воспроизведена двумя новыми тестами на старом коде. Firebase отдаёт unquoted ETag (подтверждено изолированным эмулятором), а типизированный парсер .NET скрывает его как null. GetVersionedAsync теперь использует Headers.NonValidated, сохраняет исходный hash/null_etag/quoted tag для if-match и отклоняет отсутствующие, неоднозначные, пустые или управляющие значения. Безусловный fallback не добавляется; HTTP 412 и лимит мест сохранены.
+
+После исправления: 62/62 core, 17/17 emulator, cross-build без предупреждений/ошибок. Изменены FirebaseStreaming.cs, новый FirebaseEtagTests.cs, REST-тест в database.test.mjs и этот отчёт/TESTING.md. Схема и правила доступа не меняются, публикация правил не требуется; пользователь обновляет сборку клиента.
