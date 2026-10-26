@@ -14,6 +14,9 @@ public sealed class RtcPeer : IDisposable
     private readonly object receiveGate = new();
     private RTCDataChannel? control, events;
     private int disposed;
+    private readonly ushort[] lastAudioSequence = new ushort[2];
+    private readonly bool[] audioStarted = new bool[2];
+    private readonly object audioOrder = new();
     public bool Connected => pc.connectionState == RTCPeerConnectionState.connected && control?.readyState == RTCDataChannelState.open && events?.readyState == RTCDataChannelState.open;
     public event Action<string>? StateChanged;
     public event Action<WireMessage>? MessageReceived;
@@ -27,8 +30,9 @@ public sealed class RtcPeer : IDisposable
         pc.addTrack(new MediaStreamTrack(new VideoFormat(96, "H264", 90000, "packetization-mode=1;profile-level-id=42e02a;level-asymmetry-allowed=1")));
         pc.OnRtpPacketReceivedByIndex += (index, _, type, packet) =>
         {
-            if (Volatile.Read(ref disposed) == 0 && type == SDPMediaTypesEnum.audio && packet.Payload.Length is > 0 and <= 1275)
-                MessageReceived?.Invoke(new(index == 1 ? "screen-audio" : "audio", remoteId, channelId, packet.Payload));
+            if (Volatile.Read(ref disposed) != 0 || type != SDPMediaTypesEnum.audio || index is < 0 or > 1 || packet.Payload.Length is 0 or > 1275) return;
+            lock (audioOrder) { var sequence = packet.Header.SequenceNumber; if (audioStarted[index] && unchecked((short)(sequence - lastAudioSequence[index])) <= 0) return; audioStarted[index] = true; lastAudioSequence[index] = sequence; }
+            MessageReceived?.Invoke(new(index == 1 ? "screen-audio" : "audio", remoteId, channelId, packet.Payload));
         };
         pc.OnVideoFrameReceived += (_, _, bytes, _) => { if (Volatile.Read(ref disposed) == 0 && bytes.Length is > 0 and <= 2 * 1024 * 1024) MessageReceived?.Invoke(new("screen-h264", remoteId, channelId, bytes)); };
         pc.onicegatheringstatechange += state => { if (state == RTCIceGatheringState.complete) gathered.TrySetResult(); };

@@ -139,11 +139,22 @@ internal sealed class MfTransform : IDisposable
                 var result = Transform.ProcessOutput(ProcessOutputFlags.None, 1, ref output, out _);
                 if (result.Code == unchecked((int)0xC00D6D72)) return null; // MF_E_TRANSFORM_NEED_MORE_INPUT
                 if (result.Code == unchecked((int)0xC00D6D61) && streamChange is not null) { streamChange(); continue; }
-                result.CheckError(); if (output.Sample is null) return null;
+                result.CheckError(); if (output.Sample is null || output.Sample.BufferCount == 0 || (output.Status & 0x300) == 0x300) return null;
                 using var contiguous = output.Sample.ConvertToContiguousBuffer(); contiguous.Lock(out var source, out _, out var length);
                 try { var data = new byte[length]; Marshal.Copy(source, data, 0, length); return data; } finally { contiguous.Unlock(); }
             }
-            finally { output.Events?.Dispose(); if (output.Sample is not null && !ReferenceEquals(supplied, output.Sample)) output.Sample.Dispose(); supplied?.Dispose(); suppliedBuffer?.Dispose(); }
+            finally
+            {
+                output.Events?.Dispose();
+                if (output.Sample is not null && !ReferenceEquals(supplied, output.Sample))
+                {
+                    // SharpGen unmarshals a new managed wrapper around a caller-owned sample.
+                    // Matching pointers represent one COM reference, not two independently owned samples.
+                    if (supplied is not null && output.Sample.NativePointer == supplied.NativePointer) GC.SuppressFinalize(output.Sample);
+                    else output.Sample.Dispose();
+                }
+                supplied?.Dispose(); suppliedBuffer?.Dispose();
+            }
         }
         return null;
     }
