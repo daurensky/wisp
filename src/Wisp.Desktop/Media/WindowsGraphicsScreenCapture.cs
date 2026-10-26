@@ -63,47 +63,58 @@ internal sealed class WindowsGraphicsScreenCapture : IScreenCapture
     {
         if (closed) throw new CaptureClosedException("Источник демонстрации закрыт или монитор отключён.");
         if (GdiScreenCapture.IsMinimized(source)) return CaptureState.Paused;
-        using var frame = pool!.TryGetNextFrame();
+        var frame = pool!.TryGetNextFrame();
         if (frame is null) return CaptureState.Waiting;
-        var content = frame.ContentSize;
-        if (content.Width <= 0 || content.Height <= 0) return CaptureState.Waiting;
-        if (content.Width != size.Width || content.Height != size.Height)
-        {
-            // Dispose the old frame before recreating its pool; the next frame has the new physical dimensions.
-            frame.Dispose(); staging?.Dispose(); staging = null;
-            size = content;
-            pool.Recreate(projectedDevice!, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
-            return CaptureState.Waiting;
-        }
-        var access = frame.Surface.As<IDirect3DDxgiInterfaceAccess>();
-        var iid = typeof(ID3D11Texture2D).GUID;
-        Marshal.ThrowExceptionForHR(access.GetInterface(ref iid, out var native));
-        using var texture = new ID3D11Texture2D(native);
-        var description = texture.Description;
-        if (staging is null || staging.Description.Width != description.Width || staging.Description.Height != description.Height)
-        {
-            staging?.Dispose();
-            description.Usage = ResourceUsage.Staging;
-            description.BindFlags = BindFlags.None;
-            description.CPUAccessFlags = CpuAccessFlags.Read;
-            description.MiscFlags = ResourceOptionFlags.None;
-            staging = device!.CreateTexture2D(description);
-        }
-        context!.CopyResource(staging, texture);
-        var mapped = context.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+        SizeInt32? resized = null;
         try
         {
-            using var image = new Bitmap(content.Width, content.Height, checked((int)mapped.RowPitch), PixelFormat.Format32bppRgb, mapped.DataPointer);
-            double scale = Math.Min((double)bitmap.Width / content.Width, (double)bitmap.Height / content.Height);
-            int width = Math.Max(1, (int)(content.Width * scale)), height = Math.Max(1, (int)(content.Height * scale));
-            graphics.Clear(Color.Black);
-            graphics.DrawImage(image, new Rectangle((bitmap.Width - width) / 2, (bitmap.Height - height) / 2, width, height), 0, 0, content.Width, content.Height, GraphicsUnit.Pixel);
+            var content = frame.ContentSize;
+            if (content.Width <= 0 || content.Height <= 0) return CaptureState.Waiting;
+            if (content.Width != size.Width || content.Height != size.Height)
+            {
+                resized = content;
+                return CaptureState.Waiting;
+            }
+            var access = frame.Surface.As<IDirect3DDxgiInterfaceAccess>();
+            var iid = typeof(ID3D11Texture2D).GUID;
+            Marshal.ThrowExceptionForHR(access.GetInterface(ref iid, out var native));
+            using var texture = new ID3D11Texture2D(native);
+            var description = texture.Description;
+            if (staging is null || staging.Description.Width != description.Width || staging.Description.Height != description.Height)
+            {
+                staging?.Dispose();
+                description.Usage = ResourceUsage.Staging;
+                description.BindFlags = BindFlags.None;
+                description.CPUAccessFlags = CpuAccessFlags.Read;
+                description.MiscFlags = ResourceOptionFlags.None;
+                staging = device!.CreateTexture2D(description);
+            }
+            context!.CopyResource(staging, texture);
+            var mapped = context.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+            try
+            {
+                using var image = new Bitmap(content.Width, content.Height, checked((int)mapped.RowPitch), PixelFormat.Format32bppRgb, mapped.DataPointer);
+                double scale = Math.Min((double)bitmap.Width / content.Width, (double)bitmap.Height / content.Height);
+                int width = Math.Max(1, (int)(content.Width * scale)), height = Math.Max(1, (int)(content.Height * scale));
+                graphics.Clear(Color.Black);
+                graphics.DrawImage(image, new Rectangle((bitmap.Width - width) / 2, (bitmap.Height - height) / 2, width, height), 0, 0, content.Width, content.Height, GraphicsUnit.Pixel);
+            }
+            finally { context.Unmap(staging, 0); }
+            var data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+            try { for (int y = 0; y < bitmap.Height; y++) Marshal.Copy(data.Scan0 + y * data.Stride, pixels, y * bitmap.Width * 4, bitmap.Width * 4); }
+            finally { bitmap.UnlockBits(data); }
+            return CaptureState.Active;
         }
-        finally { context.Unmap(staging, 0); }
-        var data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
-        try { for (int y = 0; y < bitmap.Height; y++) Marshal.Copy(data.Scan0 + y * data.Stride, pixels, y * bitmap.Width * 4, bitmap.Width * 4); }
-        finally { bitmap.UnlockBits(data); }
-        return CaptureState.Active;
+        finally
+        {
+            frame.Dispose();
+            if (resized is { } nextSize)
+            {
+                staging?.Dispose(); staging = null;
+                size = nextSize;
+                pool.Recreate(projectedDevice!, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
+            }
+        }
     }
 
     private void ItemClosed(GraphicsCaptureItem sender, object args) => closed = true;

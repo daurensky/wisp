@@ -1,6 +1,6 @@
 # Проверка Wisp
 
-Ветка `codex/hardening`: Linux — **56/56 core**, **16/16 RTDB emulator**, cross-build решения без предупреждений/ошибок. Windows CI [40328077856](https://github.com/daurensky/wisp/actions/runs/40328077856) проверила фазу 5: core 53/53, Desktop 4/4, сборка и portable ZIP. Финальная CI фазы 6 отмечается в HARDENING.md после выполнения. **Физические аудиоустройства, WGC/GDI-захват, смена сети, эхо, DPI и CPU/RAM не проверены на Windows**. Успешные codec/STA-тесты не заменяют эти сценарии.
+Ветка `codex/hardening`: Linux — **56/56 core**, **16/16 RTDB emulator**, cross-build решения без предупреждений/ошибок. CI фазы 6: [Linux rules](https://github.com/daurensky/wisp/actions/runs/40330936246) — успешно; [Windows](https://github.com/daurensky/wisp/actions/runs/40330936194) — core 56/56, Desktop 4/4, build/publish успешно. Итоговый статус последнего коммита — в PR #2 и HARDENING.md. **Физические аудиоустройства, WGC/GDI-захват, смена сети, эхо, DPI и CPU/RAM не проверены на Windows**. Успешные codec/STA-тесты не заменяют эти сценарии.
 
 ## Автоматическая проверка
 
