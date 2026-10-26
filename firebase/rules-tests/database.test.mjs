@@ -2,7 +2,8 @@ import { before, beforeEach, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { get, ref, set } from 'firebase/database';
+import { get, ref, set, update } from 'firebase/database';
+import { createMockUserToken } from '@firebase/util';
 
 let env;
 const sessions = { alice: 'a'.repeat(32), bob: 'b'.repeat(32) };
@@ -33,9 +34,13 @@ beforeEach(async () => {
 });
 after(async () => { await env?.cleanup(); });
 
-test('baseline P0-1: an authenticated outsider CAN read a private voice attachment in profiles', async () => {
-  const data = await assertSucceeds(get(ref(db('outsider'), 'profiles/alice/Files/file/Chunks/c00')));
+test('P0-1: legacy private files are readable only by their author, never through a profile parent read', async () => {
+  const data = await assertSucceeds(get(ref(db('alice'), 'profiles/alice/Files/file/Chunks/c00')));
   assert.equal(data.val(), 'AQID');
+  await assertFails(get(ref(db('outsider'), 'profiles/alice/Files/file/Chunks/c00')));
+  await assertFails(get(ref(db('bob'), 'profiles/alice/Files/file/Info')));
+  await assertFails(get(ref(db('outsider'), 'profiles/alice')));
+  await assertFails(set(ref(db('alice'), 'profiles/alice/Files/new-file'), { Data: 'new' }));
 });
 test('anonymous profile reads and community reads by outsiders are denied', async () => {
   await assertFails(get(ref(db(null), 'profiles/alice')));
@@ -54,4 +59,117 @@ test('SDP requires authenticated sender, matching fresh sessions, and authorized
   await assertFails(get(ref(db('u2'), 'rtcSignals/room/voice/alice/bob')));
   await assertFails(set(ref(db('bob'), 'rtcSignals/room/voice/alice/bob'), signal()));
   await assertFails(set(ref(db('alice'), 'rtcSignals/room/voice/alice/bob'), { ...signal(), ToSession: 'z'.repeat(32) }));
+});
+
+const fileId = 'f'.repeat(64);
+const emojiId = 'e'.repeat(64);
+const manifest = { Name: 'private.wav', Kind: 'voice', Size: 3, Chunks: 1 };
+const transfer = (kind, id) => ({ Id: id, Name: 'image.gif', Kind: kind, Data: 'AQID' });
+const message = () => ({ Id: 'message', ChannelId: 'voice', AuthorId: 'alice', AuthorName: 'Alice', Text: 'hello', SentAt: new Date().toISOString() });
+
+test('community files require membership; their chunks and manifest cannot be changed after publication', async () => {
+  const base = `communities/room/files/${fileId}`;
+  await assertFails(set(ref(db('outsider'), `${base}/Chunks/c00`), 'AQID'));
+  await assertSucceeds(set(ref(db('alice'), `${base}/Chunks/c00`), 'AQID'));
+  await assertFails(set(ref(db('alice'), `${base}/Chunks/c00`), 'BAUG'));
+  await assertFails(set(ref(db('bob'), `${base}/Chunks/c00`), 'BAUG'));
+  await assertSucceeds(set(ref(db('alice'), `${base}/Info`), manifest));
+  assert.equal((await assertSucceeds(get(ref(db('bob'), `${base}/Chunks/c00`)))).val(), 'AQID');
+  await assertFails(get(ref(db('outsider'), `${base}/Info`)));
+  await assertFails(get(ref(db('outsider'), 'communities/room/files')));
+  await assertFails(set(ref(db('alice'), `${base}/Info`), { ...manifest, Name: 'changed.wav' }));
+  await assertFails(set(ref(db('bob'), `${base}/Chunks/c01`), 'AQID'));
+});
+
+test('chunks reject invalid names, non-strings, oversize values, and malformed base64', async () => {
+  const base = `communities/room/files/${fileId}/Chunks`;
+  await assertFails(set(ref(db('alice'), `${base}/c32`), 'AQID'));
+  await assertFails(set(ref(db('alice'), `${base}/cXX`), 'AQID'));
+  await assertFails(set(ref(db('alice'), `${base}/c00`), { malicious: true }));
+  await assertFails(set(ref(db('alice'), `${base}/c00`), 'A'.repeat(700004)));
+  await assertFails(set(ref(db('alice'), `${base}/c00`), 'not base64!'));
+  await assertFails(set(ref(db('alice'), `communities/room/files/not-a-hash/Chunks/c00`), 'AQID'));
+});
+
+test('file manifest requires complete correctly-sized chunks and exactly the four bounded fields', async () => {
+  const base = `communities/room/files/${fileId}`;
+  await assertFails(set(ref(db('alice'), `${base}/Info`), manifest));
+  await set(ref(db('alice'), `${base}/Chunks/c00`), 'AQID');
+  for (const invalid of [
+    { ...manifest, Extra: 'quota abuse' }, { ...manifest, Size: 16777217 },
+    { ...manifest, Kind: 'sound' }, { ...manifest, Size: '3' },
+    { ...manifest, Size: 4 }, { ...manifest, Chunks: 2 },
+    { ...manifest, Chunks: 33 }, { ...manifest, Name: 'A'.repeat(201) }
+  ]) await assertFails(set(ref(db('alice'), `${base}/Info`), invalid));
+  await assertSucceeds(set(ref(db('alice'), `${base}/Info`), manifest));
+});
+
+test('avatars are public to authenticated users; emoji data is private to community members', async () => {
+  await assertSucceeds(set(ref(db('alice'), 'profiles/alice/Images/avatar'), transfer('avatar', 'a'.repeat(64))));
+  await assertSucceeds(get(ref(db('outsider'), 'profiles/alice/Images/avatar')));
+  await assertFails(get(ref(db(null), 'profiles/alice/Images/avatar')));
+  await assertFails(set(ref(db('bob'), 'profiles/alice/Images/avatar'), transfer('avatar', 'b'.repeat(64))));
+  await assertFails(set(ref(db('alice'), 'profiles/alice/Images/avatar'), { ...transfer('avatar', 'a'.repeat(64)), Data: 'A'.repeat(5592412) }));
+  const path = `communities/room/emojis/${emojiId}`;
+  await assertSucceeds(set(ref(db('alice'), path), transfer('emoji', emojiId)));
+  await assertSucceeds(get(ref(db('bob'), path)));
+  await assertFails(get(ref(db('outsider'), path)));
+  await assertFails(set(ref(db('bob'), path), transfer('emoji', emojiId)));
+  await env.withSecurityRulesDisabled(context => set(ref(context.database(), 'profiles/alice/Images/legacy-emoji'), transfer('emoji', emojiId)));
+  await assertFails(get(ref(db('outsider'), 'profiles/alice/Images/legacy-emoji')));
+});
+
+test('profile metadata bounds About and rejects unknown fields or public legacy writes', async () => {
+  const path = 'profiles/alice/Info';
+  const profile = { Id: 'alice', Username: 'Alice', About: 'hello', Status: 'online' };
+  await assertSucceeds(set(ref(db('alice'), path), profile));
+  await assertSucceeds(get(ref(db('outsider'), path)));
+  await assertFails(set(ref(db('alice'), path), { ...profile, About: 'A'.repeat(2001) }));
+  await assertFails(set(ref(db('alice'), path), { ...profile, Unknown: 'data' }));
+  await assertFails(set(ref(db('alice'), path), { ...profile, AvatarPath: 'C:/private/picture.png' }));
+  await assertFails(set(ref(db('alice'), 'profiles/alice/Unknown'), 'data'));
+  await assertFails(set(ref(db('alice'), 'profiles/alice/Images/another-avatar'), transfer('avatar', 'a'.repeat(64))));
+});
+
+test('chat rejects unknown fields, invalid attachment references, long names and more than 32 emoji slots', async () => {
+  const path = 'communities/room/messages/voice/message';
+  for (const invalid of [
+    { ...message(), Extra: 'data' }, { ...message(), AuthorName: 'A'.repeat(33) },
+    { ...message(), Text: 'A'.repeat(8001) }, { ...message(), AttachmentId: '../other' },
+    { ...message(), Emojis: { e32: { Token: ':wave:', AssetId: emojiId } } },
+    { ...message(), Emojis: { e00: { Token: ':wave:', AssetId: emojiId, Extra: 'data' } } },
+    { ...message(), Emojis: { e00: { Token: ':wave:', AssetId: 'bad' } } }
+  ]) await assertFails(set(ref(db('alice'), path), invalid));
+  await assertSucceeds(set(ref(db('alice'), path), { ...message(), Emojis: { e00: { Token: ':руна:', AssetId: emojiId } } }));
+  await assertFails(set(ref(db('bob'), path), message()));
+});
+
+test('signaling rejects unknown fields, malformed attempt identifiers and oversized SDP', async () => {
+  const path = 'rtcSignals/room/voice/alice/bob';
+  for (const invalid of [
+    { ...signal(), Extra: 'data' }, { ...signal(), Attempt: 'short' },
+    { ...signal(), Attempt: 'z'.repeat(32) }, { ...signal(), Sdp: 'A'.repeat(64001) }
+  ]) await assertFails(set(ref(db('alice'), path), invalid));
+  await assertSucceeds(set(ref(db('alice'), path), { ...signal(), Attempt: 'c'.repeat(32), CreatedAt: Date.now() }));
+});
+
+
+test('REST null_etag creates immutable chunks once and reports retry conflicts without overwriting', async () => {
+  const token = createMockUserToken({ sub: 'alice', iat: Math.floor(Date.now() / 1000) }, 'demo-wisp-hardening');
+  const url = `http://127.0.0.1:9000/communities/room/files/${fileId}/Chunks/c00.json?ns=demo-wisp-hardening&auth=${encodeURIComponent(token)}`;
+  const options = { method: 'PUT', headers: { 'Content-Type': 'application/json', 'if-match': 'null_etag' }, body: JSON.stringify('AQID') };
+  const created = await fetch(url, options); assert.equal(created.status, 200);
+  const conflict = await fetch(url, options); assert.equal(conflict.status, 412);
+  assert.equal((await get(ref(db('bob'), `communities/room/files/${fileId}/Chunks/c00`))).val(), 'AQID');
+});
+
+
+test('profile upgrade patches metadata without deleting existing legacy files or scalar fields', async () => {
+  await env.withSecurityRulesDisabled(context => set(ref(context.database(), 'profiles/alice/About'), 'legacy description'));
+  await assertSucceeds(update(ref(db('alice'), 'profiles/alice'), {
+    Id: 'alice', Username: 'Alice', Info: { Id: 'alice', Username: 'Alice', About: 'updated description', Status: 'online' }
+  }));
+  const own = (await get(ref(db('alice'), 'profiles/alice'))).val();
+  assert.equal(own.About, 'legacy description');
+  assert.equal(own.Files.file.Chunks.c00, 'AQID');
 });

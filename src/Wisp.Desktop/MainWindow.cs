@@ -164,7 +164,7 @@ public sealed class MainWindow : ThemedWindow
         tray.DoubleClick += (_, _) => Dispatcher.BeginInvoke(RestoreFromTray);
         cloudTimer.Tick += (_, _) => Run(RefreshCloud); if (cloud is not null) cloudTimer.Start();
         Closing += OnClosing;
-        Loaded += (_, _) => { if (cloud is not null && this.profile.AvatarPath is not null && this.profile.AvatarRevision != cloud.Profile?.AvatarRevision) Run(PublishProfile); };
+        Loaded += (_, _) => { if (cloud is not null && this.profile.AvatarPath is not null) Run(PublishProfile); };
         userName.Text = profile.Username; RenderServers();
         var first = MyCommunities().FirstOrDefault(); if (first is not null) SetCommunity(first); else { serverTitle.Text = "Добро пожаловать"; channelTitle.Text = "Место для своих"; Notify("Создай сообщество кнопкой + слева или присоединись по приглашению ↗."); }
         UpdateStatus(); ModalHost.Prepare(this);
@@ -390,7 +390,7 @@ public sealed class MainWindow : ThemedWindow
                 if (asset is null) continue; used[token] = asset.Id;
                 if (cloud is not null && !publishedEmojis.Contains(asset.Id))
                 {
-                    await cloud.PutAsync($"profiles/{profile.Id}/Images/{asset.Id}", new AssetTransfer(asset.Id, asset.Name, "emoji", await File.ReadAllBytesAsync(asset.LocalPath)));
+                    await CommunityAssets.UploadEmojiAsync(cloud, asset);
                     publishedEmojis.Add(asset.Id);
                 }
                 await BroadcastAsset(asset);
@@ -664,8 +664,8 @@ public sealed class MainWindow : ThemedWindow
     private async Task PublishProfile()
     {
         if (closing) return;
-        if (cloud is not null && profile.AvatarPath is not null && profile.AvatarRevision is not null && profile.AvatarRevision != cloud.Profile?.AvatarRevision)
-            await cloud.PutAsync($"profiles/{profile.Id}/Images/{profile.AvatarRevision}", new AssetTransfer(profile.AvatarRevision, Path.GetFileName(profile.AvatarPath), "avatar", await File.ReadAllBytesAsync(profile.AvatarPath)));
+        if (cloud is not null && profile.AvatarPath is not null && profile.AvatarRevision is not null && await cloud.GetAsync<string>($"profiles/{profile.Id}/Images/avatar/Id") != profile.AvatarRevision)
+            await cloud.PutAsync($"profiles/{profile.Id}/Images/avatar", new AssetTransfer(profile.AvatarRevision, Path.GetFileName(profile.AvatarPath), "avatar", await File.ReadAllBytesAsync(profile.AvatarPath)));
         if ((node.IsConnected || rtc?.Joined == true) && community is not null)
         {
             var capturedProfile = profile;
@@ -721,7 +721,9 @@ public sealed class MainWindow : ThemedWindow
         foreach (var id in message.Emojis.Values.Distinct().Take(64))
         {
             if (string.IsNullOrWhiteSpace(id) || !Regex.IsMatch(id, "^[a-f0-9]{64}$") || store.GetAsset(id) is not null) continue;
-            var asset = await cloud.GetAsync<AssetTransfer>($"profiles/{message.AuthorId}/Images/{id}");
+            var asset = await cloud.GetAsync<AssetTransfer>($"communities/{communityId}/emojis/{id}");
+            if (asset is null && message.AuthorId == cloud.Profile?.Id)
+                asset = await cloud.GetAsync<AssetTransfer>($"profiles/{message.AuthorId}/Images/{id}");
             if (asset is null || asset.Data is null || asset.Kind != "emoji" || asset.Data.Length > 256 * 1024 || asset.Name != Path.GetFileName(asset.Name) || asset.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || asset.Name is "." or ".." || asset.Name.Length > 200) continue;
             using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
             hash.AppendData(Encoding.UTF8.GetBytes(communityId + "\0emoji\0")); hash.AppendData(asset.Data);

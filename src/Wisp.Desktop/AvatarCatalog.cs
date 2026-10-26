@@ -26,7 +26,12 @@ public sealed class AvatarCatalog(string root, string localId)
     public async Task<bool> FetchAsync(FirebaseBackend cloud, UserProfile p)
     {
         var path = CachePath(p); if (path is null || File.Exists(path) || (p.Id == localId && p.AvatarPath is not null && File.Exists(p.AvatarPath))) return false;
-        var media = await cloud.GetAsync<AssetTransfer>($"profiles/{p.Id}/Images/{p.AvatarRevision}");
+        var media = await cloud.GetAsync<AssetTransfer>($"profiles/{p.Id}/Images/avatar");
+        if (media is null)
+        {
+            try { media = await cloud.GetAsync<AssetTransfer>($"profiles/{p.Id}/Images/{p.AvatarRevision}"); }
+            catch (InvalidOperationException) { return false; } // An unavailable legacy image is not public.
+        }
         if (media is null || media.Data is null || media.Data.Length > 4 * 1024 * 1024 || Convert.ToHexString(SHA256.HashData(media.Data)).ToLowerInvariant() != p.AvatarRevision) return false;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!); await File.WriteAllBytesAsync(path, media.Data);
         try { Validate(path); } catch { File.Delete(path); throw; } return true;

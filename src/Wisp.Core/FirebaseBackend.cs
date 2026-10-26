@@ -77,6 +77,20 @@ public sealed class FirebaseBackend : IDisposable
     {
         using var response = await http.PutAsJsonAsync(await Url(path), value, new JsonSerializerOptions()); using var result = await Read(response);
     }
+    /// <summary>Firebase REST conditional PUT: create exactly once, without replacing an existing object.</summary>
+    public async Task<bool> TryCreateAsync<T>(string path, T value)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, await Url(path))
+        {
+            Content = JsonContent.Create(value, options: new JsonSerializerOptions())
+        };
+        request.Headers.TryAddWithoutValidation("if-match", "null_etag");
+        using var response = await http.SendAsync(request);
+        if (response.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+            return false;
+        using var result = await Read(response);
+        return true;
+    }
     public async Task DeleteAsync(string path)
     {
         using var response = await http.DeleteAsync(await Url(path)); using var result = await Read(response);
@@ -89,7 +103,12 @@ public sealed class FirebaseBackend : IDisposable
     public async Task SaveProfileAsync(UserProfile p)
     {
         if (p.Id != Profile?.Id) throw new InvalidOperationException("Чужой профиль.");
-        await PatchAsync($"profiles/{p.Id}", new { p.Id, p.Username, Info = p with { AvatarPath = null, BannerPath = null } }); Profile = p;
+        await PatchAsync($"profiles/{p.Id}", new
+        {
+            p.Id,
+            p.Username,
+            Info = p with { AvatarPath = null, BannerPath = null }
+        }); Profile = p;
     }
     public async Task CreateCommunityAsync(CommunitySnapshot snapshot)
     {
@@ -109,12 +128,12 @@ public sealed class FirebaseBackend : IDisposable
         return list;
     }
     public Task PresenceAsync(string communityId, UserProfile p, string? channel) => PutAsync($"communities/{communityId}/presence/{Profile!.Id}", new FirebasePresence(p with { AvatarPath = null, BannerPath = null }, channel, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
-    public Task SendMessageAsync(string communityId, ChatMessage message) => PutAsync($"communities/{communityId}/messages/{message.ChannelId}/{message.Id}", message);
+    public Task SendMessageAsync(string communityId, ChatMessage message) => PutAsync($"communities/{communityId}/messages/{message.ChannelId}/{message.Id}", FirebaseChatMessage.From(message));
     public async Task<List<ChatMessage>> MessagesAsync(string community, string channel)
     {
         using var response = await http.GetAsync(await Url($"communities/{community}/messages/{channel}") + "&orderBy=%22SentAt%22&limitToLast=100");
         using var data = await Read(response);
-        return data.RootElement.ValueKind == JsonValueKind.Null ? new() : data.RootElement.Deserialize<Dictionary<string, ChatMessage>>()!.Values.ToList();
+        return data.RootElement.ValueKind == JsonValueKind.Null ? new() : data.RootElement.EnumerateObject().Select(item => FirebaseChatMessage.Read(item.Value)).ToList();
     }
     private async Task<string> Url(string path)
     {
