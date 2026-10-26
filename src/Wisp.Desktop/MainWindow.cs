@@ -638,7 +638,7 @@ public sealed class MainWindow : ThemedWindow
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (community?.Id != id || closing) return;
             cloudPresence = online.Values.Where(p => now - p.SeenAt < 45000 && now >= p.SeenAt - 10000).Select(p => new PeerPresence(p.Profile, p.ChannelId, false, false)).ToList();
-            foreach (var user in cloudPresence.Select(p => p.Profile)) await avatars.FetchAsync(cloud, user);
+            foreach (var user in cloudPresence.Select(p => p.Profile)) { await avatars.FetchAsync(cloud, user); store.UpsertMember(id, user.Id == profile.Id ? profile : user); }
             RenderMembers(); RenderChannels(); UpdateStatus();
             if (channelId is not null)
             {
