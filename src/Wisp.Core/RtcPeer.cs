@@ -154,11 +154,16 @@ public sealed class RtcPeer : IRtcPeer
         var channel = pc.GetRtpChannel();
         var user = channel.RemoteIceUser;
         var password = channel.RemoteIcePassword;
+        bool hadNominatedPair = channel.NominatedEntry is not null;
         pc.restartIce();
         // 10.0.17 Restart resets the checklist but keeps the remote credentials. Re-arm checking explicitly.
         if (user is not null && password is not null) pc.SetRemoteCredentials(user, password);
         CandidateReady?.Invoke();
         StateChanged?.Invoke("ice-restart");
+        // 10.0.17 retains both NominatedEntry and its completed checklist state after Restart.
+        // Public APIs cannot clear that state; controller nomination then never completes.
+        // Ask the mesh for a fresh native peer/Attempt rather than pretending restart succeeded.
+        if (hadNominatedPair) StateChanged?.Invoke("restart-required");
     }
     public async Task SendAsync(WireMessage message)
     {

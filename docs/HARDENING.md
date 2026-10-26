@@ -82,3 +82,70 @@ RtcPeer передаёт ограниченное число пропусков 
 В модальном диалоге «Звук · устройства» можно выбрать микрофон и выход голоса; настройки локальные audio.json. MMNotificationClient с debounce переключает отключённую гарнитуру на устройство связи по умолчанию и возвращает выбранное после подключения. Меняются только устройства, места и WebRTC-пары остаются; микшер/декодеры сохраняются. Выход мультимедиа чата/демонстрации пока следует системному выходу, это указано в диалоге. Индикатор speaking не добавлялся (необязателен).
 
 Linux cross-build: 0 предупреждений/ошибок. Core: 53/53. Захват, системные эффекты, сравнение эха на колонках и hotplug **не проверены на Windows**; сценарии будут в TESTING.md. Windows CI фазы 4 `40326858481` прошла полностью: core 49, Desktop 4, publish ZIP. Она проверяет native H.264 (live bitrate/IDR) и темы, но не физический захват экрана/аудиоустройства.
+
+## Фаза 6: CI и итоговая проверка
+
+Добавлен отдельный Linux workflow `Firebase rules` (Node 24 / Java 21, demo-эмулятор без production credentials). Relay/coturn job исключён по решению владельца. Fake HTTP-тесты дополнены полным исчерпанием четырёх повторов; внутренние audio-gap метаданные проверены на отсутствие в JSON. Fallback polling дополнительно ограничен монотонным интервалом 1 с независимо от событий пробуждения. Linux core: 56/56; эмулятор: 16/16. Cross-build: 0 предупреждений/ошибок. Финальная CI подтверждается ниже после выполнения.
+
+Дополнительный реальный тест обнаружил ограничение 10.0.17: restartIce очищает checklist, но оставляет завершённое состояние и NominatedEntry. Одного повторного SetRemoteCredentials недостаточно для новой nomination. После вызова restart wrapper сообщает restart-required для ранее номинированной пары, и mesh создаёт новые native peers/Attempt через ограниченный backoff. Приватные поля библиотеки не меняются, версия не заменяется. Новый тест проверяет очередь trickle до SDP, этот fallback и передачу голоса/команд после новой пары; это всё ещё не тест реальной смены Wi-Fi.
+
+Windows CI фазы 5 [40328077856](https://github.com/daurensky/wisp/actions/runs/40328077856) прошла: core 53/53 (в том числе native Opus FEC/PLC), Desktop 4/4, build/publish ZIP. Реальные устройства и захват не тестировались. Из TRX фазы 4: CBR/буфер 0,5 с приняты; synthetic 320×192/30, окна по 3 с, после запроса 4→1 Мбит/с размер 1 607 899→695 780 байт (0,433). Это измерение реакции software MFT, не замер CPU или гарантия точного битрейта/1080p60.
+
+Не сделано: TURN/coturn/API/relay по прямому указанию владельца; аппаратные async MFT из-за отсутствия подтверждённых CPU/GPU-замеров; внешний WebRTC DSP до согласования лицензии/сборки и измерения эха; speaking-индикатор необязателен. Периодическое trusted удаление аварийных SDP/candidates и отзывные приглашения только предложены, не развёрнуты. Политика TTL ограничивает чтение, а не физическое хранение. Владелец публикует правила только после раздачи клиента и завершения старых процессов, до запуска новых. Подробная таблица ручных сценариев/допущений — TESTING.md; требования к Auth/API key/App Check и постоянным приглашениям — FIREBASE.md.
+
+## Изменённые файлы относительно исходной ветки
+
+```text
+.github/workflows/firebase-rules.yml
+.gitignore
+README.md
+docs/ARCHITECTURE.md
+docs/FIREBASE.md
+docs/HARDENING.md
+docs/P2P.md
+docs/TESTING.md
+firebase/database.rules.json
+firebase/firebase.json
+firebase/harden_rules.py
+firebase/rules-tests/database.test.mjs
+firebase/rules-tests/package-lock.json
+firebase/rules-tests/package.json
+src/Wisp.Core/AudioRecovery.cs
+src/Wisp.Core/CloudFiles.cs
+src/Wisp.Core/CommandRateGate.cs
+src/Wisp.Core/CommunityAssets.cs
+src/Wisp.Core/FirebaseBackend.cs
+src/Wisp.Core/FirebaseChatMessage.cs
+src/Wisp.Core/FirebaseJsonTree.cs
+src/Wisp.Core/FirebaseStreaming.cs
+src/Wisp.Core/IceServerProvider.cs
+src/Wisp.Core/MediaTiming.cs
+src/Wisp.Core/Models.cs
+src/Wisp.Core/OpusFrameDecoder.cs
+src/Wisp.Core/PeerNode.cs
+src/Wisp.Core/RtcMesh.cs
+src/Wisp.Core/RtcPeer.cs
+src/Wisp.Core/RtcPeerContracts.cs
+src/Wisp.Desktop/AvatarCatalog.cs
+src/Wisp.Desktop/MainWindow.cs
+src/Wisp.Desktop/Media/AudioDevices.cs
+src/Wisp.Desktop/Media/CommunicationsCapture.cs
+src/Wisp.Desktop/Media/GdiScreenCapture.cs
+src/Wisp.Desktop/Media/IScreenCapture.cs
+src/Wisp.Desktop/Media/NativeVideoCodec.cs
+src/Wisp.Desktop/Media/ScreenShareService.cs
+src/Wisp.Desktop/Media/ScreenVideoReceiver.cs
+src/Wisp.Desktop/Media/VoiceService.cs
+src/Wisp.Desktop/Media/WindowsGraphicsScreenCapture.cs
+src/Wisp.Desktop/ScreenViewer.cs
+src/Wisp.Desktop/Wisp.Desktop.csproj
+tests/Wisp.Core.Tests/AudioRecoveryTests.cs
+tests/Wisp.Core.Tests/CloudFilesTests.cs
+tests/Wisp.Core.Tests/FirebaseChatTests.cs
+tests/Wisp.Core.Tests/FirebaseRecoveryTests.cs
+tests/Wisp.Core.Tests/IceServerProviderTests.cs
+tests/Wisp.Core.Tests/MediaTimingTests.cs
+tests/Wisp.Core.Tests/RtcTests.cs
+tests/Wisp.Desktop.Tests/VideoCodecTests.cs
+tests/Wisp.Desktop.Tests/Wisp.Desktop.Tests.csproj
+```

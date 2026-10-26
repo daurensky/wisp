@@ -56,6 +56,7 @@ public sealed class ScreenShareService : IDisposable
         {
             using var encoder = new NativeVideoEncoder(info);
             using var capture = new ResilientScreenCapture(source, info, text => Status?.Invoke(text));
+            if (token.IsCancellationRequested) return;
             Status?.Invoke("Захват: " + capture.BackendName + "; " + encoder.RateControlStatus);
             var pixels = new byte[info.Width * info.Height * 4];
             var clock = Stopwatch.StartNew();
@@ -65,6 +66,7 @@ public sealed class ScreenShareService : IDisposable
             {
                 long started = clock.ElapsedTicks;
                 var state = capture.Read(pixels);
+                if (token.IsCancellationRequested) break;
                 if (state == CaptureState.Waiting) { token.WaitHandle.WaitOne(5); continue; }
                 bool nextPaused = state == CaptureState.Paused;
                 if (paused != nextPaused) { paused = nextPaused; PauseChanged?.Invoke(paused); RequestKeyFrame(); }

@@ -151,14 +151,16 @@ public sealed class RtcMesh : IAsyncDisposable
 
     private async Task PollAsync(CancellationToken token)
     {
+        long? lastFallbackPoll = null;
         try
         {
             while (!token.IsCancellationRequested)
             {
                 try
                 {
-                    if (!streamHealthy)
+                    if (!streamHealthy && (lastFallbackPoll is null || Since(lastFallbackPoll.Value) >= TimeSpan.FromSeconds(1)))
                     {
+                        lastFallbackPoll = clock.GetTimestamp();
                         var snapshot = await cloud.GetAsync<JsonElement>(RoomPath, token);
                         lock (roomGate)
                             room.Apply(new FirebaseStreamEvent("put", "/", snapshot.ValueKind == JsonValueKind.Undefined ? JsonSerializer.SerializeToElement<object?>(null) : snapshot));
@@ -252,6 +254,7 @@ public sealed class RtcMesh : IAsyncDisposable
         {
             if (stop?.IsCancellationRequested != false || !IsCurrent(remote, link) || !ReferenceEquals(link.Peer, peer)) return;
             if (state == "invalid-packet") Fail(remote, link, "Участник отправил некорректные данные; соединение закрыто.", true);
+            else if (state == "restart-required") Fail(remote, link, "ICE требует нового соединения; повторяю согласование.");
             else if (state == "failed") Fail(remote, link, "Соединение с участником потеряно; повторяю попытку.");
             else if (state == "disconnected") link.DisconnectedAt ??= clock.GetTimestamp();
             Wake();

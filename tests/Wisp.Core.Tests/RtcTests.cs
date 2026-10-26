@@ -81,4 +81,31 @@ public sealed class RtcTests
         await Task.WhenAll(movingVideo, bulk).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(Volatile.Read(ref receivedVoice) >= 25, "Voice must continue while video and a bulk transfer are active.");
     }
+    [Fact]
+    public async Task TrickleQueuesCandidatesAndUnsupportedNativeRestartRecoversWithFreshPeers()
+    {
+        using var a = new RtcPeer("bob", "room", []);
+        using var b = new RtcPeer("alice", "room", []);
+        foreach (var candidate in a.LocalCandidates) b.AddIceCandidate(candidate); // Queued until SDP.
+        foreach (var candidate in b.LocalCandidates) a.AddIceCandidate(candidate);
+        var offer = await a.OfferAsync(); var answer = await b.AnswerAsync(offer); a.AcceptAnswer(answer);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        while (!a.Connected || !b.Connected) await Task.Delay(20, timeout.Token);
+        bool replacementRequested = false;
+        a.StateChanged += state => { if (state == "restart-required") replacementRequested = true; };
+        a.RestartIce();
+        Assert.True(replacementRequested, "10.0.17 retains the completed nomination; mesh must replace the native pair.");
+        a.Dispose(); b.Dispose();
+        using var nextA = new RtcPeer("bob", "room", []);
+        using var nextB = new RtcPeer("alice", "room", []);
+        offer = await nextA.OfferAsync(); answer = await nextB.AnswerAsync(offer); nextA.AcceptAnswer(answer);
+        while (!nextA.Connected || !nextB.Connected) await Task.Delay(20, timeout.Token);
+        var media = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var command = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        nextB.MessageReceived += message => { if (message.Type == "audio") media.TrySetResult(message); if (message.Type == "screen-keyframe") command.TrySetResult(message); };
+        await nextA.SendAsync(new("audio", "alice", "room", [1, 2, 3]));
+        await nextA.SendAsync(new("screen-keyframe", "alice", "room", [4]));
+        Assert.Equal(new byte[] { 1, 2, 3 }, (await media.Task.WaitAsync(timeout.Token)).Payload);
+        Assert.Equal(new byte[] { 4 }, (await command.Task.WaitAsync(timeout.Token)).Payload);
+    }
 }

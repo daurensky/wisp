@@ -41,6 +41,12 @@ public sealed class AudioRecoveryTests
         finally { (encoder as IDisposable)?.Dispose(); }
     }
     [Fact]
+    public void ReceiverOnlyLossMetadataNeverChangesTheSerializedWireProtocol()
+    {
+        var message = new WireMessage("audio", "alice", "voice", [1, 2, 3]) { MissingAudioFrames = 3 };
+        Assert.DoesNotContain("MissingAudioFrames", System.Text.Json.JsonSerializer.Serialize(message));
+    }
+    [Fact]
     public void JitterBufferPrimesThenTrimsLatencyWithoutErasingAllAudio()
     {
         var buffer = new PcmJitterBuffer();

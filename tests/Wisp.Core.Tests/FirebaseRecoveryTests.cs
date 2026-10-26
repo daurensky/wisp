@@ -121,6 +121,34 @@ public sealed class FirebaseRecoveryTests
     }
 
     [Fact]
+    public async Task RetryBudgetUsesAllFourDelaysThenStopsCreatingPeers()
+    {
+        var clock = new ManualClock();
+        var server = new FakeDatabase(clock); server.SeedBob();
+        using var cloud = await Login(server, clock);
+        var peers = new List<FakePeer>(); var errors = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        await using var mesh = new RtcMesh(cloud, new StaticIceServerProvider([]), (_, _, _) => { var p = new FakePeer(); peers.Add(p); return p; }, false);
+        mesh.Error += errors.Enqueue;
+        await mesh.EnterAsync("room", "voice", false, false);
+        await Eventually(() => peers.Count == 1 && server.Read("rtcSignals/room/voice/alice/bob/Attempt") is not null);
+        var attempts = new HashSet<string>();
+        foreach (int seconds in new[] { 2, 5, 15, 30 })
+        {
+            int count = peers.Count;
+            attempts.Add(server.Read("rtcSignals/room/voice/alice/bob/Attempt")!.GetValue<string>());
+            peers[^1].Fail();
+            clock.Advance(TimeSpan.FromSeconds(seconds)); server.SeedBob();
+            await Eventually(() => peers.Count == count + 1 && server.Read("rtcSignals/room/voice/alice/bob/Attempt") is { } value && !attempts.Contains(value.GetValue<string>()));
+        }
+        Assert.Equal(5, peers.Count);
+        peers[^1].Fail();
+        clock.Advance(TimeSpan.FromSeconds(31)); server.SeedBob();
+        await Task.Delay(100);
+        Assert.Equal(5, peers.Count);
+        Assert.Contains(errors, error => error.Contains("после повторных попыток"));
+    }
+
+    [Fact]
     public async Task SseParsesPutPatchKeepAliveCancelAndRefreshesRevokedTokens()
     {
         var clock = new ManualClock();
@@ -286,7 +314,7 @@ public sealed class FirebaseRecoveryTests
                     await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                 var value = path == "profiles/alice/Info" ? JsonSerializer.SerializeToNode(new UserProfile("alice", "Alice")) : Read(path);
                 var response = Response(HttpStatusCode.OK, value?.ToJsonString() ?? "null");
-                response.Headers.ETag = new EntityTagHeaderValue('"' + revision.ToString() + '"');
+                response.Headers.ETag = new EntityTagHeaderValue(ETag(path));
                 return response;
             }
             if (request.Method == HttpMethod.Delete)
@@ -301,11 +329,12 @@ public sealed class FirebaseRecoveryTests
                 if (DenySeat) return Response(HttpStatusCode.Forbidden, """{"error":"Permission denied"}""");
                 if (ConflictPuts-- > 0) return Response(HttpStatusCode.PreconditionFailed, "null");
             }
-            if (request.Headers.TryGetValues("if-match", out var values) && values.Single() != '"' + revision.ToString() + '"')
+            if (request.Headers.TryGetValues("if-match", out var values) && values.Single() != ETag(path))
                 return Response(HttpStatusCode.PreconditionFailed, "null");
             Write(path, JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)));
             return Response(HttpStatusCode.OK, "null");
         }
+        private string ETag(string path) => '"' + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(Read(path)?.ToJsonString() ?? "null"))) + '"';
         private HttpResponseMessage Response(HttpStatusCode code, string json)
         {
             var response = new HttpResponseMessage(code) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
