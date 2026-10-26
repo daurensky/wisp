@@ -25,13 +25,13 @@ public sealed class ThemeTests
         {
             var root = Path.Combine(Path.GetTempPath(), "wisp-theme-tests-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
-            App? app = null;
+            Application? app = null;
             Window? derived = null;
             AuthWindow? auth = null;
             try
             {
-                app = new TestApp { ShutdownMode = ShutdownMode.OnExplicitShutdown };
-                app.InitializeComponent();
+                app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+                app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("pack://application:,,,/Wisp;component/Theme.xaml") });
                 // An old version's marker must not override the new default.
                 File.WriteAllText(Path.Combine(root, "light-theme"), "1");
                 ThemeManager.Initialize(root);
@@ -163,6 +163,7 @@ public sealed class ThemeTests
             var deadline = DateTime.UtcNow.AddSeconds(5);
             timer.Tick += (_, _) => { if (!main.IsVisible || DateTime.UtcNow >= deadline) { timer.Stop(); frame.Continue = false; } };
             timer.Start(); Dispatcher.PushFrame(frame);
+            Assert.False(main.IsVisible, "Quit must finish after the initial Closing callback returns.");
         }
     }
 
@@ -178,6 +179,4 @@ public sealed class ThemeTests
     }
 
     private sealed class DerivedWindow : ThemedWindow { }
-    // Nested modal dispatch must not start the production login flow during this fixture.
-    private sealed class TestApp : App { protected override void OnStartup(StartupEventArgs e) { } }
 }
