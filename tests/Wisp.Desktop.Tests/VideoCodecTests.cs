@@ -6,7 +6,7 @@ namespace Wisp.Desktop.Tests;
 public sealed class VideoCodecTests(Xunit.Abstractions.ITestOutputHelper log)
 {
     [Theory]
-    [InlineData(320, 192, 200)]
+    [InlineData(320, 192, 240)]
     [InlineData(1920, 1080, 4)]
     public void NativeH264EncodesAndDecodesBgraWithoutJpegOrUiThread(int width, int height, int frames)
     {
