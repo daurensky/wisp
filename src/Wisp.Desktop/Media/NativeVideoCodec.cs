@@ -54,10 +54,12 @@ public sealed class NativeVideoDecoder : IDisposable
 {
     private readonly MfTransform decoder, converter;
     private readonly ScreenStreamInfo info;
+    private int codedWidth, codedHeight, stride;
     private long index;
     public NativeVideoDecoder(ScreenStreamInfo info)
     {
         if (!info.IsValid) throw new ArgumentException("Недопустимый видеопоток."); this.info = info;
+        codedWidth = stride = info.Width; codedHeight = info.Height;
         decoder = new MfTransform(new Guid("62ce7e72-4c71-4d20-b15d-452831a87d9d"));
         try
         {
@@ -69,12 +71,34 @@ public sealed class NativeVideoDecoder : IDisposable
     }
     private void SetOutput()
     {
-        using var output = MfTransform.VideoType(info, VideoFormatGuids.NV12); decoder.Transform.SetOutputType(0, output, 0);
+        // H.264 pads 1080 lines to 1088. Use the decoder's actual media type, then crop its NV12 planes.
+        for (int index = 0; index < 32; index++)
+        {
+            using var candidate = decoder.Transform.GetOutputAvailableType(0, index);
+            if (candidate.GetGUID(MediaTypeAttributeKeys.Subtype) != VideoFormatGuids.NV12) continue;
+            var size = candidate.GetUInt64(MediaTypeAttributeKeys.FrameSize);
+            int width = (int)(size >> 32), height = (int)(size & uint.MaxValue);
+            if (width < info.Width || height < info.Height || width > 1936 || height > 1088) throw new InvalidDataException("Размер видеопотока не совпадает с объявленным.");
+            int pitch = width; try { pitch = checked((int)candidate.GetUInt32(MediaTypeAttributeKeys.DefaultStride)); } catch { }
+            if (pitch < width || pitch > 4096) throw new InvalidDataException("Некорректный шаг видеобуфера.");
+            decoder.Transform.SetOutputType(0, candidate, 0); codedWidth = width; codedHeight = height; stride = pitch; return;
+        }
+        throw new InvalidOperationException("Windows не предоставила формат NV12 для демонстрации.");
     }
     public byte[]? Decode(byte[] h264)
     {
         var duration = 10000000L / info.FramesPerSecond; var time = index++ * duration;
-        var nv12 = decoder.Convert(h264, time, duration, SetOutput); return nv12 is null ? null : converter.Convert(nv12, time, duration);
+        var nv12 = decoder.Convert(h264, time, duration, SetOutput); if (nv12 is null) return null;
+        if (stride != info.Width || codedWidth != info.Width || codedHeight != info.Height)
+        {
+            int yLength = checked(stride * codedHeight);
+            if (nv12.Length < yLength + stride * (codedHeight / 2)) throw new InvalidDataException("Видеобуфер короче объявленного размера.");
+            var cropped = new byte[info.Width * info.Height * 3 / 2];
+            for (int row = 0; row < info.Height; row++) Buffer.BlockCopy(nv12, row * stride, cropped, row * info.Width, info.Width);
+            for (int row = 0; row < info.Height / 2; row++) Buffer.BlockCopy(nv12, yLength + row * stride, cropped, info.Width * info.Height + row * info.Width, info.Width);
+            nv12 = cropped;
+        }
+        return converter.Convert(nv12, time, duration);
     }
     public void Dispose() { decoder?.Dispose(); converter?.Dispose(); }
 }
