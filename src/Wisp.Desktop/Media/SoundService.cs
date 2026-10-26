@@ -23,7 +23,7 @@ public sealed class SoundService : IDisposable
         _cues["undeafen"] = Tone(392, 587);
         _cues["share"] = Tone(659, 880);
         _cues["message"] = Tone(880, 1047, 45);
-        _cues["error"] = Tone(220, 196);
+        _cues["error"] = Tone(220, 196, 60, 1300);
     }
 
     public void Play(string cue)
@@ -63,7 +63,7 @@ public sealed class SoundService : IDisposable
         }
     }
 
-    private static byte[] Tone(double first, double second, int milliseconds = 85)
+    private static byte[] Tone(double first, double second, int milliseconds = 85, int amplitude = 4500)
     {
         const int rate = 24000;
         var count = rate * milliseconds / 1000;
@@ -78,7 +78,7 @@ public sealed class SoundService : IDisposable
                 for (var i = 0; i < count; i++)
                 {
                     var envelope = Math.Min(1d, i / 100d) * Math.Min(1d, (count - i) / 240d);
-                    writer.Write((short)(Math.Sin(2 * Math.PI * frequency * i / rate) * envelope * 4500));
+                    writer.Write((short)(Math.Sin(2 * Math.PI * frequency * i / rate) * envelope * amplitude));
                 }
         }
         return stream.ToArray();

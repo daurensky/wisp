@@ -72,5 +72,11 @@ public sealed class RtcTests
         var payload = new byte[256000]; Random.Shared.NextBytes(payload);
         await a.SendAsync(new("asset", "forged", null, payload));
         Assert.Equal(payload, (await file.Task.WaitAsync(TimeSpan.FromSeconds(10))).Payload);
+        int receivedVoice = 0; b.MessageReceived += m => { if (m.Type == "audio") Interlocked.Increment(ref receivedVoice); };
+        var movingVideo = Task.Run(async () => { for (int i = 0; i < 30; i++) { await a.SendAsync(new("screen-h264", "alice", "room", H264Frame.Pack(60, h264))); await Task.Delay(20); } });
+        var bulk = a.SendAsync(new("asset", "alice", "room", new byte[2000000]));
+        for (int i = 0; i < 30; i++) { await a.SendAsync(new("audio", "alice", "room", new byte[] { 1, 2, 3 })); await Task.Delay(20); }
+        await Task.WhenAll(movingVideo, bulk).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(Volatile.Read(ref receivedVoice) >= 25, "Voice must continue while video and a bulk transfer are active.");
     }
 }

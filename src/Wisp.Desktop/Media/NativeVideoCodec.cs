@@ -6,7 +6,7 @@ namespace Wisp.Desktop.Media;
 
 public sealed record ScreenStreamInfo(int Width, int Height, int FramesPerSecond, int Bitrate, string SessionId = "")
 {
-    public bool IsValid => Width is >= 2 and <= 1920 && Height is >= 2 and <= 1080 && Width % 2 == 0 && Height % 2 == 0 && FramesPerSecond is 15 or 30 or 60 && Bitrate is >= 500000 and <= 8000000;
+    public bool IsValid => Width is >= 2 and <= 1920 && Height is >= 2 and <= 1080 && Width % 2 == 0 && Height % 2 == 0 && FramesPerSecond is 15 or 30 or 60 && Bitrate is >= 500000 and <= 8000000 && SessionId is not null && SessionId.Length <= 64;
 }
 
 /// <summary>Windows' native H.264 MFT and native color conversion. No JPEG or managed video encoder.</summary>
@@ -21,9 +21,9 @@ public sealed class NativeVideoEncoder : IDisposable
         if (!info.IsValid) throw new ArgumentException("Недопустимый режим демонстрации.");
         this.info = info;
         converter = MfTransform.Color(info.Width, info.Height, VideoFormatGuids.Rgb32, VideoFormatGuids.NV12, info.FramesPerSecond);
-        encoder = new MfTransform(new Guid("6ca50344-051a-4ded-9779-a43305165e35"));
         try
         {
+            encoder = new MfTransform(new Guid("6ca50344-051a-4ded-9779-a43305165e35"));
             using var output = MfTransform.VideoType(info, VideoFormatGuids.H264);
             output.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)info.Bitrate).CheckError();
             output.Set(MediaTypeAttributeKeys.Mpeg2Profile, 66u).CheckError(); // Baseline: no B-frame reorder delay.
@@ -40,14 +40,14 @@ public sealed class NativeVideoEncoder : IDisposable
     {
         if (bgra.Length != info.Width * info.Height * 4) throw new ArgumentException("Неверный размер кадра.");
         var duration = 10000000L / info.FramesPerSecond; var time = index * duration;
-        if (index++ % info.FramesPerSecond == 0) encoder.TryCodec(new Guid("398c1b98-8353-475a-9ef2-8f265d260345"), true);
+        if (index++ % info.FramesPerSecond == 0) encoder.TryCodec(new Guid("398c1b98-8353-475a-9ef2-8f265d260345"), 1u);
         var nv12 = converter.Convert(bgra, time, duration); if (nv12 is null) return null;
         var frame = encoder.Convert(nv12, time, duration); if (frame is null) return null;
         if (header.Length == 0) { try { using var type = encoder.Transform.GetOutputCurrentType(0); header = type.GetBlob(MediaTypeAttributeKeys.MpegSequenceHeader); } catch { } }
         // Repeat parameter sets so a late join or a lost frame recovers at the next IDR.
         return header.Length == 0 ? frame : header.Concat(frame).ToArray();
     }
-    public void Dispose() { converter.Dispose(); encoder.Dispose(); }
+    public void Dispose() { converter?.Dispose(); encoder?.Dispose(); }
 }
 
 public sealed class NativeVideoDecoder : IDisposable
@@ -59,9 +59,9 @@ public sealed class NativeVideoDecoder : IDisposable
     {
         if (!info.IsValid) throw new ArgumentException("Недопустимый видеопоток."); this.info = info;
         decoder = new MfTransform(new Guid("62ce7e72-4c71-4d20-b15d-452831a87d9d"));
-        converter = MfTransform.Color(info.Width, info.Height, VideoFormatGuids.NV12, VideoFormatGuids.Rgb32, info.FramesPerSecond);
         try
         {
+            converter = MfTransform.Color(info.Width, info.Height, VideoFormatGuids.NV12, VideoFormatGuids.Rgb32, info.FramesPerSecond);
             using var input = MfTransform.VideoType(info, VideoFormatGuids.H264); decoder.Transform.SetInputType(0, input, 0);
             SetOutput(); decoder.Begin();
         }
@@ -76,7 +76,7 @@ public sealed class NativeVideoDecoder : IDisposable
         var duration = 10000000L / info.FramesPerSecond; var time = index++ * duration;
         var nv12 = decoder.Convert(h264, time, duration, SetOutput); return nv12 is null ? null : converter.Convert(nv12, time, duration);
     }
-    public void Dispose() { decoder.Dispose(); converter.Dispose(); }
+    public void Dispose() { decoder?.Dispose(); converter?.Dispose(); }
 }
 
 internal sealed class MfTransform : IDisposable
@@ -85,6 +85,7 @@ internal sealed class MfTransform : IDisposable
     public IMFTransform Transform { get; }
     private object? codecObject;
     private readonly bool comInitialized;
+    private bool disposed;
     public MfTransform(Guid clsid)
     {
         int com = CoInitializeEx(IntPtr.Zero, 0); comInitialized = com >= 0;
@@ -158,7 +159,7 @@ internal sealed class MfTransform : IDisposable
         }
         return null;
     }
-    public void Dispose() { if (codecObject is not null && Marshal.IsComObject(codecObject)) Marshal.ReleaseComObject(codecObject); codecObject = null; Transform.Dispose(); if (comInitialized) CoUninitialize(); }
+    public void Dispose() { if (disposed) return; disposed = true; if (codecObject is not null && Marshal.IsComObject(codecObject)) Marshal.ReleaseComObject(codecObject); codecObject = null; Transform.Dispose(); if (comInitialized) CoUninitialize(); }
     [DllImport("ole32.dll")] private static extern int CoInitializeEx(IntPtr reserved, uint mode);
     [DllImport("ole32.dll")] private static extern void CoUninitialize();
     [DllImport("ole32.dll")] private static extern int CoCreateInstance(ref Guid clsid, IntPtr outer, uint context, ref Guid iid, out IntPtr instance);

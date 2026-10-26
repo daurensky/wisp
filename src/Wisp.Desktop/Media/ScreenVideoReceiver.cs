@@ -24,7 +24,7 @@ public sealed class ScreenVideoReceiver : IDisposable
                     if (!queue.Reader.TryRead(out var frame)) continue;
                     try
                     {
-                        if (frame.Reset) { decoder?.Dispose(); decoder = new NativeVideoDecoder(info); }
+                        if (frame.Reset) { decoder?.Dispose(); decoder = null; decoder = new NativeVideoDecoder(info); }
                         var pixels = decoder?.Decode(frame.Data); if (pixels is not null && !stop.IsCancellationRequested) ready(pixels);
                     }
                     catch (Exception) when (decoder is not null) { decoder.Dispose(); decoder = null; lock (gate) { waitingForKey = true; while (queue.Reader.TryRead(out _)) { } } }
@@ -32,7 +32,7 @@ public sealed class ScreenVideoReceiver : IDisposable
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { if (!stop.IsCancellationRequested) error("Не удалось открыть демонстрацию: " + ex.Message); }
-            finally { decoder?.Dispose(); stop.Dispose(); }
+            finally { decoder?.Dispose(); lock (gate) { closed = true; queue.Writer.TryComplete(); while (queue.Reader.TryRead(out _)) { } } stop.Dispose(); }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
     public void Enqueue(byte[] h264)

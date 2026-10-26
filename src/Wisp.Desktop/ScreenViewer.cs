@@ -71,6 +71,6 @@ public sealed class ScreenViewer
     }
     public void Close() { if (closed) return; if (fullscreen) ToggleFullscreen(); closed = true; layer.Children.Remove(surface); Target.Source = null; bitmap = null; Closed?.Invoke(); }
     public void Hide() { if (fullscreen) ToggleFullscreen(); surface.Visibility = Visibility.Collapsed; }
-    public void Show() => surface.Visibility = Visibility.Visible;
+    public void Show() { if (closed) return; surface.Visibility = Visibility.Visible; layer.Children.Remove(surface); layer.Children.Add(surface); }
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
 }

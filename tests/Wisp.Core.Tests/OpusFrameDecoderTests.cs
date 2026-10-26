@@ -13,6 +13,7 @@ public sealed class OpusFrameDecoderTests
         using var decoder = new OpusFrameDecoder(channels);
         try
         {
+            if (OperatingSystem.IsWindows()) Assert.Equal("NativeOpusEncoder", encoder.GetType().Name);
             encoder.UseInbandFEC = true; encoder.PacketLossPercent = 10; encoder.UseDTX = true;
             var pcm = new short[960 * channels]; var output = new short[960 * channels]; var packet = new byte[1275]; int decoded = 0;
             for (int frame = 0; frame < 300; frame++)

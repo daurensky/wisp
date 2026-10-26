@@ -580,6 +580,7 @@ public sealed class MainWindow : ThemedWindow
     private ScreenViewer CreateViewer(string peerId)
     {
         if (viewers.TryGetValue(peerId, out var existing)) return existing;
+        foreach (var other in viewers.Values.Where(v => v.IsFullscreen).ToList()) other.ToggleFullscreen();
         var name = DisplayPresence.FirstOrDefault(x => x.Profile.Id == peerId)?.Profile.Username ?? "Участник";
         var viewer = new ScreenViewer(this, $"{name} · Демонстрация"); viewers[peerId] = viewer; sharePlayback.SetMuted(peerId, false);
         viewer.MuteChanged += value => sharePlayback.SetMuted(peerId, value);
@@ -617,7 +618,7 @@ public sealed class MainWindow : ThemedWindow
     {
         var d = new FormDialog(this, "Демонстрации участников"); var ids = remoteStreams.Keys.Concat(remoteScreens.Keys).Distinct().ToList();
         if (ids.Count == 0) d.Note("Сейчас никто не демонстрирует экран.");
-        foreach (var id in ids) d.Action(DisplayPresence.FirstOrDefault(p => p.Profile.Id == id)?.Profile.Username ?? "Участник", () => { d.Close(); dismissedScreens.Remove(id); if (remoteStreams.ContainsKey(id)) { if (viewers.TryGetValue(id, out var viewer)) { if (viewer.IsMini) viewer.ToggleMini(); viewer.Show(); } else OpenVideoPeer(id); } else ShowFrame(id, remoteScreens[id]); });
+        foreach (var id in ids) d.Action(DisplayPresence.FirstOrDefault(p => p.Profile.Id == id)?.Profile.Username ?? "Участник", () => { d.Close(); dismissedScreens.Remove(id); if (remoteStreams.ContainsKey(id)) { if (viewers.TryGetValue(id, out var viewer)) { foreach (var other in viewers.Values.Where(v => v != viewer && v.IsFullscreen).ToList()) other.ToggleFullscreen(); if (viewer.IsMini) viewer.ToggleMini(); viewer.Show(); } else OpenVideoPeer(id); } else ShowFrame(id, remoteScreens[id]); });
         d.ShowDialog();
     }
     private void EmojiPanel()
