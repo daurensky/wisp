@@ -20,6 +20,7 @@ public sealed class ThemeTests
     public void DerivedWindowsStartDarkAndFollowPersistedThemeChanges()
     {
         Exception? failure = null;
+        string phase = "initialization";
         var thread = new Thread(() =>
         {
             var root = Path.Combine(Path.GetTempPath(), "wisp-theme-tests-" + Guid.NewGuid().ToString("N"));
@@ -29,7 +30,7 @@ public sealed class ThemeTests
             AuthWindow? auth = null;
             try
             {
-                app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+                app = new TestApp { ShutdownMode = ShutdownMode.OnExplicitShutdown };
                 app.InitializeComponent();
                 // An old version's marker must not override the new default.
                 File.WriteAllText(Path.Combine(root, "light-theme"), "1");
@@ -46,7 +47,7 @@ public sealed class ThemeTests
                 auth = new AuthWindow(store);
                 AssertWindowColors(derived, Colors.Black, Color.FromRgb(237, 237, 242));
                 AssertWindowColors(auth, Colors.Black, Color.FromRgb(237, 237, 242));
-                CheckChatAndOverlays(store, root);
+                CheckChatAndOverlays(store, root, value => phase = value);
                 var password = Assert.Single(Descendants(auth).OfType<PasswordBox>());
                 Assert.Equal(Color.FromRgb(237, 237, 242), BrushColor(password.Foreground));
                 Assert.Equal(Color.FromRgb(28, 29, 35), BrushColor(password.Background));
@@ -87,7 +88,7 @@ public sealed class ThemeTests
         }) { IsBackground = true };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "The Windows theme check did not finish.");
+        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "The Windows UI check did not finish at: " + phase);
         if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
@@ -97,8 +98,9 @@ public sealed class ThemeTests
         Assert.Equal(foreground, BrushColor(window.Foreground));
     }
 
-    private static void CheckChatAndOverlays(LocalStore store, string root)
+    private static void CheckChatAndOverlays(LocalStore store, string root, Action<string> phase)
     {
+        phase("tooltip and avatar");
         Assert.True(ComposerInput.ShouldSend(Key.Enter, ModifierKeys.None));
         Assert.False(ComposerInput.ShouldSend(Key.Enter, ModifierKeys.Shift));
         var tip = new ToolTip { Content = "Подсказка" };
@@ -118,6 +120,7 @@ public sealed class ThemeTests
             writer.Write((short)2); writer.Write((short)16); writer.Write("data"u8); writer.Write(96000); writer.Write(new byte[96000]);
         }
         var errors = new List<string>();
+        phase("voice seek");
         using (var player = new VoiceMessagePlayer(wave, errors.Add))
         {
             var slider = Assert.Single(Descendants(player).OfType<Slider>());
@@ -129,19 +132,20 @@ public sealed class ThemeTests
         var community = store.CreateCommunity("UI checks", profile.Id);
         var channel = store.GetChannels(community.Id).First(c => !c.IsVoice);
         var emoji = store.ImportAsset(community.Id, gif, "emoji");
+        phase("main construction");
         var main = new MainWindow(store, profile);
         try
         {
-            main.Show(); main.UpdateLayout();
+            phase("main layout"); main.Show(); main.UpdateLayout();
             var windowCount = Application.Current.Windows.Count;
             var notices = new NotificationArea(); notices.Add("Тест", true);
-            var overlay = ModalHost.Open(main, "Уведомления", notices);
+            phase("notification overlay"); var overlay = ModalHost.Open(main, "Уведомления", notices);
             Assert.Equal(windowCount, Application.Current.Windows.Count); overlay.Close();
             ModalHost.Open(main, "Уведомления", notices).Close(); // Reopening must detach from the old parent.
-            var dialog = new FormDialog(main, "Профиль"); dialog.Field("Имя", "UiTester"); dialog.Accept();
+            phase("form overlay"); var dialog = new FormDialog(main, "Профиль"); dialog.Field("Имя", "UiTester"); dialog.Accept();
             main.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => { Assert.Equal(windowCount, Application.Current.Windows.Count); dialog.DialogResult = true; }));
             Assert.True(dialog.ShowDialog());
-            var composer = Assert.Single(Descendants(main).OfType<TextBox>(), box => box.AcceptsReturn);
+            phase("send on Enter"); var composer = Assert.Single(Descendants(main).OfType<TextBox>(), box => box.AcceptsReturn);
             composer.Text = "hello :loop: world";
             var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(main), 0, Key.Enter) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
             composer.RaiseEvent(key);
@@ -153,7 +157,7 @@ public sealed class ThemeTests
         }
         finally
         {
-            main.Quit();
+            phase("shutdown"); main.Quit();
             var frame = new DispatcherFrame();
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
             var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -174,4 +178,6 @@ public sealed class ThemeTests
     }
 
     private sealed class DerivedWindow : ThemedWindow { }
+    // Nested modal dispatch must not start the production login flow during this fixture.
+    private sealed class TestApp : App { protected override void OnStartup(StartupEventArgs e) { } }
 }
