@@ -153,6 +153,7 @@ public sealed class ThemeTests
             var message = Assert.Single(store.GetMessages(channel.Id));
             Assert.Equal(emoji.Id, message.Emojis![":loop:"]);
             Assert.Contains(Descendants(main).OfType<TextBlock>(), text => text.Inlines.OfType<InlineUIContainer>().Any());
+            using (var exclusive = new FileStream(emoji.LocalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) Assert.True(exclusive.Length > 0);
             Assert.Equal(Visibility.Collapsed, Descendants(main).OfType<Button>().Single(button => Equals(button.Content, "Отменить запись")).Visibility);
         }
         finally

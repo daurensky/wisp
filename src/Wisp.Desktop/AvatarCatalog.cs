@@ -45,7 +45,9 @@ public sealed class AvatarCatalog(string root, string localId)
         if (animate && Encoding.ASCII.GetString(header).StartsWith("GIF8"))
         {
             AnimationBehavior.SetRepeatBehavior(image, RepeatBehavior.Forever);
-            AnimationBehavior.SetSourceUri(image, new Uri(Path.GetFullPath(path)));
+            // Bounded encoded bytes keep playback independent of the cached file's lifetime.
+            // The library retains caller-owned streams across unload/reload; no OS handle stays open.
+            AnimationBehavior.SetSourceStream(image, new MemoryStream(File.ReadAllBytes(path), writable: false));
         }
         else
         {
