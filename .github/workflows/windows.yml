@@ -1,0 +1,44 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore
+        run: dotnet restore Wisp.sln
+      - name: Test core
+        run: dotnet test tests/Wisp.Core.Tests/Wisp.Core.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=core.trx" --results-directory artifacts/test-results
+      - name: Test Windows themes
+        run: dotnet test tests/Wisp.Desktop.Tests/Wisp.Desktop.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=desktop.trx" --results-directory artifacts/test-results
+      - name: Build Windows application
+        run: dotnet build src/Wisp.Desktop/Wisp.Desktop.csproj -c Release --no-restore
+      - name: Publish portable x64 application
+        run: dotnet publish src/Wisp.Desktop/Wisp.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o artifacts/Wisp-win-x64
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path artifacts/Wisp-win-x64/* -DestinationPath artifacts/Wisp-win-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wisp-win-x64
+          path: artifacts/Wisp-win-x64.zip
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: artifacts/test-results
+          if-no-files-found: ignore
