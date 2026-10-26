@@ -9,10 +9,15 @@ public sealed class ScreenVideoReceiver : IDisposable
     private readonly CancellationTokenSource stop = new();
     private readonly object gate = new();
     private bool waitingForKey = true, closed;
+    private readonly CommandRateGate keyRequests = new();
+    private readonly Action? requestKey;
+    private void RequestKey() { if (keyRequests.TryEnter()) requestKey?.Invoke(); }
     public ScreenStreamInfo Info { get; }
-    public ScreenVideoReceiver(ScreenStreamInfo info, Action<byte[]> ready, Action<string> error)
+    public ScreenVideoReceiver(ScreenStreamInfo info, Action<byte[]> ready, Action<string> error, Action? requestKey = null)
     {
         Info = info;
+        this.requestKey = requestKey;
+        RequestKey();
         _ = Task.Factory.StartNew(() =>
         {
             Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
@@ -27,7 +32,7 @@ public sealed class ScreenVideoReceiver : IDisposable
                         if (frame.Reset) { decoder?.Dispose(); decoder = null; decoder = new NativeVideoDecoder(info); }
                         var pixels = decoder?.Decode(frame.Data); if (pixels is not null && !stop.IsCancellationRequested) ready(pixels);
                     }
-                    catch (Exception) when (decoder is not null) { decoder.Dispose(); decoder = null; lock (gate) { waitingForKey = true; while (queue.Reader.TryRead(out _)) { } } }
+                    catch (Exception) when (decoder is not null) { decoder.Dispose(); decoder = null; lock (gate) { waitingForKey = true; while (queue.Reader.TryRead(out _)) { } } RequestKey(); }
                 }
             }
             catch (OperationCanceledException) { }
@@ -41,9 +46,9 @@ public sealed class ScreenVideoReceiver : IDisposable
         {
             if (closed || h264.Length > 2 * 1024 * 1024) return;
             bool key = H264Frame.IsKeyFrame(h264);
-            if (waitingForKey && !key) return;
+            if (waitingForKey && !key) { RequestKey(); return; }
             if (queue.Writer.TryWrite((h264, waitingForKey))) { waitingForKey = false; return; }
-            waitingForKey = true; while (queue.Reader.TryRead(out _)) { }
+            waitingForKey = true; RequestKey(); while (queue.Reader.TryRead(out _)) { }
             if (key && queue.Writer.TryWrite((h264, true))) waitingForKey = false;
         }
     }

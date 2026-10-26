@@ -1,6 +1,6 @@
 # Default Firebase mode: WebRTC mesh
 
-Firebase mode uses `RtcMesh`/`RtcPeer`: up to four direct DTLS/SCTP peer connections per user, Google STUN only, no TURN and no participant forwarding. Firebase authenticates signalling and atomically limits the room to five leased seats. SDP is bound to both peers' current session IDs. See [FIREBASE.md](FIREBASE.md) for setup, permissions, NAT limitations and transport details. There is no guaranteed connectivity through symmetric NAT or blocked UDP.
+Firebase mode uses `RtcMesh`/`RtcPeer`: up to four direct DTLS/SRTP peer connections per user with SCTP control/file channels, configurable UDP STUN (Google defaults), no TURN by the owner’s explicit decision and no participant forwarding. Firebase authenticates signalling and atomically limits the room to five leased seats. SDP is bound to both peers' current session IDs. See [FIREBASE.md](FIREBASE.md) for setup, permissions, NAT limitations and transport details. There is no guaranteed connectivity through symmetric NAT or blocked UDP.
 
 The following TLS implementation remains a legacy fallback only when Firebase configuration is absent.
 
@@ -33,4 +33,12 @@ same voice channel. Deafened peers receive no voice or soundboard commands and
 cannot transmit microphone audio. Media queues are bounded and realtime frames
 are dropped on congestion. TCP head-of-line blocking can increase voice latency
 on lossy links; this initial implementation is best suited to LAN/VPN networks.
-Screen sharing sends compressed still frames, not a hardware video codec.
+Screen sharing uses the shared WGC/GDI capture and software H.264 MFT pipeline; the TLS fallback retains TCP head-of-line limitations.
+
+Network settings are local (`network.json`); one string URL per ICE server. STUN servers see public IPs, and SDP stored in Firebase contains ICE addresses. User-facing connection-path notices show candidate types only. No TURN server/API or relay CI job is included in this scope.
+
+Direct mesh recovery uses a fresh Attempt ID per negotiation with bounded 2/5/15/30-second retries, trickle candidates (64 fixed slots), server-derived lease time and a single room SSE connection. Room events contain only wake metadata: SDP/ICE addresses are fetched through pair-private paths with session checks and a 10-minute read TTL. No stream stays open outside voice. A network-address change debounces for 1.5 seconds before ICE restart; direct reachability is still constrained by NAT/firewall policy.
+
+Voice FEC/PLC and the 40–80ms adaptive PCM buffer are receiver-local changes; no extra audio data is inserted into the external protocol. Screen key-frame/pause commands use the existing events channel. RTP timestamps follow elapsed time, including skipped frames/DTX gaps. All clients must update together; the owner must publish hardening rules after distributing the client and stopping old processes, before starting new ones. See FIREBASE.md.
+
+SIPSorcery 10.0.17 retains completed nomination state after restartIce. Previously nominated pairs therefore request a fresh native peer/Attempt through bounded backoff; no private library state is patched. A real local-peer test covers this fallback and media/control after replacement, but network-interface switching remains a manual scenario.

@@ -4,9 +4,121 @@
     ".write": false,
     "profiles": {
       "$uid": {
-        ".read": "auth != null",
-        ".write": "auth != null && auth.uid === $uid",
-        ".validate": "newData.hasChildren(['Id','Username']) && newData.child('Id').val() === $uid && newData.child('Username').isString() && newData.child('Username').val().length >= 3 && newData.child('Username').val().length <= 32"
+        ".read": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['Id','Username'])",
+        "Id": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.val() === $uid"
+        },
+        "Username": {
+          ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 32",
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === $uid"
+        },
+        "Info": {
+          "Id": {
+            ".validate": "newData.isString() && newData.val().length <= 128 && newData.val() === $uid"
+          },
+          "Username": {
+            ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 32"
+          },
+          "About": {
+            ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 2000"
+          },
+          "Status": {
+            ".validate": "newData.val() === 'online' || newData.val() === 'idle' || newData.val() === 'dnd' || newData.val() === 'offline'"
+          },
+          "Game": {
+            ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 200"
+          },
+          "AvatarPath": {
+            ".validate": false
+          },
+          "BannerPath": {
+            ".validate": false
+          },
+          "AvatarAssetId": {
+            ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 128"
+          },
+          "BannerAssetId": {
+            ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 128"
+          },
+          "AvatarRevision": {
+            ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+          },
+          ".validate": "newData.hasChildren(['Id','Username'])",
+          "$other": {
+            ".validate": false
+          },
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === $uid"
+        },
+        "Files": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        },
+        "Images": {
+          "avatar": {
+            "Id": {
+              ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+            },
+            "Name": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200"
+            },
+            "Kind": {
+              ".validate": "newData.val() === 'avatar'"
+            },
+            "Data": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 5592408 && newData.val().matches(/^[A-Za-z0-9+\\/]*={0,2}$/)"
+            },
+            ".validate": "newData.hasChildren(['Id','Name','Kind','Data'])",
+            "$other": {
+              ".validate": false
+            },
+            ".read": "auth != null",
+            ".write": "auth != null && auth.uid === $uid"
+          },
+          "$legacy": {
+            ".read": "auth != null && (auth.uid === $uid || data.child('Kind').val() === 'avatar')",
+            ".write": false
+          }
+        },
+        "$other": {
+          ".validate": false
+        },
+        "About": {
+          ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+          ".validate": false
+        },
+        "AvatarPath": {
+          ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+          ".validate": false
+        },
+        "BannerPath": {
+          ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+          ".validate": false
+        },
+        "Status": {
+          ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+          ".validate": false
+        },
+        "Game": {
+          ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+          ".validate": false
+        },
+        "AvatarAssetId": {
+          ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+          ".validate": false
+        },
+        "BannerAssetId": {
+          ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+          ".validate": false
+        },
+        "AvatarRevision": {
+          ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+          ".validate": false
+        }
       }
     },
     "users": {
@@ -24,8 +136,84 @@
       "$community": {
         ".read": "auth != null && data.child('members').child(auth.uid).val() === true",
         "snapshot": {
-          ".write": "auth != null && ((!data.exists() && newData.child('Community/OwnerId').val() === auth.uid) || data.child('Community/OwnerId').val() === auth.uid)",
-          ".validate": "newData.hasChildren(['Community','Channels','Members']) && newData.child('Community/Id').val() === $community && newData.child('Community/OwnerId').val() === auth.uid"
+          "Community": {
+            "Id": {
+              ".validate": "newData.val() === $community"
+            },
+            "Name": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 80"
+            },
+            "OwnerId": {
+              ".validate": "newData.val() === auth.uid"
+            },
+            ".validate": "newData.hasChildren(['Id','Name','OwnerId'])",
+            "$other": {
+              ".validate": false
+            }
+          },
+          "Channels": {
+            "$index": {
+              "Id": {
+                ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 128"
+              },
+              "CommunityId": {
+                ".validate": "newData.val() === $community"
+              },
+              "Name": {
+                ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 64"
+              },
+              "IsVoice": {
+                ".validate": "newData.isBoolean()"
+              },
+              ".validate": "newData.hasChildren(['Id','CommunityId','Name','IsVoice']) && $index.matches(/^(0|[1-9][0-9]?)$/)",
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "Members": {
+            "$index": {
+              "Id": {
+                ".validate": "newData.isString() && newData.val().length <= 128"
+              },
+              "Username": {
+                ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 32"
+              },
+              "About": {
+                ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 2000"
+              },
+              "Status": {
+                ".validate": "newData.val() === 'online' || newData.val() === 'idle' || newData.val() === 'dnd' || newData.val() === 'offline'"
+              },
+              "Game": {
+                ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 200"
+              },
+              "AvatarPath": {
+                ".validate": false
+              },
+              "BannerPath": {
+                ".validate": false
+              },
+              "AvatarAssetId": {
+                ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 128"
+              },
+              "BannerAssetId": {
+                ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 128"
+              },
+              "AvatarRevision": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+              },
+              ".validate": "newData.hasChildren(['Id','Username']) && $index.matches(/^(0|[1-9][0-9]{0,2})$/)",
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          ".validate": "newData.hasChildren(['Community','Channels','Members'])",
+          "$other": {
+            ".validate": false
+          },
+          ".write": "auth != null && ((!data.exists() && newData.child('Community/OwnerId').val() === auth.uid) || data.child('Community/OwnerId').val() === auth.uid)"
         },
         "members": {
           "$uid": {
@@ -39,8 +227,53 @@
         },
         "presence": {
           "$uid": {
-            ".write": "auth != null && auth.uid === $uid && root.child('communities').child($community).child('members').child(auth.uid).val() === true",
-            ".validate": "newData.hasChildren(['Profile','SeenAt']) && newData.child('Profile/Id').val() === $uid && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000"
+            "Profile": {
+              "Id": {
+                ".validate": "newData.isString() && newData.val().length <= 128 && newData.val() === $uid"
+              },
+              "Username": {
+                ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 32"
+              },
+              "About": {
+                ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 2000"
+              },
+              "Status": {
+                ".validate": "newData.val() === 'online' || newData.val() === 'idle' || newData.val() === 'dnd' || newData.val() === 'offline'"
+              },
+              "Game": {
+                ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 200"
+              },
+              "AvatarPath": {
+                ".validate": false
+              },
+              "BannerPath": {
+                ".validate": false
+              },
+              "AvatarAssetId": {
+                ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 128"
+              },
+              "BannerAssetId": {
+                ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 128"
+              },
+              "AvatarRevision": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+              },
+              ".validate": "newData.hasChildren(['Id','Username'])",
+              "$other": {
+                ".validate": false
+              }
+            },
+            "ChannelId": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 128"
+            },
+            "SeenAt": {
+              ".validate": "newData.isNumber() && newData.val() >= now - 30000 && newData.val() <= now + 10000"
+            },
+            ".validate": "newData.hasChildren(['Profile','SeenAt'])",
+            "$other": {
+              ".validate": false
+            },
+            ".write": "auth != null && auth.uid === $uid && root.child('communities').child($community).child('members').child(auth.uid).val() === true"
           }
         },
         "messages": {
@@ -49,8 +282,422 @@
               "SentAt"
             ],
             "$message": {
-              ".write": "auth != null && !data.exists() && root.child('communities').child($community).child('members').child(auth.uid).val() === true",
-              ".validate": "newData.hasChildren(['Id','ChannelId','AuthorId','Text','SentAt']) && newData.child('Id').val() === $message && newData.child('ChannelId').val() === $channel && newData.child('AuthorId').val() === auth.uid && newData.child('Text').isString() && newData.child('Text').val().length <= 8000"
+              "Id": {
+                ".validate": "newData.isString() && newData.val() === $message && newData.val().length <= 128"
+              },
+              "ChannelId": {
+                ".validate": "newData.isString() && newData.val() === $channel && newData.val().length <= 128"
+              },
+              "AuthorId": {
+                ".validate": "newData.isString() && newData.val() === auth.uid"
+              },
+              "AuthorName": {
+                ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 32"
+              },
+              "Text": {
+                ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 8000"
+              },
+              "SentAt": {
+                ".validate": "newData.isString() && newData.val().length >= 20 && newData.val().length <= 40"
+              },
+              "AttachmentId": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+              },
+              "Emojis": {
+                "e00": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e01": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e02": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e03": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e04": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e05": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e06": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e07": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e08": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e09": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e10": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e11": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e12": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e13": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e14": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e15": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e16": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e17": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e18": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e19": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e20": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e21": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e22": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e23": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e24": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e25": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e26": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e27": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e28": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e29": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e30": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "e31": {
+                  "Token": {
+                    ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 42 && newData.val().matches(/^:[^:]{1,40}:$/)"
+                  },
+                  "AssetId": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/)"
+                  },
+                  ".validate": "newData.hasChildren(['Token','AssetId'])",
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "$other": {
+                  ".validate": false
+                },
+                ".validate": "newData.hasChildren()"
+              },
+              ".validate": "newData.hasChildren(['Id','ChannelId','AuthorId','AuthorName','Text','SentAt'])",
+              "$other": {
+                ".validate": false
+              },
+              ".write": "auth != null && !data.exists() && root.child('communities').child($community).child('members').child(auth.uid).val() === true"
             }
           }
         },
@@ -58,28 +705,205 @@
           "$channel": {
             "s0": {
               ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && ((!newData.exists() && (data.child('UserId').val() === auth.uid || data.child('SeenAt').val() < now - 45000)) || (newData.child('UserId').val() === auth.uid && (!data.exists() || data.child('UserId').val() === auth.uid || data.child('SeenAt').val() < now - 45000)))",
-              ".validate": "newData.hasChildren(['UserId','SessionId','SeenAt','Muted','Deafened']) && newData.child('UserId').val() === auth.uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean() && newData.parent().child('s1/UserId').val() !== auth.uid && newData.parent().child('s2/UserId').val() !== auth.uid && newData.parent().child('s3/UserId').val() !== auth.uid && newData.parent().child('s4/UserId').val() !== auth.uid"
+              ".validate": "newData.hasChildren(['UserId','SessionId','SeenAt','Muted','Deafened']) && newData.child('UserId').val() === auth.uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean() && newData.parent().child('s1/UserId').val() !== auth.uid && newData.parent().child('s2/UserId').val() !== auth.uid && newData.parent().child('s3/UserId').val() !== auth.uid && newData.parent().child('s4/UserId').val() !== auth.uid",
+              "UserId": {
+                ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 128"
+              },
+              "SessionId": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+              },
+              "SeenAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "Muted": {
+                ".validate": "newData.isBoolean()"
+              },
+              "Deafened": {
+                ".validate": "newData.isBoolean()"
+              },
+              "$other": {
+                ".validate": false
+              }
             },
             "s1": {
               ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && ((!newData.exists() && (data.child('UserId').val() === auth.uid || data.child('SeenAt').val() < now - 45000)) || (newData.child('UserId').val() === auth.uid && (!data.exists() || data.child('UserId').val() === auth.uid || data.child('SeenAt').val() < now - 45000)))",
-              ".validate": "newData.hasChildren(['UserId','SessionId','SeenAt','Muted','Deafened']) && newData.child('UserId').val() === auth.uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean() && newData.parent().child('s0/UserId').val() !== auth.uid && newData.parent().child('s2/UserId').val() !== auth.uid && newData.parent().child('s3/UserId').val() !== auth.uid && newData.parent().child('s4/UserId').val() !== auth.uid"
+              ".validate": "newData.hasChildren(['UserId','SessionId','SeenAt','Muted','Deafened']) && newData.child('UserId').val() === auth.uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean() && newData.parent().child('s0/UserId').val() !== auth.uid && newData.parent().child('s2/UserId').val() !== auth.uid && newData.parent().child('s3/UserId').val() !== auth.uid && newData.parent().child('s4/UserId').val() !== auth.uid",
+              "UserId": {
+                ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 128"
+              },
+              "SessionId": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+              },
+              "SeenAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "Muted": {
+                ".validate": "newData.isBoolean()"
+              },
+              "Deafened": {
+                ".validate": "newData.isBoolean()"
+              },
+              "$other": {
+                ".validate": false
+              }
             },
             "s2": {
               ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && ((!newData.exists() && (data.child('UserId').val() === auth.uid || data.child('SeenAt').val() < now - 45000)) || (newData.child('UserId').val() === auth.uid && (!data.exists() || data.child('UserId').val() === auth.uid || data.child('SeenAt').val() < now - 45000)))",
-              ".validate": "newData.hasChildren(['UserId','SessionId','SeenAt','Muted','Deafened']) && newData.child('UserId').val() === auth.uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean() && newData.parent().child('s0/UserId').val() !== auth.uid && newData.parent().child('s1/UserId').val() !== auth.uid && newData.parent().child('s3/UserId').val() !== auth.uid && newData.parent().child('s4/UserId').val() !== auth.uid"
+              ".validate": "newData.hasChildren(['UserId','SessionId','SeenAt','Muted','Deafened']) && newData.child('UserId').val() === auth.uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean() && newData.parent().child('s0/UserId').val() !== auth.uid && newData.parent().child('s1/UserId').val() !== auth.uid && newData.parent().child('s3/UserId').val() !== auth.uid && newData.parent().child('s4/UserId').val() !== auth.uid",
+              "UserId": {
+                ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 128"
+              },
+              "SessionId": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+              },
+              "SeenAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "Muted": {
+                ".validate": "newData.isBoolean()"
+              },
+              "Deafened": {
+                ".validate": "newData.isBoolean()"
+              },
+              "$other": {
+                ".validate": false
+              }
             },
             "s3": {
               ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && ((!newData.exists() && (data.child('UserId').val() === auth.uid || data.child('SeenAt').val() < now - 45000)) || (newData.child('UserId').val() === auth.uid && (!data.exists() || data.child('UserId').val() === auth.uid || data.child('SeenAt').val() < now - 45000)))",
-              ".validate": "newData.hasChildren(['UserId','SessionId','SeenAt','Muted','Deafened']) && newData.child('UserId').val() === auth.uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean() && newData.parent().child('s0/UserId').val() !== auth.uid && newData.parent().child('s1/UserId').val() !== auth.uid && newData.parent().child('s2/UserId').val() !== auth.uid && newData.parent().child('s4/UserId').val() !== auth.uid"
+              ".validate": "newData.hasChildren(['UserId','SessionId','SeenAt','Muted','Deafened']) && newData.child('UserId').val() === auth.uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean() && newData.parent().child('s0/UserId').val() !== auth.uid && newData.parent().child('s1/UserId').val() !== auth.uid && newData.parent().child('s2/UserId').val() !== auth.uid && newData.parent().child('s4/UserId').val() !== auth.uid",
+              "UserId": {
+                ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 128"
+              },
+              "SessionId": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+              },
+              "SeenAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "Muted": {
+                ".validate": "newData.isBoolean()"
+              },
+              "Deafened": {
+                ".validate": "newData.isBoolean()"
+              },
+              "$other": {
+                ".validate": false
+              }
             },
             "s4": {
               ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && ((!newData.exists() && (data.child('UserId').val() === auth.uid || data.child('SeenAt').val() < now - 45000)) || (newData.child('UserId').val() === auth.uid && (!data.exists() || data.child('UserId').val() === auth.uid || data.child('SeenAt').val() < now - 45000)))",
-              ".validate": "newData.hasChildren(['UserId','SessionId','SeenAt','Muted','Deafened']) && newData.child('UserId').val() === auth.uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean() && newData.parent().child('s0/UserId').val() !== auth.uid && newData.parent().child('s1/UserId').val() !== auth.uid && newData.parent().child('s2/UserId').val() !== auth.uid && newData.parent().child('s3/UserId').val() !== auth.uid"
+              ".validate": "newData.hasChildren(['UserId','SessionId','SeenAt','Muted','Deafened']) && newData.child('UserId').val() === auth.uid && newData.child('SessionId').isString() && newData.child('SessionId').val().length === 32 && newData.child('SeenAt').isNumber() && newData.child('SeenAt').val() <= now + 10000 && newData.child('SeenAt').val() >= now - 30000 && newData.child('Muted').isBoolean() && newData.child('Deafened').isBoolean() && newData.parent().child('s0/UserId').val() !== auth.uid && newData.parent().child('s1/UserId').val() !== auth.uid && newData.parent().child('s2/UserId').val() !== auth.uid && newData.parent().child('s3/UserId').val() !== auth.uid",
+              "UserId": {
+                ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 128"
+              },
+              "SessionId": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+              },
+              "SeenAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "Muted": {
+                ".validate": "newData.isBoolean()"
+              },
+              "Deafened": {
+                ".validate": "newData.isBoolean()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "$other": {
+              ".validate": false
+            },
+            "events": {
+              "$fromSlot": {
+                ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && $fromSlot.matches(/^s[0-4]$/) && root.child('communities').child($community).child('rtcRooms').child($channel).child($fromSlot).child('UserId').val() === auth.uid && !newData.exists()",
+                "$toSlot": {
+                  "FromSession": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+                  },
+                  "ToSession": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+                  },
+                  "Attempt": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+                  },
+                  "Version": {
+                    ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+                  },
+                  "Kind": {
+                    ".validate": "newData.val() === 'signal' || newData.val() === 'candidates' || newData.val() === 'retry'"
+                  },
+                  "CreatedAt": {
+                    ".validate": "newData.isNumber() && newData.val() >= now - 30000 && newData.val() <= now + 10000"
+                  },
+                  ".validate": "newData.hasChildren(['FromSession','ToSession','Attempt','Version','Kind','CreatedAt'])",
+                  "$other": {
+                    ".validate": false
+                  },
+                  ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && $fromSlot.matches(/^s[0-4]$/) && $toSlot.matches(/^s[0-4]$/) && $fromSlot !== $toSlot && root.child('communities').child($community).child('rtcRooms').child($channel).child($fromSlot).child('UserId').val() === auth.uid && root.child('communities').child($community).child('rtcRooms').child($channel).child($fromSlot).child('SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child($toSlot).child('SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child($fromSlot).child('SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child($toSlot).child('SessionId').val() === newData.child('ToSession').val()"
+                }
+              }
+            }
+          }
+        },
+        "files": {
+          "$file": {
+            ".validate": "$file.matches(/^[a-f0-9]{64}$/)",
+            "Info": {
+              "Name": {
+                ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200"
+              },
+              "Kind": {
+                ".validate": "newData.val() === 'attachment' || newData.val() === 'voice'"
+              },
+              "Size": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 16777216 && newData.val() % 1 === 0 && (newData.parent().child('Kind').val() !== 'voice' || newData.val() <= 5242880)"
+              },
+              "Chunks": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 32 && newData.val() % 1 === 0"
+              },
+              ".validate": "newData.hasChildren(['Name','Kind','Size','Chunks']) && ((newData.child('Size').val() === 0 && newData.child('Chunks').val() === 0) || (newData.child('Size').val() > 0 && (newData.child('Chunks').val() - 1) * 524288 < newData.child('Size').val() && newData.child('Size').val() <= newData.child('Chunks').val() * 524288)) && (newData.child('Chunks').val() > 0 ? (newData.parent().child('Chunks/c00').isString() && (newData.parent().child('Chunks/c00').val().length * 3 / 4 - (newData.parent().child('Chunks/c00').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c00').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 1 ? 524288 : newData.child('Size').val() - 0 * 524288)) : !newData.parent().child('Chunks/c00').exists()) && (newData.child('Chunks').val() > 1 ? (newData.parent().child('Chunks/c01').isString() && (newData.parent().child('Chunks/c01').val().length * 3 / 4 - (newData.parent().child('Chunks/c01').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c01').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 2 ? 524288 : newData.child('Size').val() - 1 * 524288)) : !newData.parent().child('Chunks/c01').exists()) && (newData.child('Chunks').val() > 2 ? (newData.parent().child('Chunks/c02').isString() && (newData.parent().child('Chunks/c02').val().length * 3 / 4 - (newData.parent().child('Chunks/c02').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c02').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 3 ? 524288 : newData.child('Size').val() - 2 * 524288)) : !newData.parent().child('Chunks/c02').exists()) && (newData.child('Chunks').val() > 3 ? (newData.parent().child('Chunks/c03').isString() && (newData.parent().child('Chunks/c03').val().length * 3 / 4 - (newData.parent().child('Chunks/c03').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c03').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 4 ? 524288 : newData.child('Size').val() - 3 * 524288)) : !newData.parent().child('Chunks/c03').exists()) && (newData.child('Chunks').val() > 4 ? (newData.parent().child('Chunks/c04').isString() && (newData.parent().child('Chunks/c04').val().length * 3 / 4 - (newData.parent().child('Chunks/c04').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c04').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 5 ? 524288 : newData.child('Size').val() - 4 * 524288)) : !newData.parent().child('Chunks/c04').exists()) && (newData.child('Chunks').val() > 5 ? (newData.parent().child('Chunks/c05').isString() && (newData.parent().child('Chunks/c05').val().length * 3 / 4 - (newData.parent().child('Chunks/c05').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c05').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 6 ? 524288 : newData.child('Size').val() - 5 * 524288)) : !newData.parent().child('Chunks/c05').exists()) && (newData.child('Chunks').val() > 6 ? (newData.parent().child('Chunks/c06').isString() && (newData.parent().child('Chunks/c06').val().length * 3 / 4 - (newData.parent().child('Chunks/c06').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c06').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 7 ? 524288 : newData.child('Size').val() - 6 * 524288)) : !newData.parent().child('Chunks/c06').exists()) && (newData.child('Chunks').val() > 7 ? (newData.parent().child('Chunks/c07').isString() && (newData.parent().child('Chunks/c07').val().length * 3 / 4 - (newData.parent().child('Chunks/c07').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c07').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 8 ? 524288 : newData.child('Size').val() - 7 * 524288)) : !newData.parent().child('Chunks/c07').exists()) && (newData.child('Chunks').val() > 8 ? (newData.parent().child('Chunks/c08').isString() && (newData.parent().child('Chunks/c08').val().length * 3 / 4 - (newData.parent().child('Chunks/c08').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c08').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 9 ? 524288 : newData.child('Size').val() - 8 * 524288)) : !newData.parent().child('Chunks/c08').exists()) && (newData.child('Chunks').val() > 9 ? (newData.parent().child('Chunks/c09').isString() && (newData.parent().child('Chunks/c09').val().length * 3 / 4 - (newData.parent().child('Chunks/c09').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c09').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 10 ? 524288 : newData.child('Size').val() - 9 * 524288)) : !newData.parent().child('Chunks/c09').exists()) && (newData.child('Chunks').val() > 10 ? (newData.parent().child('Chunks/c10').isString() && (newData.parent().child('Chunks/c10').val().length * 3 / 4 - (newData.parent().child('Chunks/c10').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c10').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 11 ? 524288 : newData.child('Size').val() - 10 * 524288)) : !newData.parent().child('Chunks/c10').exists()) && (newData.child('Chunks').val() > 11 ? (newData.parent().child('Chunks/c11').isString() && (newData.parent().child('Chunks/c11').val().length * 3 / 4 - (newData.parent().child('Chunks/c11').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c11').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 12 ? 524288 : newData.child('Size').val() - 11 * 524288)) : !newData.parent().child('Chunks/c11').exists()) && (newData.child('Chunks').val() > 12 ? (newData.parent().child('Chunks/c12').isString() && (newData.parent().child('Chunks/c12').val().length * 3 / 4 - (newData.parent().child('Chunks/c12').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c12').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 13 ? 524288 : newData.child('Size').val() - 12 * 524288)) : !newData.parent().child('Chunks/c12').exists()) && (newData.child('Chunks').val() > 13 ? (newData.parent().child('Chunks/c13').isString() && (newData.parent().child('Chunks/c13').val().length * 3 / 4 - (newData.parent().child('Chunks/c13').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c13').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 14 ? 524288 : newData.child('Size').val() - 13 * 524288)) : !newData.parent().child('Chunks/c13').exists()) && (newData.child('Chunks').val() > 14 ? (newData.parent().child('Chunks/c14').isString() && (newData.parent().child('Chunks/c14').val().length * 3 / 4 - (newData.parent().child('Chunks/c14').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c14').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 15 ? 524288 : newData.child('Size').val() - 14 * 524288)) : !newData.parent().child('Chunks/c14').exists()) && (newData.child('Chunks').val() > 15 ? (newData.parent().child('Chunks/c15').isString() && (newData.parent().child('Chunks/c15').val().length * 3 / 4 - (newData.parent().child('Chunks/c15').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c15').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 16 ? 524288 : newData.child('Size').val() - 15 * 524288)) : !newData.parent().child('Chunks/c15').exists()) && (newData.child('Chunks').val() > 16 ? (newData.parent().child('Chunks/c16').isString() && (newData.parent().child('Chunks/c16').val().length * 3 / 4 - (newData.parent().child('Chunks/c16').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c16').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 17 ? 524288 : newData.child('Size').val() - 16 * 524288)) : !newData.parent().child('Chunks/c16').exists()) && (newData.child('Chunks').val() > 17 ? (newData.parent().child('Chunks/c17').isString() && (newData.parent().child('Chunks/c17').val().length * 3 / 4 - (newData.parent().child('Chunks/c17').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c17').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 18 ? 524288 : newData.child('Size').val() - 17 * 524288)) : !newData.parent().child('Chunks/c17').exists()) && (newData.child('Chunks').val() > 18 ? (newData.parent().child('Chunks/c18').isString() && (newData.parent().child('Chunks/c18').val().length * 3 / 4 - (newData.parent().child('Chunks/c18').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c18').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 19 ? 524288 : newData.child('Size').val() - 18 * 524288)) : !newData.parent().child('Chunks/c18').exists()) && (newData.child('Chunks').val() > 19 ? (newData.parent().child('Chunks/c19').isString() && (newData.parent().child('Chunks/c19').val().length * 3 / 4 - (newData.parent().child('Chunks/c19').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c19').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 20 ? 524288 : newData.child('Size').val() - 19 * 524288)) : !newData.parent().child('Chunks/c19').exists()) && (newData.child('Chunks').val() > 20 ? (newData.parent().child('Chunks/c20').isString() && (newData.parent().child('Chunks/c20').val().length * 3 / 4 - (newData.parent().child('Chunks/c20').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c20').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 21 ? 524288 : newData.child('Size').val() - 20 * 524288)) : !newData.parent().child('Chunks/c20').exists()) && (newData.child('Chunks').val() > 21 ? (newData.parent().child('Chunks/c21').isString() && (newData.parent().child('Chunks/c21').val().length * 3 / 4 - (newData.parent().child('Chunks/c21').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c21').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 22 ? 524288 : newData.child('Size').val() - 21 * 524288)) : !newData.parent().child('Chunks/c21').exists()) && (newData.child('Chunks').val() > 22 ? (newData.parent().child('Chunks/c22').isString() && (newData.parent().child('Chunks/c22').val().length * 3 / 4 - (newData.parent().child('Chunks/c22').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c22').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 23 ? 524288 : newData.child('Size').val() - 22 * 524288)) : !newData.parent().child('Chunks/c22').exists()) && (newData.child('Chunks').val() > 23 ? (newData.parent().child('Chunks/c23').isString() && (newData.parent().child('Chunks/c23').val().length * 3 / 4 - (newData.parent().child('Chunks/c23').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c23').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 24 ? 524288 : newData.child('Size').val() - 23 * 524288)) : !newData.parent().child('Chunks/c23').exists()) && (newData.child('Chunks').val() > 24 ? (newData.parent().child('Chunks/c24').isString() && (newData.parent().child('Chunks/c24').val().length * 3 / 4 - (newData.parent().child('Chunks/c24').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c24').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 25 ? 524288 : newData.child('Size').val() - 24 * 524288)) : !newData.parent().child('Chunks/c24').exists()) && (newData.child('Chunks').val() > 25 ? (newData.parent().child('Chunks/c25').isString() && (newData.parent().child('Chunks/c25').val().length * 3 / 4 - (newData.parent().child('Chunks/c25').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c25').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 26 ? 524288 : newData.child('Size').val() - 25 * 524288)) : !newData.parent().child('Chunks/c25').exists()) && (newData.child('Chunks').val() > 26 ? (newData.parent().child('Chunks/c26').isString() && (newData.parent().child('Chunks/c26').val().length * 3 / 4 - (newData.parent().child('Chunks/c26').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c26').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 27 ? 524288 : newData.child('Size').val() - 26 * 524288)) : !newData.parent().child('Chunks/c26').exists()) && (newData.child('Chunks').val() > 27 ? (newData.parent().child('Chunks/c27').isString() && (newData.parent().child('Chunks/c27').val().length * 3 / 4 - (newData.parent().child('Chunks/c27').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c27').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 28 ? 524288 : newData.child('Size').val() - 27 * 524288)) : !newData.parent().child('Chunks/c27').exists()) && (newData.child('Chunks').val() > 28 ? (newData.parent().child('Chunks/c28').isString() && (newData.parent().child('Chunks/c28').val().length * 3 / 4 - (newData.parent().child('Chunks/c28').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c28').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 29 ? 524288 : newData.child('Size').val() - 28 * 524288)) : !newData.parent().child('Chunks/c28').exists()) && (newData.child('Chunks').val() > 29 ? (newData.parent().child('Chunks/c29').isString() && (newData.parent().child('Chunks/c29').val().length * 3 / 4 - (newData.parent().child('Chunks/c29').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c29').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 30 ? 524288 : newData.child('Size').val() - 29 * 524288)) : !newData.parent().child('Chunks/c29').exists()) && (newData.child('Chunks').val() > 30 ? (newData.parent().child('Chunks/c30').isString() && (newData.parent().child('Chunks/c30').val().length * 3 / 4 - (newData.parent().child('Chunks/c30').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c30').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 31 ? 524288 : newData.child('Size').val() - 30 * 524288)) : !newData.parent().child('Chunks/c30').exists()) && (newData.child('Chunks').val() > 31 ? (newData.parent().child('Chunks/c31').isString() && (newData.parent().child('Chunks/c31').val().length * 3 / 4 - (newData.parent().child('Chunks/c31').val().matches(/.*==$/) ? 2 : (newData.parent().child('Chunks/c31').val().matches(/.*=$/) ? 1 : 0))) === (newData.child('Chunks').val() > 32 ? 524288 : newData.child('Size').val() - 31 * 524288)) : !newData.parent().child('Chunks/c31').exists())",
+              "$other": {
+                ".validate": false
+              },
+              ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && !data.exists()"
+            },
+            "Chunks": {
+              "$chunk": {
+                ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && !data.exists() && !data.parent().parent().child('Info').exists()",
+                ".validate": "$chunk.matches(/^c(0[0-9]|[12][0-9]|3[01])$/) && newData.isString() && newData.val().length > 0 && newData.val().length <= 700000 && newData.val().length % 4 === 0 && newData.val().matches(/^[A-Za-z0-9+\\/]*={0,2}$/)"
+              }
             },
             "$other": {
               ".validate": false
             }
           }
+        },
+        "emojis": {
+          "$emoji": {
+            "Id": {
+              ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{64}$/) && newData.val() === $emoji"
+            },
+            "Name": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200"
+            },
+            "Kind": {
+              ".validate": "newData.val() === 'emoji'"
+            },
+            "Data": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 349528 && newData.val().matches(/^[A-Za-z0-9+\\/]*={0,2}$/)"
+            },
+            ".validate": "newData.hasChildren(['Id','Name','Kind','Data'])",
+            "$other": {
+              ".validate": false
+            },
+            ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && !data.exists()"
+          }
+        },
+        "$other": {
+          ".validate": false
         }
       }
     },
@@ -89,9 +913,81 @@
           "$from": {
             ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && auth.uid === $from && !newData.exists()",
             "$to": {
-              ".read": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && (auth.uid === $from || auth.uid === $to) && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === auth.uid && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === auth.uid && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === auth.uid && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === auth.uid && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === auth.uid && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000))",
-              ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && auth.uid === $from && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === newData.child('FromSession').val()) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === newData.child('FromSession').val()) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === newData.child('FromSession').val()) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === newData.child('FromSession').val()) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === newData.child('FromSession').val())) && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === newData.child('ToSession').val()) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === newData.child('ToSession').val()) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === newData.child('ToSession').val()) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === newData.child('ToSession').val()) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000 && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === newData.child('ToSession').val()))",
-              ".validate": "newData.hasChildren(['FromSession','ToSession','Type','Sdp']) && (newData.child('Type').val() === 'offer' || newData.child('Type').val() === 'answer') && newData.child('Sdp').isString() && newData.child('Sdp').val().length <= 64000"
+              "FromSession": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+              },
+              "ToSession": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+              },
+              "Attempt": {
+                ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+              },
+              "Type": {
+                ".validate": "newData.val() === 'offer' || newData.val() === 'answer'"
+              },
+              "Sdp": {
+                ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 64000"
+              },
+              "CreatedAt": {
+                ".validate": "newData.isNumber() && newData.val() >= now - 30000 && newData.val() <= now + 10000"
+              },
+              ".validate": "newData.hasChildren(['FromSession','ToSession','Attempt','Type','Sdp','CreatedAt'])",
+              "$other": {
+                ".validate": false
+              },
+              ".read": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && (auth.uid === $from || auth.uid === $to) && (!data.exists() || (data.child('CreatedAt').val() >= now - 600000 && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === data.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === data.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === data.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === data.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === data.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000)) && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === data.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === data.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === data.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === data.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === data.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000))))",
+              ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && (auth.uid === $from || auth.uid === $to) && ((auth.uid === $from && newData.exists() && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000)) && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === newData.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === newData.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === newData.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === newData.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === newData.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000)) && (newData.child('Type').val() !== 'answer' || (root.child('rtcSignals').child($community).child($channel).child($to).child($from).child('Type').val() === 'offer' && root.child('rtcSignals').child($community).child($channel).child($to).child($from).child('Attempt').val() === newData.child('Attempt').val() && root.child('rtcSignals').child($community).child($channel).child($to).child($from).child('FromSession').val() === newData.child('ToSession').val() && root.child('rtcSignals').child($community).child($channel).child($to).child($from).child('ToSession').val() === newData.child('FromSession').val()))) || (!newData.exists() && (auth.uid === $from || data.child('CreatedAt').val() < now - 600000)))"
+            }
+          }
+        }
+      }
+    },
+    "rtcCandidates": {
+      "$community": {
+        "$channel": {
+          "$from": {
+            ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && auth.uid === $from && !newData.exists()",
+            "$to": {
+              ".read": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && (auth.uid === $from || auth.uid === $to) && (!data.exists() || (data.child('Meta/CreatedAt').val() >= now - 600000 && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === data.child('Meta').child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === data.child('Meta').child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === data.child('Meta').child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === data.child('Meta').child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === data.child('Meta').child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000)) && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === data.child('Meta').child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === data.child('Meta').child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === data.child('Meta').child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === data.child('Meta').child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === data.child('Meta').child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000))))",
+              ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && (auth.uid === $from || auth.uid === $to) && !newData.exists() && (auth.uid === $from || data.child('Meta/CreatedAt').val() < now - 600000)",
+              "Meta": {
+                "FromSession": {
+                  ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+                },
+                "ToSession": {
+                  ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+                },
+                "Attempt": {
+                  ".validate": "newData.isString() && newData.val().matches(/^[a-f0-9]{32}$/)"
+                },
+                "CreatedAt": {
+                  ".validate": "newData.isNumber() && newData.val() >= now - 30000 && newData.val() <= now + 10000"
+                },
+                ".validate": "newData.hasChildren(['FromSession','ToSession','Attempt','CreatedAt'])",
+                "$other": {
+                  ".validate": false
+                },
+                ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && auth.uid === $from && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === newData.child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000)) && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === newData.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === newData.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === newData.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === newData.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === newData.child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000)) && ((root.child('rtcSignals').child($community).child($channel).child($from).child($to).child('Type').val() === 'offer' && root.child('rtcSignals').child($community).child($channel).child($from).child($to).child('Attempt').val() === newData.child('Attempt').val()) || (root.child('rtcSignals').child($community).child($channel).child($to).child($from).child('Type').val() === 'offer' && root.child('rtcSignals').child($community).child($channel).child($to).child($from).child('Attempt').val() === newData.child('Attempt').val()))"
+              },
+              "$candidate": {
+                "Candidate": {
+                  ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 2048"
+                },
+                "SdpMid": {
+                  ".validate": "newData.isString() && newData.val().length >= 0 && newData.val().length <= 64"
+                },
+                "SdpMLineIndex": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3 && newData.val() % 1 === 0"
+                },
+                "CreatedAt": {
+                  ".validate": "newData.isNumber() && newData.val() >= now - 30000 && newData.val() <= now + 10000"
+                },
+                ".validate": "newData.hasChildren(['Candidate','SdpMid','SdpMLineIndex','CreatedAt'])",
+                "$other": {
+                  ".validate": false
+                },
+                ".write": "auth != null && root.child('communities').child($community).child('members').child(auth.uid).val() === true && auth.uid === $from && $candidate.matches(/^c(0[0-9]|[1-5][0-9]|6[0-3])$/) && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === data.parent().child('Meta').child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === data.parent().child('Meta').child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === data.parent().child('Meta').child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === data.parent().child('Meta').child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $from && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === data.parent().child('Meta').child('FromSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000)) && ((root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SessionId').val() === data.parent().child('Meta').child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s0/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SessionId').val() === data.parent().child('Meta').child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s1/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SessionId').val() === data.parent().child('Meta').child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s2/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SessionId').val() === data.parent().child('Meta').child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s3/SeenAt').val() >= now - 45000) || (root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/UserId').val() === $to && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SessionId').val() === data.parent().child('Meta').child('ToSession').val() && root.child('communities').child($community).child('rtcRooms').child($channel).child('s4/SeenAt').val() >= now - 45000)) && ((root.child('rtcSignals').child($community).child($channel).child($from).child($to).child('Type').val() === 'offer' && root.child('rtcSignals').child($community).child($channel).child($from).child($to).child('Attempt').val() === data.parent().child('Meta').child('Attempt').val()) || (root.child('rtcSignals').child($community).child($channel).child($to).child($from).child('Type').val() === 'offer' && root.child('rtcSignals').child($community).child($channel).child($to).child($from).child('Attempt').val() === data.parent().child('Meta').child('Attempt').val()))"
+              }
             }
           }
         }
