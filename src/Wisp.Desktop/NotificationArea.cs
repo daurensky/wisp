@@ -8,25 +8,23 @@ public sealed class NotificationArea : UserControl
 {
     private readonly StackPanel entries = new();
     private readonly Button clear = new() { Content = "Очистить уведомления" };
-    private string? last;
-    private DateTimeOffset lastAt;
+    private readonly Dictionary<string, (TextBlock Label, int Count)> repeats = new();
     public event Action<int>? Changed;
     public int Count => entries.Children.Count;
     public NotificationArea()
     {
         var dock = new DockPanel { MinHeight = 160, MaxHeight = 500, Margin = new Thickness(16) };
-        clear.Click += (_, _) => { entries.Children.Clear(); Changed?.Invoke(0); };
+        clear.Click += (_, _) => { entries.Children.Clear(); repeats.Clear(); Changed?.Invoke(0); };
         DockPanel.SetDock(clear, Dock.Bottom); dock.Children.Add(clear);
         dock.Children.Add(new ScrollViewer { Content = entries, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }); Content = dock;
     }
-    public void Add(string message, bool error)
+    public bool Add(string message, bool error)
     {
-        if (last == message && DateTimeOffset.UtcNow - lastAt < TimeSpan.FromSeconds(5)) return;
-        last = message; lastAt = DateTimeOffset.UtcNow;
+        if (repeats.TryGetValue(message, out var repeated)) { var count = Math.Min(int.MaxValue - 1, repeated.Count) + 1; repeated.Label.Text = $"{DateTime.Now:HH:mm:ss} · повторов: {count}"; repeats[message] = (repeated.Label, count); return false; }
         var row = new StackPanel { Margin = new Thickness(4, 8, 8, 8) };
-        row.Children.Add(new TextBlock { Text = DateTime.Now.ToString("HH:mm:ss"), FontSize = 10, Opacity = .5 });
+        var label = new TextBlock { Text = DateTime.Now.ToString("HH:mm:ss"), FontSize = 10, Opacity = .5 }; row.Children.Add(label); repeats[message] = (label, 1); row.Tag = message;
         var text = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 0) };
         if (error) text.Foreground = Brushes.Salmon; row.Children.Add(text); entries.Children.Insert(0, row);
-        while (Count > 100) entries.Children.RemoveAt(Count - 1); Changed?.Invoke(Count);
+        while (Count > 100) { var old = (FrameworkElement)entries.Children[Count - 1]; repeats.Remove((string)old.Tag); entries.Children.RemoveAt(Count - 1); } Changed?.Invoke(Count); return true;
     }
 }

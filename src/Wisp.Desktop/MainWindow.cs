@@ -32,6 +32,7 @@ public sealed class MainWindow : ThemedWindow
     private ModalHandle? notificationPopup;
     private string memberRenderKey = "";
     private bool sendingMessage;
+    private DateTimeOffset lastErrorCue = DateTimeOffset.MinValue;
     private readonly FirebaseBackend? cloud;
     private readonly DispatcherTimer cloudTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private IReadOnlyList<PeerPresence> cloudPresence = Array.Empty<PeerPresence>();
@@ -46,6 +47,13 @@ public sealed class MainWindow : ThemedWindow
     private readonly VoiceService voice = new();
     private readonly VoiceRecorder recorder = new();
     private readonly ScreenShareService screen = new();
+    private readonly ShareAudioCapture shareAudio = new();
+    private readonly ShareAudioPlayback sharePlayback = new();
+    private readonly Dictionary<string, ScreenStreamInfo> remoteStreams = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ScreenVideoReceiver> videoReceivers = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (ScreenStreamInfo Info, byte[] Pixels)> videoFrames = new();
+    private int videoScheduled;
+    private string sharedPeers = "";
     private readonly SoundService sounds = new();
     private readonly DispatcherTimer activityTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly StackPanel servers = new(), channels = new(), members = new(), messages = new();
@@ -59,7 +67,7 @@ public sealed class MainWindow : ThemedWindow
     private readonly Button micButton, deafenButton, recordButton, shareButton, leaveButton;
     private readonly System.Windows.Forms.NotifyIcon tray;
     private bool exitRequested;
-    private readonly Dictionary<string, (ModalHandle Window, Image Image)> viewers = new();
+    private readonly Dictionary<string, ScreenViewer> viewers = new();
     private readonly SemaphoreSlim inbound = new(1, 1);
     private readonly System.Threading.Channels.Channel<(int Epoch, WireMessage Message)> incoming = System.Threading.Channels.Channel.CreateBounded<(int, WireMessage)>(8);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, WireMessage> latestFrames = new();
@@ -117,8 +125,11 @@ public sealed class MainWindow : ThemedWindow
                 if (closing) return;
                 if (!rtc.Joined) { cloudChannelId = null; if (voiceChannelId is not null) StopVoice(); }
                 var active = rtc.ConnectedPeerIds; voice.SynchronizePeers(active);
+                foreach (var id in remoteStreams.Keys.Where(id => !active.Contains(id)).ToList()) StopVideoPeer(id);
+                var peerKey = string.Join("|", active.OrderBy(id => id));
+                if (sharing && peerKey != sharedPeers && screen.CurrentInfo is { } info) { sharedPeers = peerKey; Run(() => SendPacket(new WireMessage("screen-start", profile.Id, voiceChannelId, JsonSerializer.SerializeToUtf8Bytes(info)))); }
                 foreach (var id in remoteScreens.Keys.Where(id => !active.Contains(id)).ToList()) { remoteScreens.Remove(id); dismissedScreens.Remove(id); }
-                foreach (var id in viewers.Keys.Where(id => !active.Contains(id)).ToList()) if (viewers.Remove(id, out var gone)) gone.Window.Close();
+                foreach (var id in viewers.Keys.Where(id => !active.Contains(id)).ToList()) if (viewers.Remove(id, out var gone)) gone.Close();
                 UpdateStatus();
             });
         }
@@ -126,7 +137,7 @@ public sealed class MainWindow : ThemedWindow
         {
             if (closing || rtc is not null) return; var hasNew = p.Any(x => x.Profile.Id != profile.Id && !presence.Any(old => old.Profile.Id == x.Profile.Id)); presence = p;
             RenderMembers(); RenderChannels(); if (voiceChannelId is not null && !p.Any(x => x.Profile.Id == profile.Id && x.VoiceChannelId == voiceChannelId)) StopVoice();
-            foreach (var v in viewers.Keys.Where(id => !p.Any(x => x.Profile.Id == id && x.VoiceChannelId == voiceChannelId)).ToList()) if (viewers.Remove(v, out var gone)) gone.Window.Close();
+            foreach (var v in viewers.Keys.Where(id => !p.Any(x => x.Profile.Id == id && x.VoiceChannelId == voiceChannelId)).ToList()) if (viewers.Remove(v, out var gone)) gone.Close();
             voice.SynchronizePeers(p.Where(x => x.VoiceChannelId == voiceChannelId && x.Profile.Id != profile.Id).Select(x => x.Profile.Id));
             UpdateStatus(); if (hasNew) Run(PublishProfile);
         });
@@ -138,7 +149,10 @@ public sealed class MainWindow : ThemedWindow
         });
         node.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
         voice.PacketReady += p => SendRealtime("audio", p); voice.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
-        screen.FrameReady += p => SendRealtime("screen", p); screen.Error += e => Dispatcher.BeginInvoke(() => { StopSharing(); Notify(e, true); });
+        screen.FrameReady += p => SendRealtime("screen-h264", p);
+        shareAudio.PacketReady += p => { if (!deafened) SendRealtime("screen-audio", p); };
+        shareAudio.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
+        sharePlayback.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true)); screen.Error += e => Dispatcher.BeginInvoke(() => { StopSharing(); Notify(e, true); });
         recorder.Completed += path => Dispatcher.BeginInvoke(() => { if (closing || sendingRecording || !File.Exists(path)) return; Run(() => { recordedPath = path; StageRecording(path); Notify("Запись завершена. Можно прослушать и отправить."); return Task.CompletedTask; }); });
         activityTimer.Tick += (_, _) => Run(UpdateGame); activityTimer.Start();
         tray = new System.Windows.Forms.NotifyIcon { Icon = (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone(), Text = "Wisp", Visible = true };
@@ -160,6 +174,12 @@ public sealed class MainWindow : ThemedWindow
     {
         if (closing) return;
         if (m.Type == "audio") { if (voiceChannelId == m.ChannelId) voice.Receive(m.SenderId, m.Payload); return; }
+        if (m.Type == "screen-audio") { if (voiceChannelId == m.ChannelId && videoReceivers.ContainsKey(m.SenderId)) sharePlayback.Receive(m.SenderId, m.Payload); return; }
+        if (m.Type == "screen-h264")
+        {
+            if (voiceChannelId != m.ChannelId || m.Payload.Length > 2 * 1024 * 1024 + 4 || (rtc is not null && !rtc.ConnectedPeerIds.Contains(m.SenderId))) return;
+            if (videoReceivers.TryGetValue(m.SenderId, out var receiver)) { var data = m.Payload; if (rtc is null && !H264Frame.TryUnpack(data, out _, out data)) return; receiver.Enqueue(data); } return;
+        }
         if (m.Type == "screen")
         {
             if (voiceChannelId != m.ChannelId || m.Payload.Length > 2 * 1024 * 1024 || (rtc is not null && !rtc.ConnectedPeerIds.Contains(m.SenderId))) return;
@@ -195,7 +215,7 @@ public sealed class MainWindow : ThemedWindow
     private Button Btn(string text, Action action, string? tip = null) { var b = new Button { Content = text, ToolTip = tip ?? text }; b.Click += (_, _) => { try { action(); } catch (Exception ex) { Notify(ex.Message, true); } }; return b; }
     private Button Btn(string text, Func<Task> action, string? tip = null) => Btn(text, () => Run(action), tip);
     private async void Run(Func<Task> action) { if (closing) return; try { await action(); } catch (Exception ex) { if (!closing) Notify(ex.Message, true); } }
-    private void Notify(string text, bool error = false) { notifications.Add(text, error); if (error) sounds.Play("error"); }
+    private void Notify(string text, bool error = false) { var added = notifications.Add(text, error); if (error && added && DateTimeOffset.UtcNow - lastErrorCue >= TimeSpan.FromSeconds(15)) { lastErrorCue = DateTimeOffset.UtcNow; sounds.Play("error"); } }
     internal void ReportNotification(string text, bool error = false) { Notify(text, error); if (error) ShowNotifications(); }
     private void ShowNotifications()
     {
@@ -337,7 +357,7 @@ public sealed class MainWindow : ThemedWindow
     }
     private async Task LeaveVoice() { if (rtc is not null) await rtc.LeaveAsync(); cloudChannelId = null; cloudPresence = cloudPresence.Where(p => p.Profile.Id != profile.Id).ToList(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); if (node.IsConnected) await node.SetVoiceChannelAsync(null, muted, deafened); StopVoice(); presence = node.Presence; RenderChannels(); sounds.Play("disconnect"); }
     public void Quit() { exitRequested = true; Close(); }
-    private void RestoreFromTray() { Show(); WindowState = WindowState.Normal; Activate(); foreach (var v in viewers.Values) v.Window.Show(); }
+    private void RestoreFromTray() { Show(); WindowState = WindowState.Normal; Activate(); foreach (var v in viewers.Values) v.Show(); }
     private async Task SignOut()
     {
         var saved = SessionVault.Read(store.RootDirectory);
@@ -345,10 +365,10 @@ public sealed class MainWindow : ThemedWindow
         SessionVault.Clear(store.RootDirectory);
         try { await Disconnect(); } finally { exitRequested = true; Close(); }
     }
-    private void StopVoice() { StopSharing(); voice.Stop(); voiceChannelId = null; foreach (var v in viewers.Values.ToList()) v.Window.Close(); viewers.Clear(); remoteScreens.Clear(); dismissedScreens.Clear(); UpdateStatus(); }
+    private void StopVoice() { StopSharing(); voice.Stop(); sharePlayback.Stop(); foreach (var id in remoteStreams.Keys.ToList()) StopVideoPeer(id); videoFrames.Clear(); voiceChannelId = null; foreach (var v in viewers.Values.ToList()) v.Close(); viewers.Clear(); remoteScreens.Clear(); dismissedScreens.Clear(); UpdateStatus(); }
     private async Task Disconnect() { if (rtc is not null) await rtc.LeaveAsync(); cloudChannelId = null; cloudPresence = Array.Empty<PeerPresence>(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); Interlocked.Increment(ref sessionEpoch); latestFrames.Clear(); StopVoice(); await node.DisconnectAsync(); presence = Array.Empty<PeerPresence>(); sessionCommunityId = null; currentInvite = null; RenderMembers(); RenderChannels(); UpdateStatus(); sounds.Play("disconnect"); }
     private async Task ToggleMic() { muted = !muted; voice.Muted = muted; if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(muted ? "mute" : "unmute"); UpdateStatus(); }
-    private async Task ToggleDeafen() { deafened = !deafened; voice.Deafened = deafened; if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (deafened) { sounds.StopFile(); VoiceMessagePlayer.PauseActive(); } if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(deafened ? "deafen" : "undeafen"); UpdateStatus(); }
+    private async Task ToggleDeafen() { deafened = !deafened; voice.Deafened = deafened; sharePlayback.Deafened = deafened; if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (deafened) { sounds.StopFile(); VoiceMessagePlayer.PauseActive(); } if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(deafened ? "deafen" : "undeafen"); UpdateStatus(); }
     private async Task UpdateGame()
     {
         var game = GamePresenceService.DetectGame(); if (game == profile.Game) return; profile = profile with { Game = game }; store.SaveProfile(profile); await node.UpdateProfileAsync(profile); RenderMembers();
@@ -510,7 +530,11 @@ public sealed class MainWindow : ThemedWindow
                 store.SaveMessage(chat); if (selectedChannel?.Id == chat.ChannelId) AddMessage(chat); if (!deafened) sounds.Play("message"); break;
             case "audio": if (voiceChannelId == m.ChannelId) voice.Receive(m.SenderId, m.Payload); break;
             case "screen": if (voiceChannelId == m.ChannelId) ShowFrame(m.SenderId, m.Payload); break;
-            case "screen-stop": if (viewers.Remove(m.SenderId, out var viewer)) viewer.Window.Close(); remoteScreens.Remove(m.SenderId); dismissedScreens.Remove(m.SenderId); break;
+            case "screen-start":
+                if (voiceChannelId != m.ChannelId || m.Payload.Length > 2048) return;
+                var streamInfo = JsonSerializer.Deserialize<ScreenStreamInfo>(m.Payload); if (streamInfo?.IsValid != true || streamInfo.SessionId.Length > 64) return;
+                if (!remoteStreams.TryGetValue(m.SenderId, out var oldInfo) || oldInfo != streamInfo) { StopVideoPeer(m.SenderId); remoteStreams[m.SenderId] = streamInfo; OpenVideoPeer(m.SenderId); } break;
+            case "screen-stop": StopVideoPeer(m.SenderId); remoteScreens.Remove(m.SenderId); dismissedScreens.Remove(m.SenderId); break;
             case "asset":
                 if (community is null) return; var communityId = community.Id; var incoming = JsonSerializer.Deserialize<AssetTransfer>(m.Payload); if (incoming is null || incoming.Data.Length > 16 * 1024 * 1024 || incoming.Name.Length > 200 || incoming.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || incoming.Name != Path.GetFileName(incoming.Name) || incoming.Name is "." or "..") return;
                 using (var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256))
@@ -528,33 +552,72 @@ public sealed class MainWindow : ThemedWindow
     }
     private void SendRealtime(string type, byte[] payload) { if (voiceChannelId is null || (!node.IsConnected && rtc?.Joined != true)) return; _ = SendRealtimeSafe(type, voiceChannelId, payload); }
     private async Task SendRealtimeSafe(string type, string channel, byte[] data) { try { await SendPacket(new WireMessage(type, profile.Id, channel, data)); } catch { /* Disconnect/presence events surface connection failure. */ } }
-    private void ShareScreen()
+    private async Task ShareScreen()
     {
         if (sharing) { StopSharing(); return; } if (voiceChannelId is null) throw new InvalidOperationException("Сначала подключись к голосовому каналу.");
-        var d = new FormDialog(this, "Демонстрация экрана"); d.Note("Выбери отдельный монитор или окно приложения. До 1280×720, 5 кадров/с для снижения нагрузки. Захватывается изображение без системного звука.");
+        var d = new FormDialog(this, "Демонстрация экрана", 600);
+        d.Note("Выбери окно приложения или монитор. 1080p/60 FPS требует больше ресурсов и скорости сети; при перегрузке кадры пропускаются, чтобы не накапливать задержку.");
+        ComboBox Choice(string label, string[] values, int selected) { d.Note(label); var box = new ComboBox { ItemsSource = values, SelectedIndex = selected, Margin = new Thickness(0, 4, 0, 8) }; d.Add(box); return box; }
+        var resolution = Choice("Разрешение", new[] { "720p", "1080p" }, 1);
+        var framerate = Choice("Частота кадров", new[] { "15 FPS", "30 FPS", "60 FPS" }, 1);
+        var bitrate = Choice("Качество · исходящий поток на каждого зрителя", new[] { "2 Мбит/с", "4 Мбит/с", "6 Мбит/с", "8 Мбит/с" }, 1);
+        var audio = d.Check("Передавать звук приложения / экрана (Windows 11)", ShareAudioCapture.Supported);
+        d.Note("При выборе приложения передаётся его звук. Для монитора передаётся системный звук с исключением Wisp, чтобы разговор не возвращался эхом.");
         CaptureSource? selected = null; foreach (var source in ScreenShareService.GetSources()) d.Action(source.Name, () => { selected = source; d.DialogResult = true; });
-        if (d.ShowDialog() != true || selected is null) return; screen.Start(selected); sharing = true; notice.Text = $"Идёт демонстрация: {selected.Name}"; notice.Visibility = Visibility.Visible; shareButton.Content = "Остановить показ"; sounds.Play("share"); Notify($"Демонстрация начата: {selected.Name}");
+        if (d.ShowDialog() != true || selected is null) return;
+        var info = ScreenShareService.Describe(selected, resolution.SelectedIndex == 0 ? 720 : 1080, new[] { 15, 30, 60 }[framerate.SelectedIndex], new[] { 2000000, 4000000, 6000000, 8000000 }[bitrate.SelectedIndex]) with { SessionId = Guid.NewGuid().ToString("N") };
+        await SendPacket(new WireMessage("screen-start", profile.Id, voiceChannelId, JsonSerializer.SerializeToUtf8Bytes(info)));
+        screen.Start(selected, info); sharing = true; sharedPeers = "";
+        notice.Text = $"Идёт демонстрация: {selected.Name} · {info.Width}×{info.Height} · {info.FramesPerSecond} FPS"; notice.Visibility = Visibility.Visible; shareButton.Content = "Остановить показ"; sounds.Play("share");
+        if (audio.IsChecked == true) { try { await shareAudio.StartAsync(selected); } catch (Exception ex) { Notify(ex.Message, true); } }
+        Notify($"Демонстрация начата: {selected.Name} · H.264 · {info.FramesPerSecond} FPS");
     }
-    private void StopSharing() { notice.Text = ""; notice.Visibility = Visibility.Collapsed; if (!sharing) return; screen.Stop(); sharing = false; shareButton.Content = "Демонстрация"; SendRealtime("screen-stop", Array.Empty<byte>()); sounds.Play("share"); Notify("Демонстрация остановлена."); }
+    private void StopSharing()
+    {
+        notice.Text = ""; notice.Visibility = Visibility.Collapsed; shareAudio.Stop(); screen.Stop(); sharedPeers = "";
+        if (!sharing) return; sharing = false; shareButton.Content = "Демонстрация"; SendRealtime("screen-stop", Array.Empty<byte>()); sounds.Play("share"); Notify("Демонстрация остановлена.");
+    }
+    private ScreenViewer CreateViewer(string peerId)
+    {
+        if (viewers.TryGetValue(peerId, out var existing)) return existing;
+        var name = DisplayPresence.FirstOrDefault(x => x.Profile.Id == peerId)?.Profile.Username ?? "Участник";
+        var viewer = new ScreenViewer(this, $"{name} · Демонстрация"); viewers[peerId] = viewer; sharePlayback.SetMuted(peerId, false);
+        viewer.MuteChanged += value => sharePlayback.SetMuted(peerId, value);
+        viewer.Closed += () => { viewers.Remove(peerId); dismissedScreens.Add(peerId); if (videoReceivers.TryRemove(peerId, out var receiver)) receiver.Dispose(); videoFrames.TryRemove(peerId, out _); sharePlayback.SetMuted(peerId, true); };
+        return viewer;
+    }
+    private void OpenVideoPeer(string peerId)
+    {
+        if (dismissedScreens.Contains(peerId) || !remoteStreams.TryGetValue(peerId, out var info) || videoReceivers.ContainsKey(peerId)) return;
+        CreateViewer(peerId);
+        var receiver = new ScreenVideoReceiver(info, pixels =>
+        {
+            if (closing || !videoReceivers.TryGetValue(peerId, out var current) || current.Info != info) return;
+            videoFrames[peerId] = (info, pixels);
+            if (Interlocked.Exchange(ref videoScheduled, 1) != 0) return;
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+            {
+                Interlocked.Exchange(ref videoScheduled, 0);
+                foreach (var id in videoFrames.Keys) if (videoFrames.TryRemove(id, out var frame) && viewers.TryGetValue(id, out var view)) view.Present(frame.Pixels, frame.Info.Width, frame.Info.Height);
+            }));
+        }, error => Dispatcher.BeginInvoke(() => { if (!closing) Notify(error, true); }));
+        if (!videoReceivers.TryAdd(peerId, receiver)) receiver.Dispose();
+    }
+    private void StopVideoPeer(string peerId)
+    {
+        if (videoReceivers.TryRemove(peerId, out var receiver)) receiver.Dispose(); videoFrames.TryRemove(peerId, out _);
+        if (viewers.Remove(peerId, out var viewer)) viewer.Close(); sharePlayback.Remove(peerId); remoteStreams.Remove(peerId); dismissedScreens.Remove(peerId);
+    }
     private void ShowFrame(string peerId, byte[] jpeg)
     {
         if (jpeg.Length > 2 * 1024 * 1024) return; remoteScreens[peerId] = jpeg; if (dismissedScreens.Contains(peerId)) return;
-        try
-        {
-            using var stream = new MemoryStream(jpeg); var image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad; image.DecodePixelWidth = 1280; image.StreamSource = stream; image.EndInit(); image.Freeze();
-            if (!viewers.TryGetValue(peerId, out var view))
-            {
-                var target = new Image { Stretch = Stretch.Uniform, MaxHeight = 500 }; var name = DisplayPresence.FirstOrDefault(x => x.Profile.Id == peerId)?.Profile.Username ?? "Участник"; var window = ModalHost.Open(this, $"{name} · Демонстрация", target, 1000); view = (window, target); viewers[peerId] = view; window.Closed += () => { viewers.Remove(peerId); dismissedScreens.Add(peerId); };
-            }
-            view.Image.Source = image;
-        }
-        catch { /* A malformed or incomplete image is discarded. */ }
+        try { using var stream = new MemoryStream(jpeg); var image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad; image.DecodePixelWidth = 1920; image.StreamSource = stream; image.EndInit(); image.Freeze(); CreateViewer(peerId).Target.Source = image; } catch { }
     }
     private void WatchScreens()
     {
-        var d = new FormDialog(this, "Демонстрации участников");
-        if (remoteScreens.Count == 0) d.Note("Сейчас никто не демонстрирует экран.");
-        foreach (var pair in remoteScreens.ToList()) d.Action(DisplayPresence.FirstOrDefault(p => p.Profile.Id == pair.Key)?.Profile.Username ?? "Участник", () => { d.Close(); dismissedScreens.Remove(pair.Key); ShowFrame(pair.Key, pair.Value); });
+        var d = new FormDialog(this, "Демонстрации участников"); var ids = remoteStreams.Keys.Concat(remoteScreens.Keys).Distinct().ToList();
+        if (ids.Count == 0) d.Note("Сейчас никто не демонстрирует экран.");
+        foreach (var id in ids) d.Action(DisplayPresence.FirstOrDefault(p => p.Profile.Id == id)?.Profile.Username ?? "Участник", () => { d.Close(); dismissedScreens.Remove(id); if (remoteStreams.ContainsKey(id)) { if (viewers.TryGetValue(id, out var viewer)) { if (viewer.IsMini) viewer.ToggleMini(); viewer.Show(); } else OpenVideoPeer(id); } else ShowFrame(id, remoteScreens[id]); });
         d.ShowDialog();
     }
     private void EmojiPanel()
@@ -675,9 +738,9 @@ public sealed class MainWindow : ThemedWindow
     private async void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         if (closing) return;
-        if (!exitRequested) { e.Cancel = true; foreach (var v in viewers.Values) v.Window.Hide(); Hide(); return; }
+        if (!exitRequested) { e.Cancel = true; foreach (var v in viewers.Values) v.Hide(); Hide(); return; }
         e.Cancel = true; closing = true; activityTimer.Stop(); cloudTimer.Stop(); receiveLifetime.Cancel(); incoming.Writer.TryComplete(); latestFrames.Clear();
-        try { if (recorder.IsRecording) { var path = await recorder.StopAsync(); File.Delete(path); } if (recordedPath is not null) File.Delete(recordedPath); recorder.Dispose(); if (cloud is not null && community is not null) { try { await cloud.DeleteAsync($"communities/{community.Id}/presence/{profile.Id}"); if (node.IsHost) await cloud.DeleteAsync($"communities/{community.Id}/endpoint"); } catch { } } StopVoice(); if (rtc is not null) await rtc.DisposeAsync(); await node.DisposeAsync(); tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); voice.Dispose(); screen.Dispose(); sounds.Dispose(); }
-        catch { } finally { Dispatcher.BeginInvoke(new Action(Close)); }
+        try { if (recorder.IsRecording) { var path = await recorder.StopAsync(); File.Delete(path); } if (recordedPath is not null) File.Delete(recordedPath); recorder.Dispose(); if (cloud is not null && community is not null) { try { await cloud.DeleteAsync($"communities/{community.Id}/presence/{profile.Id}"); if (node.IsHost) await cloud.DeleteAsync($"communities/{community.Id}/endpoint"); } catch { } } StopVoice(); if (rtc is not null) await rtc.DisposeAsync(); await node.DisposeAsync(); tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); voice.Dispose(); screen.Dispose(); sounds.Dispose(); shareAudio.Dispose(); sharePlayback.Dispose(); }
+        catch { } finally { _ = Dispatcher.BeginInvoke(new Action(Close)); }
     }
 }

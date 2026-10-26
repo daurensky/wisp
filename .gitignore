@@ -6,3 +6,5 @@ artifacts/
 *.db
 *.db-shm
 *.db-wal
+
+**/*_wpftmp.csproj

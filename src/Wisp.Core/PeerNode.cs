@@ -331,7 +331,7 @@ public sealed class PeerNode : IAsyncDisposable
             if (voice && (sender.VoiceChannelId == null || sender.VoiceChannelId != message.ChannelId)) throw new InvalidDataException("Join the voice channel before sending media.");
             if (message.Type == "audio" && (sender.Muted || sender.Deafened)) return Task.CompletedTask;
             targets = presence.Values.Where(p => p.Profile.Id != message.SenderId && (!voice || p.VoiceChannelId == sender.VoiceChannelId) &&
-                !(p.Deafened && message.Type is "audio" or "sound")).ToArray();
+                !(p.Deafened && message.Type is "audio" or "screen-audio" or "sound")).ToArray();
         }
         var frame = new Frame("data", Message: message);
         foreach (var target in targets)
@@ -348,9 +348,9 @@ public sealed class PeerNode : IAsyncDisposable
     private void ValidateMessage(WireMessage message)
     {
         if (message.Payload == null || message.Payload.Length > MaxPayload) throw new InvalidDataException("Media exceeds 16 MiB.");
-        if (message.Type is not ("chat" or "audio" or "screen" or "screen-stop" or "asset" or "sound")) throw new InvalidDataException("Unknown media type.");
-        if (message.Type == "audio" && message.Payload.Length > 4096) throw new InvalidDataException("Audio packet is too large.");
-        if (message.Type == "screen" && message.Payload.Length > 2 * 1024 * 1024) throw new InvalidDataException("Screen frame is too large.");
+        if (message.Type is not ("chat" or "audio" or "screen-audio" or "screen-h264" or "screen-start" or "screen" or "screen-stop" or "asset" or "sound")) throw new InvalidDataException("Unknown media type.");
+        if (message.Type is "audio" or "screen-audio" && message.Payload.Length > 1275) throw new InvalidDataException("Audio packet is too large.");
+        if (message.Type is "screen" or "screen-h264" && message.Payload.Length > 2 * 1024 * 1024 + 4) throw new InvalidDataException("Screen frame is too large.");
         if (message.Type == "asset")
         {
             var asset = JsonSerializer.Deserialize<AssetTransfer>(message.Payload) ?? throw new InvalidDataException("Invalid asset.");
@@ -358,6 +358,7 @@ public sealed class PeerNode : IAsyncDisposable
                 string.IsNullOrWhiteSpace(asset.Kind) || asset.Kind.Length > 32 || asset.Data == null || asset.Data.Length > 16 * 1024 * 1024)
                 throw new InvalidDataException("Asset exceeds its limits.");
         }
+        if (message.Type == "screen-start" && message.Payload.Length > 2048) throw new InvalidDataException("Screen configuration too large.");
         if ((message.Type is "sound" or "screen-stop") && message.Payload.Length > 512) throw new InvalidDataException("Command is too large.");
         if (message.Type == "chat")
         {
@@ -448,8 +449,8 @@ public sealed class PeerNode : IAsyncDisposable
             throw new ArgumentException("Invalid profile.");
         return value with { AvatarPath = null, BannerPath = null, Status = value.Status is "online" or "idle" or "dnd" or "offline" ? value.Status : "online" };
     }
-    private static bool IsRealtime(string type) => type is "audio" or "screen";
-    private static bool IsVoiceData(string type) => type is "audio" or "screen" or "screen-stop" or "sound";
+    private static bool IsRealtime(string type) => type is "audio" or "screen-audio" or "screen" or "screen-h264";
+    private static bool IsVoiceData(string type) => type is "audio" or "screen-audio" or "screen" or "screen-h264" or "screen-start" or "screen-stop" or "sound";
     private static string SafeName(string text) => Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
     private static string Fingerprint(X509Certificate certificate) => Convert.ToHexString(SHA256.HashData(certificate.GetRawCertData()));
     private static bool FixedEquals(string a, string b) => CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(a), System.Text.Encoding.UTF8.GetBytes(b));

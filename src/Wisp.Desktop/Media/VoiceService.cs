@@ -1,4 +1,5 @@
 using Concentus.Enums;
+using Wisp.Core;
 using Concentus;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -111,14 +112,13 @@ public sealed class VoiceService : IDisposable
             }
             try
             {
-                var samples = peer.Decoder.Decode(packet.AsSpan(), peer.Samples.AsSpan(), peer.Samples.Length, false);
-                if (samples <= 0) return;
+                if (!peer.Decoder.TryDecode(packet, peer.Samples, out var samples)) return;
                 // Discard stale audio rather than allowing latency to grow indefinitely.
                 if (peer.Buffer.BufferedDuration.TotalMilliseconds > 120) peer.Buffer.ClearBuffer();
                 Buffer.BlockCopy(peer.Samples, 0, peer.Bytes, 0, samples * 2);
                 peer.Buffer.AddSamples(peer.Bytes, 0, samples * 2);
             }
-            catch (Exception ex) { Error?.Invoke("Audio packet: " + ex.Message); }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { peer.Buffer.ClearBuffer(); }
         }
     }
 
@@ -133,7 +133,7 @@ public sealed class VoiceService : IDisposable
                 var peer = _peers[id];
                 _mixer?.RemoveMixerInput(peer.SampleProvider);
                 peer.Buffer.ClearBuffer();
-                (peer.Decoder as IDisposable)?.Dispose();
+                peer.Decoder.Dispose();
                 _peers.Remove(id);
             }
         }
@@ -151,7 +151,7 @@ public sealed class VoiceService : IDisposable
             _output = null;
             _mixer = null;
             (_encoder as IDisposable)?.Dispose(); _encoder = null;
-            foreach (var peer in _peers.Values) (peer.Decoder as IDisposable)?.Dispose();
+            foreach (var peer in _peers.Values) peer.Decoder.Dispose();
             _peers.Clear();
         }
         if (input is not null)
@@ -168,9 +168,9 @@ public sealed class VoiceService : IDisposable
 
     private sealed class PlaybackPeer
     {
-        public readonly IOpusDecoder Decoder = OpusCodecFactory.CreateDecoder(SampleRate, 1);
-        public readonly short[] Samples = new short[5760];
-        public readonly byte[] Bytes = new byte[11520];
+        public readonly OpusFrameDecoder Decoder = new();
+        public readonly short[] Samples = new short[FrameSamples];
+        public readonly byte[] Bytes = new byte[FrameSamples * 2];
         public readonly BufferedWaveProvider Buffer = new(new WaveFormat(SampleRate, 16, 1))
         {
             BufferDuration = TimeSpan.FromMilliseconds(240), DiscardOnBufferOverflow = true, ReadFully = true

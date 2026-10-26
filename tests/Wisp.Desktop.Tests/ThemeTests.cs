@@ -138,10 +138,16 @@ public sealed class ThemeTests
         {
             phase("main layout"); main.Show(); main.UpdateLayout();
             var windowCount = Application.Current.Windows.Count;
-            var notices = new NotificationArea(); notices.Add("Тест", true);
+            var notices = new NotificationArea(); Assert.True(notices.Add("Тест", true));
+            for (int i = 0; i < 500; i++) Assert.False(notices.Add("Тест", true));
+            Assert.Equal(1, notices.Count);
             phase("notification overlay"); var overlay = ModalHost.Open(main, "Уведомления", notices);
             Assert.Equal(windowCount, Application.Current.Windows.Count); overlay.Close();
             ModalHost.Open(main, "Уведомления", notices).Close(); // Reopening must detach from the old parent.
+            phase("screen viewer");
+            var videoView = new ScreenViewer(main, "Demo"); Assert.False(videoView.IsMini); Assert.Equal(windowCount, Application.Current.Windows.Count);
+            videoView.ToggleMini(); Assert.True(videoView.IsMini); videoView.ToggleMini(); Assert.False(videoView.IsMini);
+            videoView.ToggleFullscreen(); Assert.True(videoView.IsFullscreen); videoView.ToggleFullscreen(); Assert.False(videoView.IsFullscreen); videoView.Close();
             phase("form overlay"); var dialog = new FormDialog(main, "Профиль"); dialog.Field("Имя", "UiTester"); dialog.Accept();
             main.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => { Assert.Equal(windowCount, Application.Current.Windows.Count); dialog.DialogResult = true; }));
             Assert.True(dialog.ShowDialog());

@@ -9,6 +9,7 @@ namespace Wisp.Desktop;
 public static class ModalHost
 {
     private static readonly ConditionalWeakTable<Window, Grid> layers = new();
+    public static Grid Surface(Window owner) => Layer(owner);
     public static void Prepare(Window owner) => _ = Layer(owner);
     private static Grid Layer(Window owner)
     {

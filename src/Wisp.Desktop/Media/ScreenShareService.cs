@@ -8,7 +8,7 @@ namespace Wisp.Desktop.Media;
 public sealed record CaptureSource(string Id, string Name);
 
 /// <summary>
-/// Conservative native GDI capture: at most 1280x720 JPEG frames, five per second.
+/// Native GDI capture with reusable buffers and Windows H.264 encoding up to 1080p/60.
 /// Window capture requires a visible, non-minimized window. Protected/GPU-only
 /// surfaces can return black; this is not Windows Graphics Capture.
 /// </summary>
@@ -49,51 +49,46 @@ public sealed class ScreenShareService : IDisposable
         return result;
     }
 
-    public void Start(CaptureSource source)
+    public ScreenStreamInfo? CurrentInfo { get; private set; }
+    public static ScreenStreamInfo Describe(CaptureSource source, int height, int fps, int bitrate)
     {
-        Stop();
-        // Resolve before allocating a worker, so invalid choices are reported immediately.
-        Resolve(source);
+        var bounds = Resolve(source).Bounds;
+        var scale = Math.Min(1d, Math.Min(height * 16d / 9 / bounds.Width, (double)height / bounds.Height));
+        return new ScreenStreamInfo(Math.Max(2, (int)(bounds.Width * scale) / 2 * 2), Math.Max(2, (int)(bounds.Height * scale) / 2 * 2), fps, bitrate);
+    }
+    public void Start(CaptureSource source, ScreenStreamInfo info)
+    {
+        Stop(); Resolve(source); if (!info.IsValid) throw new ArgumentException("Некорректный режим демонстрации.");
         lock (_gate)
         {
-            var cancellation = new CancellationTokenSource();
-            _cancellation = cancellation;
-            var token = cancellation.Token;
-            _loop = Task.Run(async () =>
+            CurrentInfo = info; var cancellation = new CancellationTokenSource(); _cancellation = cancellation; var token = cancellation.Token;
+            _loop = Task.Factory.StartNew(() =>
             {
+                Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
                 try
                 {
-                    using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
-                    do
+                    using var encoder = new NativeVideoEncoder(info);
+                    using var bitmap = new Bitmap(info.Width, info.Height, PixelFormat.Format32bppRgb);
+                    using var graphics = Graphics.FromImage(bitmap);
+                    var pixels = new byte[info.Width * info.Height * 4]; var clock = System.Diagnostics.Stopwatch.StartNew(); long frame = 0;
+                    while (!token.IsCancellationRequested)
                     {
-                        token.ThrowIfCancellationRequested();
-                        var frame = Capture(source);
-                        if (!token.IsCancellationRequested) FrameReady?.Invoke(frame);
-                    } while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false));
-                }
-                catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-                catch (Exception ex) { Error?.Invoke("Демонстрация остановлена: " + ex.Message); }
-                finally
-                {
-                    lock (_gate)
-                    {
-                        if (ReferenceEquals(_cancellation, cancellation)) _cancellation = null;
+                        Capture(source, bitmap, graphics, pixels);
+                        var encoded = encoder.Encode(pixels);
+                        if (encoded is not null && !token.IsCancellationRequested) FrameReady?.Invoke(Wisp.Core.H264Frame.Pack(info.FramesPerSecond, encoded));
+                        frame++; var delay = frame * 1000d / info.FramesPerSecond - clock.Elapsed.TotalMilliseconds;
+                        if (delay > 0) token.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(delay));
+                        else frame = (long)(clock.Elapsed.TotalSeconds * info.FramesPerSecond); // No catch-up burst.
                     }
-                    cancellation.Dispose();
                 }
-            });
+                catch (Exception ex) when (!token.IsCancellationRequested) { Error?.Invoke("Демонстрация остановлена: " + ex.Message); }
+                finally { lock (_gate) { if (ReferenceEquals(_cancellation, cancellation)) { _cancellation = null; CurrentInfo = null; } } cancellation.Dispose(); }
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
     }
-
     public void Stop()
     {
-        lock (_gate)
-        {
-            _cancellation?.Cancel();
-            _cancellation = null;
-            // The worker releases its own GDI handles and cancellation source.
-            _loop = null;
-        }
+        lock (_gate) { _cancellation?.Cancel(); _cancellation = null; CurrentInfo = null; _loop = null; }
     }
 
     private static (Rectangle Bounds, IntPtr Window) Resolve(CaptureSource source)
@@ -116,39 +111,22 @@ public sealed class ScreenShareService : IDisposable
         throw new ArgumentException("Неизвестный источник демонстрации.", nameof(source));
     }
 
-    private static byte[] Capture(CaptureSource source)
+    private static void Capture(CaptureSource source, Bitmap bitmap, Graphics graphics, byte[] pixels)
     {
         var (bounds, window) = Resolve(source);
         if (bounds.Width <= 0 || bounds.Height <= 0) throw new InvalidOperationException("Пустая область захвата.");
-        var scale = Math.Min(1d, Math.Min(1280d / bounds.Width, 720d / bounds.Height));
-        var width = Math.Max(1, (int)(bounds.Width * scale));
-        var height = Math.Max(1, (int)(bounds.Height * scale));
-        using var bitmap = new Bitmap(width, height, PixelFormat.Format24bppRgb);
-        using (var graphics = Graphics.FromImage(bitmap))
+        var scale = Math.Min((double)bitmap.Width / bounds.Width, (double)bitmap.Height / bounds.Height);
+        int width = Math.Max(1, (int)(bounds.Width * scale)), height = Math.Max(1, (int)(bounds.Height * scale));
+        graphics.Clear(Color.Black); var targetDc = graphics.GetHdc(); var sourceDc = GetWindowDC(window);
+        try
         {
-            var targetDc = graphics.GetHdc();
-            var sourceDc = GetWindowDC(window);
-            try
-            {
-                if (sourceDc == IntPtr.Zero) throw new InvalidOperationException("Не удалось захватить окно.");
-                SetStretchBltMode(targetDc, 3); // COLORONCOLOR: cheaper than HALFTONE at five fps.
-                var x = window == IntPtr.Zero ? bounds.X : 0;
-                var y = window == IntPtr.Zero ? bounds.Y : 0;
-                if (!StretchBlt(targetDc, 0, 0, width, height, sourceDc, x, y, bounds.Width, bounds.Height, 0x00CC0020))
-                    throw new InvalidOperationException("Windows отказала в захвате изображения.");
-            }
-            finally
-            {
-                if (sourceDc != IntPtr.Zero) ReleaseDC(window, sourceDc);
-                graphics.ReleaseHdc(targetDc);
-            }
+            if (sourceDc == IntPtr.Zero) throw new InvalidOperationException("Не удалось захватить окно.");
+            SetStretchBltMode(targetDc, 3);
+            if (!StretchBlt(targetDc, (bitmap.Width - width) / 2, (bitmap.Height - height) / 2, width, height, sourceDc, window == IntPtr.Zero ? bounds.X : 0, window == IntPtr.Zero ? bounds.Y : 0, bounds.Width, bounds.Height, 0x00CC0020)) throw new InvalidOperationException("Windows отказала в захвате изображения.");
         }
-        using var output = new MemoryStream();
-        using var settings = new EncoderParameters(1);
-        settings.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 55L);
-        var jpeg = ImageCodecInfo.GetImageEncoders().First(x => x.FormatID == ImageFormat.Jpeg.Guid);
-        bitmap.Save(output, jpeg, settings);
-        return output.ToArray();
+        finally { if (sourceDc != IntPtr.Zero) ReleaseDC(window, sourceDc); graphics.ReleaseHdc(targetDc); }
+        var data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+        try { for (int y = 0; y < bitmap.Height; y++) Marshal.Copy(data.Scan0 + y * data.Stride, pixels, y * bitmap.Width * 4, bitmap.Width * 4); } finally { bitmap.UnlockBits(data); }
     }
 
     public void Dispose() => Stop();
