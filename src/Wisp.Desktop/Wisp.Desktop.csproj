@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><EnableWindowsTargeting>true</EnableWindowsTargeting><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><ApplicationManifest>app.manifest</ApplicationManifest>
+    <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows10.0.19041.0</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><EnableWindowsTargeting>true</EnableWindowsTargeting><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>Wisp</AssemblyName><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Wisp.Core/Wisp.Core.csproj" /><PackageReference Include="NAudio" Version="2.2.1" /><PackageReference Include="Concentus" Version="2.2.2" /></ItemGroup>
@@ -11,4 +11,5 @@
   <ItemGroup><Content Include="../../docs/licenses/ASSETS.md" Link="licenses/ASSETS.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /><Content Include="../../docs/licenses/XamlAnimatedGif-Apache-2.0.txt" Link="licenses/XamlAnimatedGif-Apache-2.0.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
 <ItemGroup><PackageReference Include="Concentus.Native.NetCore" Version="1.5.2" /></ItemGroup>
 <ItemGroup><Content Include="../../docs/licenses/Opus.txt" Link="licenses/Opus.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/><Content Include="../../docs/licenses/Vortice-MIT.txt" Link="licenses/Vortice-MIT.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/></ItemGroup>
+<ItemGroup><PackageReference Include="Vortice.Direct3D11" Version="3.8.3" /></ItemGroup>
 </Project>

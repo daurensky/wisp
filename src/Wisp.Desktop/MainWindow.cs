@@ -52,6 +52,8 @@ public sealed class MainWindow : ThemedWindow
     private readonly ShareAudioCapture shareAudio = new();
     private readonly ShareAudioPlayback sharePlayback = new();
     private readonly Dictionary<string, ScreenStreamInfo> remoteStreams = new();
+    private readonly CommandRateGate screenKeyRequests = new();
+    private sealed record ScreenCommand(string TargetId, string SessionId, bool Paused = false);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ScreenVideoReceiver> videoReceivers = new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (ScreenStreamInfo Info, byte[] Pixels)> videoFrames = new();
     private int videoScheduled;
@@ -156,6 +158,8 @@ public sealed class MainWindow : ThemedWindow
         node.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
         voice.PacketReady += p => SendRealtime("audio", p); voice.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
         screen.FrameReady += p => SendRealtime("screen-h264", p);
+        screen.Status += text => Dispatcher.BeginInvoke(() => { if (!closing && sharing) Notify(text); });
+        screen.PauseChanged += paused => { if (screen.CurrentInfo is { } info) SendRealtime("screen-state", JsonSerializer.SerializeToUtf8Bytes(new ScreenCommand(profile.Id, info.SessionId, paused))); };
         shareAudio.PacketReady += p => { if (!deafened) SendRealtime("screen-audio", p); };
         shareAudio.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
         sharePlayback.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true)); screen.Error += e => Dispatcher.BeginInvoke(() => { StopSharing(); Notify(e, true); });
@@ -540,6 +544,19 @@ public sealed class MainWindow : ThemedWindow
                 if (voiceChannelId != m.ChannelId || m.Payload.Length > 2048) return;
                 var streamInfo = JsonSerializer.Deserialize<ScreenStreamInfo>(m.Payload); if (streamInfo?.IsValid != true || streamInfo.SessionId.Length > 64) return;
                 if (!remoteStreams.TryGetValue(m.SenderId, out var oldInfo) || oldInfo != streamInfo) { StopVideoPeer(m.SenderId); remoteStreams[m.SenderId] = streamInfo; OpenVideoPeer(m.SenderId); } break;
+            case "video-report":
+                if (sharing && voiceChannelId == m.ChannelId && m.Payload.Length <= 512 && JsonSerializer.Deserialize<VideoNetworkReport>(m.Payload) is { } report) screen.ObserveNetwork(m.SenderId, report);
+                break;
+            case "screen-keyframe":
+                if (!sharing || voiceChannelId != m.ChannelId || m.Payload.Length > 512) return;
+                var request = JsonSerializer.Deserialize<ScreenCommand>(m.Payload);
+                if (request?.TargetId == profile.Id && request.SessionId == screen.CurrentInfo?.SessionId && screenKeyRequests.TryEnter()) screen.RequestKeyFrame();
+                break;
+            case "screen-state":
+                if (voiceChannelId != m.ChannelId || m.Payload.Length > 512) return;
+                var state = JsonSerializer.Deserialize<ScreenCommand>(m.Payload);
+                if (state?.TargetId == m.SenderId && remoteStreams.TryGetValue(m.SenderId, out var sourceInfo) && state.SessionId == sourceInfo.SessionId && viewers.TryGetValue(m.SenderId, out var sourceView)) sourceView.SetPaused(state.Paused);
+                break;
             case "screen-stop": StopVideoPeer(m.SenderId); remoteScreens.Remove(m.SenderId); dismissedScreens.Remove(m.SenderId); break;
             case "asset":
                 if (community is null) return; var communityId = community.Id; var incoming = JsonSerializer.Deserialize<AssetTransfer>(m.Payload); if (incoming is null || incoming.Data.Length > 16 * 1024 * 1024 || incoming.Name.Length > 200 || incoming.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || incoming.Name != Path.GetFileName(incoming.Name) || incoming.Name is "." or "..") return;
@@ -566,7 +583,7 @@ public sealed class MainWindow : ThemedWindow
         ComboBox Choice(string label, string[] values, int selected) { d.Note(label); var box = new ComboBox { ItemsSource = values, SelectedIndex = selected, Margin = new Thickness(0, 4, 0, 8) }; d.Add(box); return box; }
         var resolution = Choice("Разрешение", new[] { "720p", "1080p" }, 1);
         var framerate = Choice("Частота кадров", new[] { "15 FPS", "30 FPS", "60 FPS" }, 1);
-        var bitrate = Choice("Качество · исходящий поток на каждого зрителя", new[] { "2 Мбит/с", "4 Мбит/с", "6 Мбит/с", "8 Мбит/с" }, 1);
+        var bitrate = Choice("Битрейт потока · общий исходящий = значение × число зрителей", new[] { "2 Мбит/с", "4 Мбит/с", "6 Мбит/с", "8 Мбит/с" }, 1);
         var audio = d.Check("Передавать звук приложения / экрана (Windows 11)", ShareAudioCapture.Supported);
         d.Note("При выборе приложения передаётся его звук. Для монитора передаётся системный звук с исключением Wisp, чтобы разговор не возвращался эхом.");
         CaptureSource? selected = null; foreach (var source in ScreenShareService.GetSources()) d.Action(source.Name, () => { selected = source; d.DialogResult = true; });
@@ -607,7 +624,8 @@ public sealed class MainWindow : ThemedWindow
                 Interlocked.Exchange(ref videoScheduled, 0);
                 foreach (var id in videoFrames.Keys) if (videoFrames.TryRemove(id, out var frame) && viewers.TryGetValue(id, out var view)) view.Present(frame.Pixels, frame.Info.Width, frame.Info.Height);
             }));
-        }, error => Dispatcher.BeginInvoke(() => { if (!closing) Notify(error, true); }));
+        }, error => Dispatcher.BeginInvoke(() => { if (!closing) Notify(error, true); }),
+            () => SendRealtime("screen-keyframe", JsonSerializer.SerializeToUtf8Bytes(new ScreenCommand(peerId, info.SessionId))));
         if (!videoReceivers.TryAdd(peerId, receiver)) receiver.Dispose();
     }
     private void StopVideoPeer(string peerId)

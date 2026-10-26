@@ -16,6 +16,11 @@ public sealed class RtcPeer : IRtcPeer
     private readonly ushort[] lastAudioSequence = new ushort[2];
     private readonly bool[] audioStarted = new bool[2];
     private readonly object audioOrder = new();
+    private readonly RtpMediaClock[] audioClocks = [new(48000, 960), new(48000, 960)];
+    private readonly RtpMediaClock videoClock = new(90000, 1);
+    private readonly uint[] initialAudioTimestamp = new uint[2];
+    private uint initialVideoTimestamp;
+    private readonly object sendAudioGate = new(), sendVideoGate = new();
     private readonly object candidateGate = new();
     private readonly Queue<RTCIceCandidateInit> pendingCandidates = new();
     private bool remoteDescriptionApplied;
@@ -45,6 +50,27 @@ public sealed class RtcPeer : IRtcPeer
         pc.addTrack(new MediaStreamTrack(new AudioFormat(111, "opus", 48000, 2, "minptime=10;useinbandfec=1")));
         pc.addTrack(new MediaStreamTrack(new AudioFormat(112, "opus", 48000, 2, "stereo=1;minptime=10")));
         pc.addTrack(new MediaStreamTrack(new VideoFormat(96, "H264", 90000, "packetization-mode=1;profile-level-id=42e02a;level-asymmetry-allowed=1")));
+        initialAudioTimestamp[0] = pc.AudioStreamList[0].LocalTrack.Timestamp;
+        initialAudioTimestamp[1] = pc.AudioStreamList[1].LocalTrack.Timestamp;
+        initialVideoTimestamp = pc.VideoLocalTrack.Timestamp;
+        pc.OnReceiveReport += (_, type, report) =>
+        {
+            if (type != SDPMediaTypesEnum.video || Volatile.Read(ref disposed) != 0) return;
+            var samples = report.ReceiverReport?.ReceptionReports ?? report.SenderReport?.ReceptionReports;
+            if (samples is null) return;
+            foreach (var sample in samples.Where(sample => sample.SSRC == pc.VideoLocalTrack.Ssrc).Take(1))
+            {
+                double? rtt = null;
+                if (sample.LastSenderReportTimestamp != 0)
+                {
+                    double ntpSeconds = (DateTimeOffset.UtcNow - DateTimeOffset.UnixEpoch).TotalSeconds + 2208988800d;
+                    uint middleNtp = unchecked((uint)(ulong)(ntpSeconds * 65536));
+                    double measured = unchecked(middleNtp - sample.LastSenderReportTimestamp - sample.DelaySinceLastSenderReport) * 1000d / 65536;
+                    if (measured <= 30000) rtt = measured;
+                }
+                MessageReceived?.Invoke(new("video-report", remoteId, channelId, JsonSerializer.SerializeToUtf8Bytes(new VideoNetworkReport(sample.FractionLost / 256d, sample.Jitter / 90d, rtt))));
+            }
+        };
         pc.OnRtpPacketReceivedByIndex += (index, _, type, packet) =>
         {
             if (Volatile.Read(ref disposed) != 0 || type != SDPMediaTypesEnum.audio || index is < 0 or > 1 || packet.Payload.Length is 0 or > 1275) return;
@@ -72,7 +98,8 @@ public sealed class RtcPeer : IRtcPeer
             {
                 byte[]? complete; if (dc.label == "wisp-events-v2") { if (bytes.Length > 4096) throw new InvalidDataException(); complete = bytes; } else { lock (receiveGate) complete = controlFragments.Receive(bytes); } if (complete is null) return;
                 var message = JsonSerializer.Deserialize<WireMessage>(complete) ?? throw new InvalidDataException();
-                if (message.Type is not ("asset" or "sound" or "screen-start" or "screen-stop") || message.Payload is null || message.Payload.Length > 23 * 1024 * 1024) throw new InvalidDataException("Invalid RTC message.");
+                if (message.Type is not ("asset" or "sound" or "screen-start" or "screen-stop" or "screen-keyframe" or "screen-state") || message.Payload is null || message.Payload.Length > 23 * 1024 * 1024) throw new InvalidDataException("Invalid RTC message.");
+                if (message.Type is "screen-keyframe" or "screen-state" && message.Payload.Length > 512) throw new InvalidDataException("Oversize screen command.");
                 MessageReceived?.Invoke(message with { SenderId = remoteId, ChannelId = channelId });
             }
             catch (Exception ex) when (ex is JsonException or InvalidDataException) { StateChanged?.Invoke("invalid-packet"); Dispose(); }
@@ -136,10 +163,41 @@ public sealed class RtcPeer : IRtcPeer
         if (message.Type is "audio" or "screen-audio")
         {
             if (message.Payload.Length is 0 or > 1275) return;
-            pc.AudioStreamList[message.Type == "audio" ? 0 : 1].SendAudio(960, message.Payload); return;
+            int index = message.Type == "audio" ? 0 : 1;
+            lock (sendAudioGate)
+            {
+                var stream = pc.AudioStreamList[index];
+                stream.SendRtpRaw(message.Payload, unchecked(initialAudioTimestamp[index] + audioClocks[index].Next()), 0, index == 0 ? 111 : 112);
+            }
+            return;
         }
-        if (message.Type == "screen-h264") { if (H264Frame.TryUnpack(message.Payload, out var fps, out var data)) pc.SendVideo((uint)(90000 / fps), data); return; }
-        if (message.Type is "screen-start" or "screen-stop" or "sound") { var command = JsonSerializer.SerializeToUtf8Bytes(message); if (command.Length <= 4096) events!.send(command); return; }
+        if (message.Type == "screen-h264") { if (H264Frame.TryUnpack(message.Payload, out var fps, out var data))
+            {
+                lock (sendVideoGate)
+                {
+                    uint timestamp = unchecked(initialVideoTimestamp + videoClock.Next());
+                    foreach (var nal in H264Packetiser.ParseNals(data))
+                    {
+                        if (nal.NAL.Length <= 1200) pc.VideoStream.SendRtpRaw(nal.NAL, timestamp, nal.IsLast ? 1 : 0, 96);
+                        else
+                        {
+                            // RFC 6184 FU-A. The public SendRtpRaw API preserves explicit timestamps;
+                            // 10.0.17's SendVideo advances an internally-set timestamp by a fixed duration.
+                            for (int offset = 1; offset < nal.NAL.Length; offset += 1198)
+                            {
+                                int length = Math.Min(1198, nal.NAL.Length - offset);
+                                bool last = offset + length == nal.NAL.Length;
+                                var payload = new byte[length + 2];
+                                payload[0] = (byte)((nal.NAL[0] & 0xe0) | 28);
+                                payload[1] = (byte)((nal.NAL[0] & 31) | (offset == 1 ? 128 : 0) | (last ? 64 : 0));
+                                Buffer.BlockCopy(nal.NAL, offset, payload, 2, length);
+                                pc.VideoStream.SendRtpRaw(payload, timestamp, nal.IsLast && last ? 1 : 0, 96);
+                            }
+                        }
+                    }
+                }
+            } return; }
+        if (message.Type is "screen-start" or "screen-stop" or "screen-keyframe" or "screen-state" or "sound") { var command = JsonSerializer.SerializeToUtf8Bytes(message); if (command.Length <= 4096) events!.send(command); return; }
         if (!await sendLock.WaitAsync(0)) throw new IOException("Передача файла уже выполняется. Повтори после её завершения.");
         try
         {

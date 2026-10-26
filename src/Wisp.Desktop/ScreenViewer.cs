@@ -16,6 +16,8 @@ public sealed class ScreenViewer
     private readonly Border surface;
     public Image Target { get; } = new() { Stretch = Stretch.Uniform };
     private readonly Button mini, full, mute;
+    private readonly TextBlock caption;
+    private readonly string title;
     private WriteableBitmap? bitmap;
     private bool closed, fullscreen, muted;
     private (WindowStyle Style, ResizeMode Resize, WindowState State, Rect Bounds, bool Topmost, double MinWidth, double MinHeight) previous;
@@ -25,7 +27,7 @@ public sealed class ScreenViewer
     public event Action<bool>? MuteChanged;
     public ScreenViewer(Window owner, string title)
     {
-        this.owner = owner; layer = ModalHost.Surface(owner);
+        this.owner = owner; this.title = title; layer = ModalHost.Surface(owner);
         var dock = new DockPanel(); var bar = new DockPanel { LastChildFill = true, Margin = new Thickness(8) };
         var tools = new StackPanel { Orientation = Orientation.Horizontal };
         Button Tool(string text, string tooltip, Action action) { var button = new Button { Content = text, ToolTip = tooltip, Padding = new Thickness(9, 6, 9, 6) }; button.Click += (_, _) => action(); tools.Children.Add(button); return button; }
@@ -33,7 +35,8 @@ public sealed class ScreenViewer
         full = Tool("⛶", "На весь экран / выйти из полноэкранного режима", ToggleFullscreen);
         mute = Tool("Звук ✓", "Выключить / включить звук этой демонстрации", () => { muted = !muted; mute!.Content = muted ? "Звук ×" : "Звук ✓"; MuteChanged?.Invoke(muted); });
         Tool("✕", "Закрыть просмотр", Close); DockPanel.SetDock(tools, Dock.Right); bar.Children.Add(tools);
-        bar.Children.Add(new TextBlock { Text = title, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+        caption = new TextBlock { Text = title, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        bar.Children.Add(caption);
         DockPanel.SetDock(bar, Dock.Top); dock.Children.Add(bar); dock.Children.Add(Target);
         surface = new Border { Background = Brushes.Black, BorderThickness = new Thickness(1), Child = dock, Focusable = true };
         surface.SetResourceReference(Border.BorderBrushProperty, "Card");
@@ -63,6 +66,7 @@ public sealed class ScreenViewer
         owner.MinWidth = 0; owner.MinHeight = 0; owner.WindowState = WindowState.Normal; owner.WindowStyle = WindowStyle.None; owner.ResizeMode = ResizeMode.NoResize; owner.Topmost = true;
         SetWindowPos(handle, new IntPtr(-1), bounds.Left, bounds.Top, bounds.Width, bounds.Height, 0x0040); fullscreen = true; full.Content = "⛶ ↙"; surface.Focus();
     }
+    public void SetPaused(bool paused) => caption.Text = title + (paused ? " · окно свёрнуто" : "");
     public void Present(byte[] bgra, int width, int height)
     {
         if (closed || bgra.Length < width * height * 4) return;

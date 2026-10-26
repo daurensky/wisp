@@ -15,11 +15,15 @@ public sealed class NativeVideoEncoder : IDisposable
     private readonly MfTransform converter, encoder;
     private readonly ScreenStreamInfo info;
     private long index;
+    private long lastKeyTime = -30000000;
+    private int keyRequested;
+    private int bitrate;
+    public string RateControlStatus { get; private set; } = "";
     private byte[] header = Array.Empty<byte>();
     public NativeVideoEncoder(ScreenStreamInfo info)
     {
         if (!info.IsValid) throw new ArgumentException("Недопустимый режим демонстрации.");
-        this.info = info;
+        this.info = info; bitrate = info.Bitrate;
         converter = MfTransform.Color(info.Width, info.Height, VideoFormatGuids.Rgb32, VideoFormatGuids.NV12, info.FramesPerSecond);
         try
         {
@@ -31,16 +35,34 @@ public sealed class NativeVideoEncoder : IDisposable
             using var input = MfTransform.VideoType(info, VideoFormatGuids.NV12);
             encoder.Transform.SetInputType(0, input, 0);
             encoder.TryCodec(new Guid("9d3ecd55-89e8-490a-970a-0c9548d5a56e"), true);
-            encoder.TryCodec(new Guid("95f31b26-95a4-41aa-9303-246a7fc6eef1"), (uint)info.FramesPerSecond);
+            encoder.TryCodec(new Guid("95f31b26-95a4-41aa-9303-246a7fc6eef1"), (uint)(info.FramesPerSecond * 3));
+            bool cbr = encoder.TryCodec(new Guid("1c0608e9-370c-4710-8a58-cb6181c42423"), 0u);
+            bool buffer = encoder.TryCodec(new Guid("0db96574-b6a4-4c8b-8106-3773de0310cd"), (uint)(info.Bitrate / 2));
+            RateControlStatus = (cbr ? "CBR" : "AvgBitrate (CBR не принят)") + (buffer ? "; буфер 0,5 с" : "; буфер по умолчанию");
             encoder.Begin();
         }
         catch { Dispose(); throw; }
     }
-    public byte[]? Encode(byte[] bgra)
+    public void RequestKeyFrame() => Interlocked.Exchange(ref keyRequested, 1);
+    public bool TrySetBitrate(int value)
+    {
+        if (value is < 500000 or > 8000000) return false;
+        if (!encoder.TryCodec(new Guid("f7222374-2144-4815-b550-a37f8e12ee52"), (uint)value)) return false;
+        bitrate = value;
+        return true;
+    }
+    public byte[]? Encode(byte[] bgra, TimeSpan? presentationTime = null)
     {
         if (bgra.Length != info.Width * info.Height * 4) throw new ArgumentException("Неверный размер кадра.");
-        var duration = 10000000L / info.FramesPerSecond; var time = index * duration;
-        if (index++ % info.FramesPerSecond == 0) encoder.TryCodec(new Guid("398c1b98-8353-475a-9ef2-8f265d260345"), 1u);
+        var duration = 10000000L / info.FramesPerSecond;
+        var time = presentationTime?.Ticks ?? index * duration;
+        index++;
+        bool forceKey = Interlocked.Exchange(ref keyRequested, 0) != 0;
+        if (time - lastKeyTime >= TimeSpan.FromSeconds(3).Ticks || forceKey)
+        {
+            encoder.TryCodec(new Guid("398c1b98-8353-475a-9ef2-8f265d260345"), 1u);
+            lastKeyTime = time;
+        }
         var nv12 = converter.Convert(bgra, time, duration); if (nv12 is null) return null;
         var frame = encoder.Convert(nv12, time, duration); if (frame is null) return null;
         if (header.Length == 0) { try { using var type = encoder.Transform.GetOutputCurrentType(0); header = type.GetBlob(MediaTypeAttributeKeys.MpegSequenceHeader); } catch { } }
@@ -140,9 +162,14 @@ internal sealed class MfTransform : IDisposable
         return type;
     }
     public void Begin() { Transform.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, 0); Transform.ProcessMessage(TMessageType.MessageNotifyStartOfStream, 0); }
-    public void TryCodec(Guid key, object value)
+    public bool TryCodec(Guid key, object value)
     {
-        try { codecObject ??= Marshal.GetObjectForIUnknown(Transform.NativePointer); if (codecObject is ICodecApi codec) codec.SetValue(ref key, ref value); } catch { }
+        try
+        {
+            codecObject ??= Marshal.GetObjectForIUnknown(Transform.NativePointer);
+            return codecObject is ICodecApi codec && codec.SetValue(ref key, ref value) >= 0;
+        }
+        catch { return false; }
     }
     public byte[]? Convert(byte[] bytes, long time, long duration, Action? streamChange = null)
     {
