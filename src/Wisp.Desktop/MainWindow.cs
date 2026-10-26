@@ -156,6 +156,7 @@ public sealed class MainWindow : ThemedWindow
             catch (Exception ex) { Notify(ex.Message, true); }
         });
         node.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
+        _ = voice.ConfigureDevicesAsync(AudioDeviceSettings.Load(store.RootDirectory));
         voice.PacketReady += p => SendRealtime("audio", p); voice.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
         screen.FrameReady += p => SendRealtime("screen-h264", p);
         screen.Status += text => Dispatcher.BeginInvoke(() => { if (!closing && sharing) Notify(text); });
@@ -183,7 +184,7 @@ public sealed class MainWindow : ThemedWindow
     private void EnqueueIncoming(WireMessage m)
     {
         if (closing) return;
-        if (m.Type == "audio") { if (voiceChannelId == m.ChannelId) voice.Receive(m.SenderId, m.Payload); return; }
+        if (m.Type == "audio") { if (voiceChannelId == m.ChannelId) voice.Receive(m.SenderId, m.Payload, m.MissingAudioFrames); return; }
         if (m.Type == "screen-audio") { if (voiceChannelId == m.ChannelId && videoReceivers.ContainsKey(m.SenderId)) sharePlayback.Receive(m.SenderId, m.Payload); return; }
         if (m.Type == "screen-h264")
         {
@@ -538,7 +539,7 @@ public sealed class MainWindow : ThemedWindow
             case "chat":
                 var chat = JsonSerializer.Deserialize<ChatMessage>(m.Payload); if (chat is null || chat.AuthorId != m.SenderId || community is null || !store.GetChannels(community.Id).Any(c => c.Id == chat.ChannelId)) return;
                 store.SaveMessage(chat); if (selectedChannel?.Id == chat.ChannelId) AddMessage(chat); if (!deafened) sounds.Play("message"); break;
-            case "audio": if (voiceChannelId == m.ChannelId) voice.Receive(m.SenderId, m.Payload); break;
+            case "audio": if (voiceChannelId == m.ChannelId) voice.Receive(m.SenderId, m.Payload, m.MissingAudioFrames); break;
             case "screen": if (voiceChannelId == m.ChannelId) ShowFrame(m.SenderId, m.Payload); break;
             case "screen-start":
                 if (voiceChannelId != m.ChannelId || m.Payload.Length > 2048) return;
@@ -681,10 +682,31 @@ public sealed class MainWindow : ThemedWindow
             var destination = Path.Combine(directory, Guid.NewGuid().ToString("N") + Path.GetExtension(f.FileName)); File.Copy(f.FileName, destination);
             if (isAvatar) avatar = destination; else banner = destination; sounds.Play("message");
         }
+        d.Action("Звук · устройства", () => { d.Close(); EditAudioDevices(); });
         d.Action("Сеть · STUN", () => { d.Close(); EditNetworkSettings(); });
         d.Action("Выбрать аватар", () => Pick(true)); d.Action("Выбрать баннер", () => Pick(false)); d.Action("Удалить аватар и баннер", () => { avatar = null; banner = null; });
         d.Note("Аватар и баннер: до 4 МБ каждый. Изменения отправляются участникам активной сессии."); d.Accept();
         if (d.ShowDialog() != true) return; var proposed = profile with { Username = name.Text.Trim(), About = about.Text.Trim(), AvatarPath = avatar, BannerPath = banner, AvatarAssetId = null, BannerAssetId = null, AvatarRevision = avatar is null ? null : AvatarCatalog.Revision(avatar) }; store.SaveProfile(proposed); profile = proposed; if (community is not null) store.UpsertMember(community.Id, profile); Run(async () => { await PublishProfile(); RenderMembers(); UpdateStatus(); sounds.Play("message"); });
+    }
+    private void EditAudioDevices()
+    {
+        var dialog = new FormDialog(this, "Устройства связи", 600);
+        dialog.Note("Устройства можно менять во время разговора. По умолчанию используются устройства связи Windows. Категория Communications запрашивает обработку голоса у системы; AEC/шумоподавление зависят от драйвера.");
+        ComboBox DeviceList(string label, bool capture, string? selected)
+        {
+            dialog.Note(label);
+            var devices = AudioDeviceSettings.List(capture);
+            var box = new ComboBox { ItemsSource = devices, DisplayMemberPath = "Name", SelectedIndex = Math.Max(0, devices.ToList().FindIndex(device => device.Id == selected)), Margin = new Thickness(0, 4, 0, 12) };
+            dialog.Add(box); return box;
+        }
+        var microphone = DeviceList("Микрофон", true, voice.Devices.InputId);
+        var headphones = DeviceList("Голос участников", false, voice.Devices.OutputId);
+        dialog.Note("Настройка выхода относится к голосовому разговору. Мультимедиа чата и звук демонстрации используют системный выход Windows.");
+        dialog.Accept("Применить");
+        if (dialog.ShowDialog() != true) return;
+        var settings = new AudioDeviceSettings(((AudioDeviceChoice)microphone.SelectedItem).Id, ((AudioDeviceChoice)headphones.SelectedItem).Id);
+        settings.Save(store.RootDirectory);
+        Run(async () => { await voice.ConfigureDevicesAsync(settings); Notify("Аудиоустройства сохранены. Голосовой канал остаётся подключённым."); });
     }
     private void EditNetworkSettings()
     {

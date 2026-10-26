@@ -13,8 +13,7 @@ public sealed class RtcPeer : IRtcPeer
     private readonly object receiveGate = new();
     private RTCDataChannel? control, events;
     private int disposed;
-    private readonly ushort[] lastAudioSequence = new ushort[2];
-    private readonly bool[] audioStarted = new bool[2];
+    private readonly AudioSequenceTracker[] audioSequences = [new(), new()];
     private readonly object audioOrder = new();
     private readonly RtpMediaClock[] audioClocks = [new(48000, 960), new(48000, 960)];
     private readonly RtpMediaClock videoClock = new(90000, 1);
@@ -74,8 +73,12 @@ public sealed class RtcPeer : IRtcPeer
         pc.OnRtpPacketReceivedByIndex += (index, _, type, packet) =>
         {
             if (Volatile.Read(ref disposed) != 0 || type != SDPMediaTypesEnum.audio || index is < 0 or > 1 || packet.Payload.Length is 0 or > 1275) return;
-            lock (audioOrder) { var sequence = packet.Header.SequenceNumber; if (audioStarted[index] && unchecked((short)(sequence - lastAudioSequence[index])) <= 0) return; audioStarted[index] = true; lastAudioSequence[index] = sequence; }
-            MessageReceived?.Invoke(new(index == 1 ? "screen-audio" : "audio", remoteId, channelId, packet.Payload));
+            int missing;
+            lock (audioOrder)
+            {
+                if (!audioSequences[index].Accept(packet.Header.SequenceNumber, out missing)) return;
+                MessageReceived?.Invoke(new WireMessage(index == 1 ? "screen-audio" : "audio", remoteId, channelId, packet.Payload) { MissingAudioFrames = missing });
+            }
         };
         pc.OnVideoFrameReceived += (_, _, bytes, _) => { if (Volatile.Read(ref disposed) == 0 && bytes.Length is > 0 and <= 2 * 1024 * 1024) MessageReceived?.Invoke(new("screen-h264", remoteId, channelId, bytes)); };
         pc.onicecandidate += _ => CandidateReady?.Invoke();
