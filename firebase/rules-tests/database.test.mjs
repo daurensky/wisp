@@ -7,7 +7,7 @@ import { createMockUserToken } from '@firebase/util';
 
 let env;
 const sessions = { alice: 'a'.repeat(32), bob: 'b'.repeat(32) };
-const signal = () => ({ FromSession: sessions.alice, ToSession: sessions.bob, Type: 'offer', Sdp: 'test-sdp' });
+const signal = () => ({ FromSession: sessions.alice, ToSession: sessions.bob, Type: 'offer', Sdp: 'test-sdp', Attempt: 'c'.repeat(32), CreatedAt: Date.now() });
 const db = uid => (uid ? env.authenticatedContext(uid) : env.unauthenticatedContext()).database();
 
 before(async () => {
@@ -172,4 +172,49 @@ test('profile upgrade patches metadata without deleting existing legacy files or
   const own = (await get(ref(db('alice'), 'profiles/alice'))).val();
   assert.equal(own.About, 'legacy description');
   assert.equal(own.Files.file.Chunks.c00, 'AQID');
+});
+
+test('trickle candidates are pair-private, tied to the current attempt and bounded to 64 slots', async () => {
+  await set(ref(db('alice'), 'rtcSignals/room/voice/alice/bob'), signal());
+  const path = 'rtcCandidates/room/voice/alice/bob';
+  const meta = { FromSession: sessions.alice, ToSession: sessions.bob, Attempt: 'c'.repeat(32), CreatedAt: Date.now() };
+  const candidate = { Candidate: 'candidate:1 1 UDP 1 192.0.2.1 1234 typ host', SdpMid: '0', SdpMLineIndex: 0, CreatedAt: Date.now() };
+  await assertFails(set(ref(db('alice'), `${path}/c00`), candidate));
+  await assertFails(set(ref(db('alice'), `${path}/Meta`), { ...meta, Attempt: 'd'.repeat(32) }));
+  await assertSucceeds(set(ref(db('alice'), `${path}/Meta`), meta));
+  await assertSucceeds(set(ref(db('alice'), `${path}/c00`), candidate));
+  await assertSucceeds(set(ref(db('alice'), `${path}/c63`), candidate));
+  await assertSucceeds(get(ref(db('bob'), path)));
+  await assertFails(get(ref(db('u2'), path)));
+  await assertFails(get(ref(db('bob'), 'rtcCandidates/room/voice/alice')));
+  for (const [key, data] of [['c64', candidate], ['Extra', candidate], ['c01', { ...candidate, Candidate: 'A'.repeat(2049) }], ['c01', { ...candidate, Extra: 'x' }]])
+    await assertFails(set(ref(db('alice'), `${path}/${key}`), data));
+  await assertFails(set(ref(db('bob'), `${path}/c01`), candidate));
+});
+
+test('answers echo the offer attempt; stale SDP becomes unreadable and only expired foreign records may be removed', async () => {
+  const path = 'rtcSignals/room/voice/alice/bob';
+  await set(ref(db('alice'), path), signal());
+  const answer = { ...signal(), FromSession: sessions.bob, ToSession: sessions.alice, Type: 'answer' };
+  await assertFails(set(ref(db('bob'), 'rtcSignals/room/voice/bob/alice'), { ...answer, Attempt: 'd'.repeat(32) }));
+  await assertSucceeds(set(ref(db('bob'), 'rtcSignals/room/voice/bob/alice'), answer));
+  await assertFails(set(ref(db('bob'), path), null));
+  await env.withSecurityRulesDisabled(context => update(ref(context.database(), path), { CreatedAt: Date.now() - 600001 }));
+  await assertFails(get(ref(db('bob'), path)));
+  await assertFails(set(ref(db('u2'), path), null));
+  await assertSucceeds(set(ref(db('bob'), path), null));
+  for (const invalid of [{ ...signal(), CreatedAt: Date.now() - 40000 }, { ...signal(), CreatedAt: Date.now() + 20000 }, { ...signal(), Attempt: null }])
+    await assertFails(set(ref(db('alice'), path), invalid));
+});
+
+test('wake markers reveal no SDP, reject spoofed sessions, sixth slots and extra fields', async () => {
+  const path = 'communities/room/rtcRooms/voice/events/s0/s1';
+  const marker = { FromSession: sessions.alice, ToSession: sessions.bob, Attempt: 'c'.repeat(32), Kind: 'signal', Version: 'd'.repeat(32), CreatedAt: Date.now() };
+  await assertSucceeds(set(ref(db('alice'), path), marker));
+  await assertSucceeds(get(ref(db('u2'), 'communities/room/rtcRooms/voice')));
+  for (const invalid of [{ ...marker, Sdp: 'leak' }, { ...marker, Kind: 'unknown' }, { ...marker, FromSession: 'e'.repeat(32) }])
+    await assertFails(set(ref(db('alice'), path), invalid));
+  await assertFails(set(ref(db('bob'), path), marker));
+  await assertFails(set(ref(db('alice'), 'communities/room/rtcRooms/voice/events/s0/s5'), marker));
+  await assertSucceeds(set(ref(db('alice'), 'communities/room/rtcRooms/voice/events/s0'), null));
 });

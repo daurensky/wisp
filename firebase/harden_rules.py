@@ -140,15 +140,64 @@ for index in range(5):
         "SeenAt": {".validate": "newData.isNumber()"}, "Muted": {".validate": "newData.isBoolean()"},
         "Deafened": {".validate": "newData.isBoolean()"}, "$other": {".validate": False}
     })
-signal = rules["rtcSignals"]["$community"]["$channel"]["$from"]["$to"]
+# Phase 3: bounded pair-private trickle candidates, attempt IDs, TTL and room-only wake markers.
+room_path = "root.child('communities').child($community).child('rtcRooms').child($channel)"
+def fresh_seat(user, session):
+    return '(' + ' || '.join(
+        f"({room_path}.child('s{i}/UserId').val() === {user} && {room_path}.child('s{i}/SessionId').val() === {session} && {room_path}.child('s{i}/SeenAt').val() >= now - 45000)"
+        for i in range(5)) + ')'
+
+session_field = {'.validate': f'newData.isString() && newData.val().matches({hex_session})'}
+created_field = {'.validate': 'newData.isNumber() && newData.val() >= now - 30000 && newData.val() <= now + 10000'}
+pair_member = member + ' && (auth.uid === $from || auth.uid === $to)'
+def pair_auth(meta):
+    return fresh_seat('$from', f"{meta}.child('FromSession').val()") + ' && ' + fresh_seat('$to', f"{meta}.child('ToSession').val()")
+
+def attempt_matches(meta):
+    # Either direction may be the deterministic offerer; answers/candidates must echo its current attempt.
+    own = "root.child('rtcSignals').child($community).child($channel).child($from).child($to)"
+    other = "root.child('rtcSignals').child($community).child($channel).child($to).child($from)"
+    return f"(({own}.child('Type').val() === 'offer' && {own}.child('Attempt').val() === {meta}.child('Attempt').val()) || ({other}.child('Type').val() === 'offer' && {other}.child('Attempt').val() === {meta}.child('Attempt').val()))"
+
 signal_fields = record({
-    "FromSession": {".validate": f"newData.isString() && newData.val().matches({hex_session})"},
-    "ToSession": {".validate": f"newData.isString() && newData.val().matches({hex_session})"},
-    "Type": {".validate": "newData.val() === 'offer' || newData.val() === 'answer'"}, "Sdp": string(64000),
-    "Attempt": {".validate": f"newData.isString() && newData.val().matches({hex_session})"},
-    "CreatedAt": {".validate": "newData.isNumber() && newData.val() >= now - 600000 && newData.val() <= now + 10000"}
-}, ("FromSession", "ToSession", "Type", "Sdp"))
-signal_fields.update({".read": signal[".read"], ".write": signal[".write"]})
-rules["rtcSignals"]["$community"]["$channel"]["$from"]["$to"] = signal_fields
-community["$other"] = {".validate": False}
-path.write_text(json.dumps({"rules": rules}, indent=2, ensure_ascii=False) + "\n")
+    'FromSession': session_field, 'ToSession': session_field, 'Attempt': session_field,
+    'Type': {'.validate': "newData.val() === 'offer' || newData.val() === 'answer'"},
+    'Sdp': string(64000, 1), 'CreatedAt': created_field
+}, ('FromSession', 'ToSession', 'Attempt', 'Type', 'Sdp', 'CreatedAt'))
+signal_fields['.read'] = pair_member + " && (!data.exists() || (data.child('CreatedAt').val() >= now - 600000 && " + pair_auth('data') + '))'
+other_offer = "root.child('rtcSignals').child($community).child($channel).child($to).child($from)"
+answer_matches = f"(newData.child('Type').val() !== 'answer' || ({other_offer}.child('Type').val() === 'offer' && {other_offer}.child('Attempt').val() === newData.child('Attempt').val() && {other_offer}.child('FromSession').val() === newData.child('ToSession').val() && {other_offer}.child('ToSession').val() === newData.child('FromSession').val()))"
+signal_fields['.write'] = pair_member + " && ((auth.uid === $from && newData.exists() && " + pair_auth('newData') + ' && ' + answer_matches + ") || (!newData.exists() && (auth.uid === $from || data.child('CreatedAt').val() < now - 600000)))"
+rules['rtcSignals']['$community']['$channel']['$from']['$to'] = signal_fields
+
+meta = record({'FromSession': session_field, 'ToSession': session_field, 'Attempt': session_field, 'CreatedAt': created_field}, ('FromSession', 'ToSession', 'Attempt', 'CreatedAt'))
+meta['.write'] = member + " && auth.uid === $from && " + pair_auth('newData') + ' && ' + attempt_matches('newData')
+candidate = record({
+    'Candidate': string(2048, 1), 'SdpMid': string(64),
+    'SdpMLineIndex': {'.validate': 'newData.isNumber() && newData.val() >= 0 && newData.val() <= 3 && newData.val() % 1 === 0'},
+    'CreatedAt': created_field
+}, ('Candidate', 'SdpMid', 'SdpMLineIndex', 'CreatedAt'))
+candidate['.write'] = member + " && auth.uid === $from && $candidate.matches(/^c(0[0-9]|[1-5][0-9]|6[0-3])$/) && " + pair_auth("data.parent().child('Meta')") + ' && ' + attempt_matches("data.parent().child('Meta')")
+pair = {
+    '.read': pair_member + " && (!data.exists() || (data.child('Meta/CreatedAt').val() >= now - 600000 && " + pair_auth("data.child('Meta')") + '))',
+    '.write': pair_member + " && !newData.exists() && (auth.uid === $from || data.child('Meta/CreatedAt').val() < now - 600000)",
+    'Meta': meta, '$candidate': candidate
+}
+rules['rtcCandidates'] = {'$community': {'$channel': {'$from': {'.write': member + ' && auth.uid === $from && !newData.exists()', '$to': pair}}}}
+
+# At most 5x5 small wake markers. All members can read the room; addresses/SDP stay exclusively in pair nodes.
+room_node = community['rtcRooms']['$channel']
+from_slot = room_path + '.child($fromSlot)'
+to_slot = room_path + '.child($toSlot)'
+marker = record({
+    'FromSession': session_field, 'ToSession': session_field, 'Attempt': session_field,
+    'Version': session_field, 'Kind': {'.validate': "newData.val() === 'signal' || newData.val() === 'candidates' || newData.val() === 'retry'"},
+    'CreatedAt': created_field
+}, ('FromSession', 'ToSession', 'Attempt', 'Version', 'Kind', 'CreatedAt'))
+marker['.write'] = member + f" && $fromSlot.matches(/^s[0-4]$/) && $toSlot.matches(/^s[0-4]$/) && $fromSlot !== $toSlot && {from_slot}.child('UserId').val() === auth.uid && {from_slot}.child('SeenAt').val() >= now - 45000 && {to_slot}.child('SeenAt').val() >= now - 45000 && {from_slot}.child('SessionId').val() === newData.child('FromSession').val() && {to_slot}.child('SessionId').val() === newData.child('ToSession').val()"
+room_node['events'] = {'$fromSlot': {
+    '.write': member + f" && $fromSlot.matches(/^s[0-4]$/) && {from_slot}.child('UserId').val() === auth.uid && !newData.exists()",
+    '$toSlot': marker
+}}
+community['$other'] = {'.validate': False}
+path.write_text(json.dumps({'rules': rules}, indent=2, ensure_ascii=False) + '\n')

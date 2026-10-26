@@ -4,20 +4,28 @@ using SIPSorceryMedia.Abstractions;
 namespace Wisp.Core;
 
 /// <summary>SRTP Opus voice, separate SRTP share audio/H.264 video; SCTP only carries control/files.</summary>
-public sealed class RtcPeer : IDisposable
+public sealed class RtcPeer : IRtcPeer
 {
     public const string GoogleStun = "stun:stun.l.google.com:19302";
     private readonly RTCPeerConnection pc;
     private readonly SemaphoreSlim sendLock = new(1);
     private readonly RtcFragments controlFragments = new(32 * 1024 * 1024);
-    private readonly TaskCompletionSource gathered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly object receiveGate = new();
     private RTCDataChannel? control, events;
     private int disposed;
     private readonly ushort[] lastAudioSequence = new ushort[2];
     private readonly bool[] audioStarted = new bool[2];
     private readonly object audioOrder = new();
-    public bool Connected => pc.connectionState == RTCPeerConnectionState.connected && control?.readyState == RTCDataChannelState.open && events?.readyState == RTCDataChannelState.open;
+    private readonly object candidateGate = new();
+    private readonly Queue<RTCIceCandidateInit> pendingCandidates = new();
+    private bool remoteDescriptionApplied;
+    public event Action? CandidateReady;
+    public IReadOnlyList<IceCandidateData> LocalCandidates => pc.GetRtpChannel().Candidates.Take(64).Select(candidate =>
+    {
+        var init = JsonSerializer.Deserialize<RTCIceCandidateInit>(candidate.toJSON())!;
+        return new IceCandidateData(init.candidate, init.sdpMid ?? "0", init.sdpMLineIndex);
+    }).ToArray();
+    public bool Connected => pc.connectionState == RTCPeerConnectionState.connected && pc.iceConnectionState == RTCIceConnectionState.connected && control?.readyState == RTCDataChannelState.open && events?.readyState == RTCDataChannelState.open;
     public string? SelectedCandidateTypes
     {
         get
@@ -44,7 +52,13 @@ public sealed class RtcPeer : IDisposable
             MessageReceived?.Invoke(new(index == 1 ? "screen-audio" : "audio", remoteId, channelId, packet.Payload));
         };
         pc.OnVideoFrameReceived += (_, _, bytes, _) => { if (Volatile.Read(ref disposed) == 0 && bytes.Length is > 0 and <= 2 * 1024 * 1024) MessageReceived?.Invoke(new("screen-h264", remoteId, channelId, bytes)); };
-        pc.onicegatheringstatechange += state => { if (state == RTCIceGatheringState.complete) gathered.TrySetResult(); };
+        pc.onicecandidate += _ => CandidateReady?.Invoke();
+        pc.oniceconnectionstatechange += state =>
+        {
+            if (state is RTCIceConnectionState.disconnected or RTCIceConnectionState.failed)
+                StateChanged?.Invoke(state.ToString());
+            else StateChanged?.Invoke("ice-" + state);
+        };
         pc.onconnectionstatechange += state => StateChanged?.Invoke(state.ToString()); pc.ondatachannel += Bind;
     }
     private void Bind(RTCDataChannel dc)
@@ -67,22 +81,54 @@ public sealed class RtcPeer : IDisposable
     public async Task<string> OfferAsync(CancellationToken cancellation = default)
     {
         Bind(await pc.createDataChannel("wisp-control-v2", new RTCDataChannelInit { ordered = true }));
-        Bind(await pc.createDataChannel("wisp-events-v2", new RTCDataChannelInit { ordered = true })); await GatherAsync(cancellation);
+        Bind(await pc.createDataChannel("wisp-events-v2", new RTCDataChannelInit { ordered = true })); cancellation.ThrowIfCancellationRequested();
         var offer = pc.createOffer(); await pc.setLocalDescription(offer); return offer.sdp;
     }
     public async Task<string> AnswerAsync(string offer, CancellationToken cancellation = default)
     {
-        ApplyRemote(offer, RTCSdpType.offer); await GatherAsync(cancellation); var answer = pc.createAnswer(); await pc.setLocalDescription(answer); return answer.sdp;
+        ApplyRemote(offer, RTCSdpType.offer); cancellation.ThrowIfCancellationRequested(); var answer = pc.createAnswer(); await pc.setLocalDescription(answer); return answer.sdp;
     }
     public void AcceptAnswer(string answer) => ApplyRemote(answer, RTCSdpType.answer);
     private void ApplyRemote(string sdp, RTCSdpType type)
     {
         if (sdp.Length > 64000 || pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = sdp, type = type }) != SetDescriptionResultEnum.OK) throw new InvalidDataException("WebRTC SDP rejected.");
+        lock (candidateGate)
+        {
+            remoteDescriptionApplied = true;
+            while (pendingCandidates.TryDequeue(out var candidate)) pc.addIceCandidate(candidate);
+        }
     }
-    private async Task GatherAsync(CancellationToken cancellation)
+    public void AddIceCandidate(IceCandidateData candidate)
     {
-        if (pc.iceGatheringState == RTCIceGatheringState.complete) return;
-        try { await gathered.Task.WaitAsync(TimeSpan.FromSeconds(8), cancellation); } catch (TimeoutException) { }
+        if (candidate.Candidate is null || candidate.Candidate.Length > 2048 || candidate.SdpMid is null ||
+            candidate.SdpMid.Length > 64 || candidate.SdpMLineIndex is < 0 or > 3)
+            throw new InvalidDataException("Некорректный ICE-кандидат.");
+        var init = new RTCIceCandidateInit
+        {
+            candidate = candidate.Candidate, sdpMid = candidate.SdpMid,
+            sdpMLineIndex = (ushort)candidate.SdpMLineIndex
+        };
+        lock (candidateGate)
+        {
+            if (!remoteDescriptionApplied)
+            {
+                if (pendingCandidates.Count >= 64) throw new InvalidDataException("Слишком много ICE-кандидатов.");
+                pendingCandidates.Enqueue(init);
+            }
+            else pc.addIceCandidate(init);
+        }
+    }
+    public void RestartIce()
+    {
+        if (Volatile.Read(ref disposed) != 0) return;
+        var channel = pc.GetRtpChannel();
+        var user = channel.RemoteIceUser;
+        var password = channel.RemoteIcePassword;
+        pc.restartIce();
+        // 10.0.17 Restart resets the checklist but keeps the remote credentials. Re-arm checking explicitly.
+        if (user is not null && password is not null) pc.SetRemoteCredentials(user, password);
+        CandidateReady?.Invoke();
+        StateChanged?.Invoke("ice-restart");
     }
     public async Task SendAsync(WireMessage message)
     {

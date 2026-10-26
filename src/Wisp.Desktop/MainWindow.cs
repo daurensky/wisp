@@ -722,7 +722,7 @@ public sealed class MainWindow : ThemedWindow
             var snapshot = await cloud.GetAsync<CommunitySnapshot>($"communities/{id}/snapshot");
             if (snapshot is not null) store.SaveSnapshot(snapshot);
             var online = await cloud.GetAsync<Dictionary<string, FirebasePresence>>($"communities/{id}/presence") ?? new();
-            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var now = cloud.ServerNow().ToUnixTimeMilliseconds();
             if (community?.Id != id || closing) return;
             cloudPresence = online.Values.Where(p => now - p.SeenAt < 45000 && now >= p.SeenAt - 10000).Select(p => new PeerPresence(p.Profile, p.ChannelId, false, false)).ToList();
             foreach (var user in cloudPresence.Select(p => p.Profile)) { await avatars.FetchAsync(cloud, user); store.UpsertMember(id, user.Id == profile.Id ? profile : user); }
