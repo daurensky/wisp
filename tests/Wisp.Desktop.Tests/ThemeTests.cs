@@ -3,6 +3,11 @@ using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Input;
+using System.Windows.Documents;
+using System.Windows.Media.Animation;
+using System.Windows.Threading;
+using XamlAnimatedGif;
 using Wisp.Core;
 using Wisp.Desktop;
 using Xunit;
@@ -41,6 +46,7 @@ public sealed class ThemeTests
                 auth = new AuthWindow(store);
                 AssertWindowColors(derived, Colors.Black, Color.FromRgb(237, 237, 242));
                 AssertWindowColors(auth, Colors.Black, Color.FromRgb(237, 237, 242));
+                CheckChatAndOverlays(store, root);
                 var password = Assert.Single(Descendants(auth).OfType<PasswordBox>());
                 Assert.Equal(Color.FromRgb(237, 237, 242), BrushColor(password.Foreground));
                 Assert.Equal(Color.FromRgb(28, 29, 35), BrushColor(password.Background));
@@ -89,6 +95,71 @@ public sealed class ThemeTests
     {
         Assert.Equal(background, BrushColor(window.Background));
         Assert.Equal(foreground, BrushColor(window.Foreground));
+    }
+
+    private static void CheckChatAndOverlays(LocalStore store, string root)
+    {
+        Assert.True(ComposerInput.ShouldSend(Key.Enter, ModifierKeys.None));
+        Assert.False(ComposerInput.ShouldSend(Key.Enter, ModifierKeys.Shift));
+        var tip = new ToolTip { Content = "Подсказка" };
+        Assert.Equal(Color.FromRgb(28, 29, 35), BrushColor(tip.Background));
+        Assert.Equal(Color.FromRgb(237, 237, 242), BrushColor(tip.Foreground));
+        var avatar = Assert.IsType<Image>(AvatarCatalog.Circle(null, 36));
+        Assert.IsType<EllipseGeometry>(avatar.Clip); Assert.NotNull(avatar.Source);
+        var gif = Path.Combine(root, "loop.gif");
+        File.WriteAllBytes(gif, Convert.FromBase64String("R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEBAAAh+QQACAAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCAABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7"));
+        AvatarCatalog.Validate(gif);
+        Assert.Equal(RepeatBehavior.Forever, AnimationBehavior.GetRepeatBehavior(AvatarCatalog.Image(gif, 36)));
+        var wave = Path.Combine(root, "voice.wav");
+        using (var writer = new BinaryWriter(File.Create(wave)))
+        {
+            writer.Write("RIFF"u8); writer.Write(96036); writer.Write("WAVEfmt "u8); writer.Write(16);
+            writer.Write((short)1); writer.Write((short)1); writer.Write(24000); writer.Write(48000);
+            writer.Write((short)2); writer.Write((short)16); writer.Write("data"u8); writer.Write(96000); writer.Write(new byte[96000]);
+        }
+        var errors = new List<string>();
+        using (var player = new VoiceMessagePlayer(wave, errors.Add))
+        {
+            var slider = Assert.Single(Descendants(player).OfType<Slider>());
+            Assert.Equal(2, slider.Maximum); slider.Value = 1;
+            Assert.Contains(Descendants(player).OfType<TextBlock>(), text => text.Text == "0:01 / 0:02");
+            Assert.Empty(errors);
+        }
+        var profile = store.Register("UiTester", "correct horse battery");
+        var community = store.CreateCommunity("UI checks", profile.Id);
+        var channel = store.GetChannels(community.Id).First(c => !c.IsVoice);
+        var emoji = store.ImportAsset(community.Id, gif, "emoji");
+        var main = new MainWindow(store, profile);
+        try
+        {
+            main.Show(); main.UpdateLayout();
+            var windowCount = Application.Current.Windows.Count;
+            var notices = new NotificationArea(); notices.Add("Тест", true);
+            var overlay = ModalHost.Open(main, "Уведомления", notices);
+            Assert.Equal(windowCount, Application.Current.Windows.Count); overlay.Close();
+            ModalHost.Open(main, "Уведомления", notices).Close(); // Reopening must detach from the old parent.
+            var dialog = new FormDialog(main, "Профиль"); dialog.Field("Имя", "UiTester"); dialog.Accept();
+            main.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => { Assert.Equal(windowCount, Application.Current.Windows.Count); dialog.DialogResult = true; }));
+            Assert.True(dialog.ShowDialog());
+            var composer = Assert.Single(Descendants(main).OfType<TextBox>(), box => box.AcceptsReturn);
+            composer.Text = "hello :loop: world";
+            var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(main), 0, Key.Enter) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+            composer.RaiseEvent(key);
+            Assert.True(key.Handled); Assert.Empty(composer.Text);
+            var message = Assert.Single(store.GetMessages(channel.Id));
+            Assert.Equal(emoji.Id, message.Emojis![":loop:"]);
+            Assert.Contains(Descendants(main).OfType<TextBlock>(), text => text.Inlines.OfType<InlineUIContainer>().Any());
+            Assert.Equal(Visibility.Collapsed, Descendants(main).OfType<Button>().Single(button => Equals(button.Content, "Отменить запись")).Visibility);
+        }
+        finally
+        {
+            main.Quit();
+            var frame = new DispatcherFrame();
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            timer.Tick += (_, _) => { if (!main.IsVisible || DateTime.UtcNow >= deadline) { timer.Stop(); frame.Continue = false; } };
+            timer.Start(); Dispatcher.PushFrame(frame);
+        }
     }
 
     private static Color BrushColor(Brush brush) => Assert.IsType<SolidColorBrush>(brush).Color;

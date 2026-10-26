@@ -7,7 +7,7 @@ namespace Wisp.Core;
 public sealed record FirebaseConfig(string ApiKey, string ProjectId, string DatabaseUrl);
 public sealed record FirebasePresence(UserProfile Profile, string? ChannelId, long SeenAt);
 
-/// <summary>Firebase Authentication and RTDB metadata. Audio never goes through the database.</summary>
+/// <summary>Firebase Authentication, RTDB metadata and cached attachments. Live voice never goes through the database.</summary>
 public sealed class FirebaseBackend : IDisposable
 {
     private readonly HttpClient http;
@@ -40,15 +40,17 @@ public sealed class FirebaseBackend : IDisposable
         idToken = data.RootElement.GetProperty("idToken").GetString();
         RefreshToken = data.RootElement.GetProperty("refreshToken").GetString(); expires = DateTimeOffset.UtcNow.AddMinutes(50);
         var uid = data.RootElement.GetProperty("localId").GetString()!;
-        var existing = await GetAsync<UserProfile>($"profiles/{uid}");
-        Profile = existing ?? new UserProfile(uid, string.IsNullOrWhiteSpace(username) ? "user" : username);
+        var existing = await GetAsync<UserProfile>($"profiles/{uid}/Info") ?? await GetAsync<UserProfile>($"profiles/{uid}");
+        Profile = existing is null ? new UserProfile(uid, string.IsNullOrWhiteSpace(username) ? "user" : username) : existing with { Id = uid, AvatarPath = null, BannerPath = null };
         if (existing is null || register) await SaveProfileAsync(Profile);
         return Profile;
     }
     public async Task<UserProfile> RestoreAsync(string refreshToken)
     {
         RefreshToken = refreshToken; expires = DateTimeOffset.MinValue; await TokenAsync();
-        return Profile = await GetAsync<UserProfile>($"profiles/{Profile!.Id}") ?? throw new InvalidDataException("Профиль Firebase не найден.");
+        var uid = Profile!.Id;
+        var restored = await GetAsync<UserProfile>($"profiles/{uid}/Info") ?? await GetAsync<UserProfile>($"profiles/{uid}") ?? throw new InvalidDataException("Профиль Firebase не найден.");
+        return Profile = restored with { Id = uid, AvatarPath = null, BannerPath = null };
     }
     private async Task<string> TokenAsync()
     {
@@ -60,7 +62,8 @@ public sealed class FirebaseBackend : IDisposable
             using var response = await http.PostAsync("https://securetoken.googleapis.com/v1/token?key=" + Uri.EscapeDataString(config.ApiKey), new FormUrlEncodedContent(new Dictionary<string,string> { ["grant_type"] = "refresh_token", ["refresh_token"] = RefreshToken }));
             using var data = await Read(response); idToken = data.RootElement.GetProperty("id_token").GetString()!;
             RefreshToken = data.RootElement.GetProperty("refresh_token").GetString(); expires = DateTimeOffset.UtcNow.AddMinutes(50);
-            Profile ??= new UserProfile(data.RootElement.GetProperty("user_id").GetString()!, "user");
+            var uid = data.RootElement.GetProperty("user_id").GetString()!;
+            if (Profile?.Id != uid) Profile = new UserProfile(uid, "user");
             return idToken;
         }
         finally { refreshGate.Release(); }
@@ -86,7 +89,7 @@ public sealed class FirebaseBackend : IDisposable
     public async Task SaveProfileAsync(UserProfile p)
     {
         if (p.Id != Profile?.Id) throw new InvalidOperationException("Чужой профиль.");
-        await PutAsync($"profiles/{p.Id}", p with { AvatarPath = null, BannerPath = null }); Profile = p;
+        await PatchAsync($"profiles/{p.Id}", new { p.Id, p.Username, Info = p with { AvatarPath = null, BannerPath = null } }); Profile = p;
     }
     public async Task CreateCommunityAsync(CommunitySnapshot snapshot)
     {

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -37,7 +38,7 @@ public sealed class LocalStore : IDisposable
             CREATE TABLE IF NOT EXISTS profiles (
               id TEXT PRIMARY KEY, username TEXT NOT NULL, about TEXT NOT NULL DEFAULT '',
               avatar TEXT, banner TEXT, status TEXT NOT NULL DEFAULT 'online', game TEXT,
-              avatar_asset_id TEXT, banner_asset_id TEXT);
+              avatar_asset_id TEXT, banner_asset_id TEXT, avatar_revision TEXT);
             CREATE TABLE IF NOT EXISTS accounts (
               profile_id TEXT PRIMARY KEY REFERENCES profiles(id), username_key TEXT NOT NULL UNIQUE,
               salt BLOB NOT NULL, password_hash BLOB NOT NULL, iterations INTEGER NOT NULL);
@@ -52,7 +53,7 @@ public sealed class LocalStore : IDisposable
               profile_id TEXT NOT NULL REFERENCES profiles(id), PRIMARY KEY(community_id,profile_id));
             CREATE TABLE IF NOT EXISTS messages (
               id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES channels(id), author_id TEXT NOT NULL,
-              author_name TEXT NOT NULL, text TEXT NOT NULL, sent_at TEXT NOT NULL, attachment_id TEXT);
+              author_name TEXT NOT NULL, text TEXT NOT NULL, sent_at TEXT NOT NULL, attachment_id TEXT, emoji_map TEXT);
             CREATE INDEX IF NOT EXISTS messages_channel_time ON messages(channel_id,sent_at,id);
             CREATE TABLE IF NOT EXISTS assets (
               id TEXT PRIMARY KEY, community_id TEXT NOT NULL REFERENCES communities(id), name TEXT NOT NULL,
@@ -66,7 +67,11 @@ public sealed class LocalStore : IDisposable
             while (reader.Read()) profileColumns.Add(reader.GetString(1));
         if (!profileColumns.Contains("avatar_asset_id")) Execute("ALTER TABLE profiles ADD COLUMN avatar_asset_id TEXT");
         if (!profileColumns.Contains("banner_asset_id")) Execute("ALTER TABLE profiles ADD COLUMN banner_asset_id TEXT");
-        Execute("PRAGMA user_version = 2");
+        if (!profileColumns.Contains("avatar_revision")) Execute("ALTER TABLE profiles ADD COLUMN avatar_revision TEXT");
+        var messageColumns = new HashSet<string>();
+        using (var cmd = Command("PRAGMA table_info(messages)")) using (var reader = cmd.ExecuteReader()) while (reader.Read()) messageColumns.Add(reader.GetString(1));
+        if (!messageColumns.Contains("emoji_map")) Execute("ALTER TABLE messages ADD COLUMN emoji_map TEXT");
+        Execute("PRAGMA user_version = 3");
     }
 
     public UserProfile Register(string username, string password)
@@ -101,7 +106,7 @@ public sealed class LocalStore : IDisposable
         lock (gate)
         {
             ThrowIfDisposed();
-            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id,a.salt,a.password_hash,a.iterations FROM accounts a JOIN profiles p ON p.id=a.profile_id WHERE a.username_key=$name", ("$name", UsernameKey(username.Trim())));
+            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id,p.avatar_revision,a.salt,a.password_hash,a.iterations FROM accounts a JOIN profiles p ON p.id=a.profile_id WHERE a.username_key=$name", ("$name", UsernameKey(username.Trim())));
             using var reader = cmd.ExecuteReader();
             if (!reader.Read())
             {
@@ -109,8 +114,8 @@ public sealed class LocalStore : IDisposable
                 _ = Rfc2898DeriveBytes.Pbkdf2(password, new byte[16], PasswordIterations, HashAlgorithmName.SHA256, 32);
                 return null;
             }
-            var actual = Rfc2898DeriveBytes.Pbkdf2(password, (byte[])reader[9], reader.GetInt32(11), HashAlgorithmName.SHA256, 32);
-            return CryptographicOperations.FixedTimeEquals(actual, (byte[])reader[10]) ? ReadProfile(reader) : null;
+            var actual = Rfc2898DeriveBytes.Pbkdf2(password, (byte[])reader[10], reader.GetInt32(12), HashAlgorithmName.SHA256, 32);
+            return CryptographicOperations.FixedTimeEquals(actual, (byte[])reader[11]) ? ReadProfile(reader) : null;
         }
     }
 
@@ -130,7 +135,7 @@ public sealed class LocalStore : IDisposable
         lock (gate)
         {
             Execute("CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES accounts(profile_id), expires_at TEXT NOT NULL)");
-            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id FROM profiles p JOIN sessions s ON p.id=s.profile_id WHERE s.token_hash=$hash AND s.expires_at>$now", ("$hash", SessionHash(token)), ("$now", DateTimeOffset.UtcNow.ToString("O")));
+            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id,p.avatar_revision FROM profiles p JOIN sessions s ON p.id=s.profile_id WHERE s.token_hash=$hash AND s.expires_at>$now", ("$hash", SessionHash(token)), ("$now", DateTimeOffset.UtcNow.ToString("O")));
             using var reader = cmd.ExecuteReader();
             return reader.Read() ? ReadProfile(reader) : null;
         }
@@ -242,7 +247,7 @@ public sealed class LocalStore : IDisposable
     {
         lock (gate)
         {
-            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id FROM profiles p JOIN members m ON p.id=m.profile_id WHERE m.community_id=$id ORDER BY p.username,p.id", ("$id", communityId));
+            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id,p.avatar_revision FROM profiles p JOIN members m ON p.id=m.profile_id WHERE m.community_id=$id ORDER BY p.username,p.id", ("$id", communityId));
             using var reader = cmd.ExecuteReader();
             var result = new List<UserProfile>();
             while (reader.Read()) result.Add(ReadProfile(reader));
@@ -267,10 +272,10 @@ public sealed class LocalStore : IDisposable
         if (limit is < 1 or > 500) throw new ArgumentOutOfRangeException(nameof(limit));
         lock (gate)
         {
-            using var cmd = Command("SELECT id,channel_id,author_id,author_name,text,sent_at,attachment_id FROM (SELECT * FROM messages WHERE channel_id=$channel ORDER BY sent_at DESC,id DESC LIMIT $limit) ORDER BY sent_at,id", ("$channel", channelId), ("$limit", limit));
+            using var cmd = Command("SELECT id,channel_id,author_id,author_name,text,sent_at,attachment_id,emoji_map FROM (SELECT * FROM messages WHERE channel_id=$channel ORDER BY sent_at DESC,id DESC LIMIT $limit) ORDER BY sent_at,id", ("$channel", channelId), ("$limit", limit));
             using var reader = cmd.ExecuteReader();
             var result = new List<ChatMessage>();
-            while (reader.Read()) result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture), NullableString(reader, 6)));
+            while (reader.Read()) result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture), NullableString(reader, 6), NullableString(reader, 7) is { } map ? JsonSerializer.Deserialize<Dictionary<string,string>>(map) : null));
             return result;
         }
     }
@@ -283,16 +288,16 @@ public sealed class LocalStore : IDisposable
         if (message.Text is null || message.Text.Length > 8000 || (string.IsNullOrWhiteSpace(message.Text) && message.AttachmentId is null)) throw new ArgumentException("Сообщение пустое или слишком длинное.");
         ValidateUsername(message.AuthorName);
         lock (gate)
-            Execute("INSERT OR IGNORE INTO messages(id,channel_id,author_id,author_name,text,sent_at,attachment_id) VALUES($id,$channel,$author,$name,$text,$time,$attachment)",
-                ("$id", message.Id), ("$channel", message.ChannelId), ("$author", message.AuthorId), ("$name", message.AuthorName), ("$text", message.Text), ("$time", message.SentAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)), ("$attachment", message.AttachmentId));
+            Execute("INSERT OR IGNORE INTO messages(id,channel_id,author_id,author_name,text,sent_at,attachment_id,emoji_map) VALUES($id,$channel,$author,$name,$text,$time,$attachment,$emojis)",
+                ("$id", message.Id), ("$channel", message.ChannelId), ("$author", message.AuthorId), ("$name", message.AuthorName), ("$text", message.Text), ("$time", message.SentAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)), ("$attachment", message.AttachmentId), ("$emojis", message.Emojis is null ? null : JsonSerializer.Serialize(message.Emojis)));
     }
 
-    public MediaAsset ImportAsset(string communityId, string sourcePath, string kind)
+    public MediaAsset ImportAsset(string communityId, string sourcePath, string kind, string? displayName = null)
     {
         ValidateId(communityId);
         if (kind is not ("attachment" or "voice" or "emoji" or "sound" or "avatar" or "banner")) throw new ArgumentException("Неизвестный тип медиа.", nameof(kind));
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
-        var name = Path.GetFileName(sourcePath);
+        var name = displayName ?? Path.GetFileName(sourcePath);
         if (name.Length > 255 || string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Некорректное имя файла.", nameof(sourcePath));
         var maximum = kind == "voice" ? MaxVoiceBytes : MaxAssetBytes;
         var mediaDirectory = Path.Combine(RootDirectory, "media");
@@ -319,7 +324,7 @@ public sealed class LocalStore : IDisposable
                 digest = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
             }
             // The original filename is metadata only. It never controls a filesystem path.
-            var extension = Path.GetExtension(sourcePath).ToLowerInvariant();
+            var extension = Path.GetExtension(name).ToLowerInvariant();
             if (!Regex.IsMatch(extension, @"^\.[a-z0-9]{1,10}$", RegexOptions.CultureInvariant)) extension = ".bin";
             var storedPath = Path.Combine(mediaDirectory, digest + extension);
             var asset = new MediaAsset(digest, communityId, name, kind, storedPath, size);
@@ -358,9 +363,9 @@ public sealed class LocalStore : IDisposable
     }
 
     private void UpsertProfile(UserProfile profile) => Execute("""
-        INSERT INTO profiles(id,username,about,avatar,banner,status,game,avatar_asset_id,banner_asset_id) VALUES($id,$username,$about,$avatar,$banner,$status,$game,$avatarAsset,$bannerAsset)
-        ON CONFLICT(id) DO UPDATE SET username=excluded.username,about=excluded.about,avatar=excluded.avatar,banner=excluded.banner,status=excluded.status,game=excluded.game,avatar_asset_id=excluded.avatar_asset_id,banner_asset_id=excluded.banner_asset_id
-        """, ("$id", profile.Id), ("$username", profile.Username), ("$about", profile.About), ("$avatar", profile.AvatarPath), ("$banner", profile.BannerPath), ("$status", profile.Status), ("$game", profile.Game), ("$avatarAsset", profile.AvatarAssetId), ("$bannerAsset", profile.BannerAssetId));
+        INSERT INTO profiles(id,username,about,avatar,banner,status,game,avatar_asset_id,banner_asset_id,avatar_revision) VALUES($id,$username,$about,$avatar,$banner,$status,$game,$avatarAsset,$bannerAsset,$avatarRevision)
+        ON CONFLICT(id) DO UPDATE SET username=excluded.username,about=excluded.about,avatar=excluded.avatar,banner=excluded.banner,status=excluded.status,game=excluded.game,avatar_asset_id=excluded.avatar_asset_id,banner_asset_id=excluded.banner_asset_id,avatar_revision=excluded.avatar_revision
+        """, ("$id", profile.Id), ("$username", profile.Username), ("$about", profile.About), ("$avatar", profile.AvatarPath), ("$banner", profile.BannerPath), ("$status", profile.Status), ("$game", profile.Game), ("$avatarAsset", profile.AvatarAssetId), ("$bannerAsset", profile.BannerAssetId), ("$avatarRevision", profile.AvatarRevision));
 
     private static string ValidateUsername(string username)
     {
@@ -390,7 +395,7 @@ public sealed class LocalStore : IDisposable
         if (ValidateUsername(profile.Username) != profile.Username) throw new ArgumentException("Имя не должно содержать пробелы по краям.");
         if (profile.About is null || profile.About.Length > 2000 || profile.Game?.Length > 200 || profile.Status.Length > 32 || profile.AvatarPath?.Length > 4096 || profile.BannerPath?.Length > 4096 || profile.AvatarAssetId?.Length > 128 || profile.BannerAssetId?.Length > 128) throw new ArgumentException("Профиль слишком большой.");
     }
-    private static UserProfile ReadProfile(SqliteDataReader reader) => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), NullableString(reader, 3), NullableString(reader, 4), reader.GetString(5), NullableString(reader, 6), NullableString(reader, 7), NullableString(reader, 8));
+    private static UserProfile ReadProfile(SqliteDataReader reader) => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), NullableString(reader, 3), NullableString(reader, 4), reader.GetString(5), NullableString(reader, 6), NullableString(reader, 7), NullableString(reader, 8), NullableString(reader, 9));
     private static MediaAsset ReadAsset(SqliteDataReader reader) => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetInt64(5));
     private static string? NullableString(SqliteDataReader reader, int index) => reader.IsDBNull(index) ? null : reader.GetString(index);
 

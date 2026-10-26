@@ -5,5 +5,7 @@
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Wisp.Core/Wisp.Core.csproj" /><PackageReference Include="NAudio" Version="2.2.1" /><PackageReference Include="Concentus" Version="2.2.2" /></ItemGroup>
   <ItemGroup><None Update="firebase.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><PackageReference Include="XamlAnimatedGif" Version="2.3.2" /><Resource Include="Assets/wisp.png" /></ItemGroup>
   <ItemGroup><Content Include="../../docs/licenses/SIPSorcery.md" Link="licenses/SIPSorcery.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="../../docs/licenses/ASSETS.md" Link="licenses/ASSETS.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /><Content Include="../../docs/licenses/XamlAnimatedGif-Apache-2.0.txt" Link="licenses/XamlAnimatedGif-Apache-2.0.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
 </Project>

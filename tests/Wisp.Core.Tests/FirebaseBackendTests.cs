@@ -16,9 +16,9 @@ public sealed class FirebaseBackendTests
         var profile = await backend.SignInAsync("user@example.com", "long-password", true, "Alice");
         Assert.Equal("firebase-uid", profile.Id);
         Assert.Equal("refresh-value", backend.RefreshToken);
-        Assert.Equal(3, handler.Calls.Count);
+        Assert.Equal(4, handler.Calls.Count);
         Assert.Contains("accounts:signUp", handler.Calls[0].Uri);
-        var saved = JsonSerializer.Deserialize<UserProfile>(handler.Calls[2].Body)!;
+        var saved = JsonDocument.Parse(handler.Calls[3].Body).RootElement.GetProperty("Info").Deserialize<UserProfile>()!;
         Assert.Equal("Alice", saved.Username);
         await backend.SaveProfileAsync(profile with { AvatarPath = "C:/private/avatar.png" });
         Assert.DoesNotContain("C:/private", handler.Calls[^1].Body);

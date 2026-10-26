@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Documents;
+using System.Text.RegularExpressions;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -17,6 +19,19 @@ namespace Wisp.Desktop;
 public sealed class MainWindow : ThemedWindow
 {
     private readonly LocalStore store;
+    private readonly AvatarCatalog avatars;
+    private readonly NotificationArea notifications = new();
+    private readonly StackPanel attachmentPreview = new();
+    private readonly Dictionary<string,MediaAsset> draftEmojis = new();
+    private readonly HashSet<string> publishedEmojis = new();
+    private readonly HashSet<string> publishedFiles = new(), unavailableFiles = new();
+    private readonly HashSet<string> dismissedScreens = new();
+    private readonly Dictionary<string,byte[]> remoteScreens = new();
+    private readonly Button notificationButton, cancelRecordButton;
+    private readonly Button sendButton;
+    private ModalHandle? notificationPopup;
+    private string memberRenderKey = "";
+    private bool sendingMessage;
     private readonly FirebaseBackend? cloud;
     private readonly DispatcherTimer cloudTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private IReadOnlyList<PeerPresence> cloudPresence = Array.Empty<PeerPresence>();
@@ -44,7 +59,7 @@ public sealed class MainWindow : ThemedWindow
     private readonly Button micButton, deafenButton, recordButton, shareButton, leaveButton;
     private readonly System.Windows.Forms.NotifyIcon tray;
     private bool exitRequested;
-    private readonly Dictionary<string, (Window Window, Image Image)> viewers = new();
+    private readonly Dictionary<string, (ModalHandle Window, Image Image)> viewers = new();
     private readonly SemaphoreSlim inbound = new(1, 1);
     private readonly System.Threading.Channels.Channel<(int Epoch, WireMessage Message)> incoming = System.Threading.Channels.Channel.CreateBounded<(int, WireMessage)>(8);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, WireMessage> latestFrames = new();
@@ -62,7 +77,8 @@ public sealed class MainWindow : ThemedWindow
 
     public MainWindow(LocalStore store, UserProfile profile, FirebaseBackend? cloud = null)
     {
-        this.store = store; this.profile = profile; this.cloud = cloud; savedRefreshToken = cloud?.RefreshToken; node = new PeerNode(profile, store.RootDirectory);
+        if (profile.AvatarRevision is null && profile.AvatarPath is not null && File.Exists(profile.AvatarPath)) profile = profile with { AvatarRevision = AvatarCatalog.Revision(profile.AvatarPath) };
+        this.store = store; avatars = new AvatarCatalog(store.RootDirectory, profile.Id); this.profile = profile; this.cloud = cloud; savedRefreshToken = cloud?.RefreshToken; node = new PeerNode(profile, store.RootDirectory);
         rtc = cloud is null ? null : new RtcMesh(cloud);
         Title = "Wisp"; Width = 1360; Height = 860; MinWidth = 1060; MinHeight = 650; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(76) }); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(240) }); root.ColumnDefinitions.Add(new ColumnDefinition()); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) }); Content = root;
@@ -79,14 +95,17 @@ public sealed class MainWindow : ThemedWindow
         var controls = new WrapPanel(); micButton = Btn("Микр.", ToggleMic, "Выключить / включить микрофон"); deafenButton = Btn("Звук", ToggleDeafen, "Выключить наушники и микрофон"); controls.Children.Add(micButton); controls.Children.Add(deafenButton); controls.Children.Add(Btn("⚙", EditProfile, "Профиль и настройки")); self.Children.Add(controls); leaveButton = Btn("Выйти из канала", LeaveVoice); self.Children.Add(leaveButton); DockPanel.SetDock(self, Dock.Bottom); side.Children.Add(self); side.Children.Add(new ScrollViewer { Content = channels, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         var center = new DockPanel(); Grid.SetColumn(center, 2); root.Children.Add(center);
         var top = new DockPanel { Margin = new Thickness(22, 18, 18, 12) }; top.Children.Add(channelTitle);
-        var toolbar = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right }; toolbar.Children.Add(Btn("Эмодзи", EmojiPanel)); toolbar.Children.Add(Btn("Звуки", SoundPanel)); shareButton = Btn("Демонстрация", ShareScreen); toolbar.Children.Add(shareButton); top.Children.Add(toolbar); DockPanel.SetDock(top, Dock.Top); center.Children.Add(top);
-        DockPanel.SetDock(notice, Dock.Top); center.Children.Add(notice);
-        var input = new StackPanel { Margin = new Thickness(18, 6, 18, 18) }; var composeRow = new Grid(); composeRow.ColumnDefinitions.Add(new ColumnDefinition()); composeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); composeRow.Children.Add(composer); var send = Btn("Отправить", SendMessage); Grid.SetColumn(send, 1); composeRow.Children.Add(send); input.Children.Add(composeRow);
-        var attach = new WrapPanel(); attach.Children.Add(Btn("+ Файл", AttachFile)); recordButton = Btn("● Голосовое", RecordVoice); attach.Children.Add(recordButton); attach.Children.Add(Btn("Отменить запись", CancelRecording)); attach.Children.Add(new TextBlock { Text = "Enter — отправить · Shift+Enter — новая строка", FontSize = 10, Opacity = .5, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) }); input.Children.Add(attach); DockPanel.SetDock(input, Dock.Bottom); center.Children.Add(input);
-        messageScroll = new ScrollViewer { Content = messages, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(22, 0, 22, 0) }; center.Children.Add(messageScroll);
-        var right = new DockPanel { Margin = new Thickness(16, 22, 12, 12) }; right.SetResourceReference(Panel.BackgroundProperty, "Panel"); Grid.SetColumn(right, 3); root.Children.Add(right);
-        var memberHeader = new TextBlock { Text = "УЧАСТНИКИ", FontSize = 11, Opacity = .6, Margin = new Thickness(8, 0, 0, 14) }; DockPanel.SetDock(memberHeader, Dock.Top); right.Children.Add(memberHeader); right.Children.Add(new ScrollViewer { Content = members, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
-        composer.KeyDown += (_, e) => { if (e.Key == Key.Enter && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) { e.Handled = true; Run(SendMessage); } };
+        var toolbar = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right }; toolbar.Children.Add(Btn("Эмодзи", EmojiPanel)); toolbar.Children.Add(Btn("Звуки", SoundPanel)); shareButton = Btn("Демонстрация", ShareScreen); toolbar.Children.Add(shareButton); toolbar.Children.Add(Btn("Смотреть", WatchScreens));
+        notificationButton = Btn("Уведомления", ShowNotifications); toolbar.Children.Add(notificationButton);
+        notifications.Changed += count => notificationButton.Content = count == 0 ? "Уведомления" : $"Уведомления ({count})";
+        top.Children.Add(toolbar); DockPanel.SetDock(top, Dock.Top); center.Children.Add(top);
+        notice.Visibility = Visibility.Collapsed; DockPanel.SetDock(notice, Dock.Top); center.Children.Add(notice);
+        var input = new StackPanel { Margin = new Thickness(18, 6, 18, 18) }; input.Children.Add(attachmentPreview); var composeRow = new Grid(); composeRow.ColumnDefinitions.Add(new ColumnDefinition()); composeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); composeRow.Children.Add(composer); sendButton = Btn("Отправить", SendMessage); Grid.SetColumn(sendButton, 1); composeRow.Children.Add(sendButton); input.Children.Add(composeRow);
+        var attach = new WrapPanel(); attach.Children.Add(Btn("+ Файл", AttachFile)); recordButton = Btn("● Голосовое", RecordVoice); attach.Children.Add(recordButton); cancelRecordButton = Btn("Отменить запись", CancelRecording); cancelRecordButton.Visibility = Visibility.Collapsed; attach.Children.Add(cancelRecordButton); attach.Children.Add(new TextBlock { Text = "Enter — отправить · Shift+Enter — новая строка", FontSize = 10, Opacity = .5, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) }); input.Children.Add(attach); DockPanel.SetDock(input, Dock.Bottom); center.Children.Add(input);
+        messageScroll = new ScrollViewer { Content = messages, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(0) }; messages.Margin = new Thickness(22, 0, 16, 0); center.Children.Add(messageScroll);
+        var right = new DockPanel { Margin = new Thickness(0) }; members.Margin = new Thickness(12, 0, 8, 12); right.SetResourceReference(Panel.BackgroundProperty, "Panel"); Grid.SetColumn(right, 3); root.Children.Add(right);
+        var memberHeader = new TextBlock { Text = "УЧАСТНИКИ", FontSize = 11, Opacity = .6, Margin = new Thickness(16, 22, 0, 14) }; DockPanel.SetDock(memberHeader, Dock.Top); right.Children.Add(memberHeader); right.Children.Add(new ScrollViewer { Content = members, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        composer.PreviewKeyDown += (_, e) => { if (ComposerInput.ShouldSend(e.Key, Keyboard.Modifiers)) { e.Handled = true; Run(SendMessage); } };
         _ = Task.Run(ProcessIncoming);
         node.MessageReceived += EnqueueIncoming;
         if (rtc is not null)
@@ -98,6 +117,7 @@ public sealed class MainWindow : ThemedWindow
                 if (closing) return;
                 if (!rtc.Joined) { cloudChannelId = null; if (voiceChannelId is not null) StopVoice(); }
                 var active = rtc.ConnectedPeerIds; voice.SynchronizePeers(active);
+                foreach (var id in remoteScreens.Keys.Where(id => !active.Contains(id)).ToList()) { remoteScreens.Remove(id); dismissedScreens.Remove(id); }
                 foreach (var id in viewers.Keys.Where(id => !active.Contains(id)).ToList()) if (viewers.Remove(id, out var gone)) gone.Window.Close();
                 UpdateStatus();
             });
@@ -119,20 +139,21 @@ public sealed class MainWindow : ThemedWindow
         node.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
         voice.PacketReady += p => SendRealtime("audio", p); voice.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
         screen.FrameReady += p => SendRealtime("screen", p); screen.Error += e => Dispatcher.BeginInvoke(() => { StopSharing(); Notify(e, true); });
-        recorder.Completed += path => Dispatcher.BeginInvoke(() => { if (closing || sendingRecording || !File.Exists(path)) return; recordedPath = path; recordButton.Content = "↑ Отправить запись"; Notify("Запись завершена. Нажми «Отправить запись»."); });
+        recorder.Completed += path => Dispatcher.BeginInvoke(() => { if (closing || sendingRecording || !File.Exists(path)) return; Run(() => { recordedPath = path; StageRecording(path); Notify("Запись завершена. Можно прослушать и отправить."); return Task.CompletedTask; }); });
         activityTimer.Tick += (_, _) => Run(UpdateGame); activityTimer.Start();
         tray = new System.Windows.Forms.NotifyIcon { Icon = (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone(), Text = "Wisp", Visible = true };
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("Открыть Wisp", null, (_, _) => Dispatcher.BeginInvoke(RestoreFromTray));
         menu.Items.Add("Выйти из аккаунта", null, (_, _) => Dispatcher.BeginInvoke(() => Run(SignOut)));
-        menu.Items.Add("Закрыть Wisp", null, (_, _) => Dispatcher.BeginInvoke(() => { exitRequested = true; Close(); }));
+        menu.Items.Add("Закрыть Wisp", null, (_, _) => Dispatcher.BeginInvoke(Quit));
         tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => Dispatcher.BeginInvoke(RestoreFromTray);
         cloudTimer.Tick += (_, _) => Run(RefreshCloud); if (cloud is not null) cloudTimer.Start();
         Closing += OnClosing;
+        Loaded += (_, _) => { if (cloud is not null && this.profile.AvatarPath is not null && this.profile.AvatarRevision != cloud.Profile?.AvatarRevision) Run(PublishProfile); };
         userName.Text = profile.Username; RenderServers();
         var first = MyCommunities().FirstOrDefault(); if (first is not null) SetCommunity(first); else { serverTitle.Text = "Добро пожаловать"; channelTitle.Text = "Место для своих"; Notify("Создай сообщество кнопкой + слева или присоединись по приглашению ↗."); }
-        UpdateStatus();
+        UpdateStatus(); ModalHost.Prepare(this);
     }
 
     private void EnqueueIncoming(WireMessage m)
@@ -174,7 +195,15 @@ public sealed class MainWindow : ThemedWindow
     private Button Btn(string text, Action action, string? tip = null) { var b = new Button { Content = text, ToolTip = tip ?? text }; b.Click += (_, _) => { try { action(); } catch (Exception ex) { Notify(ex.Message, true); } }; return b; }
     private Button Btn(string text, Func<Task> action, string? tip = null) => Btn(text, () => Run(action), tip);
     private async void Run(Func<Task> action) { if (closing) return; try { await action(); } catch (Exception ex) { if (!closing) Notify(ex.Message, true); } }
-    private void Notify(string text, bool error = false) { notice.Text = text; notice.Foreground = error ? Brushes.Salmon : (Brush)FindResource("Muted"); if (error) sounds.Play("error"); }
+    private void Notify(string text, bool error = false) { notifications.Add(text, error); if (error) sounds.Play("error"); }
+    internal void ReportNotification(string text, bool error = false) { Notify(text, error); if (error) ShowNotifications(); }
+    private void ShowNotifications()
+    {
+        if (notificationPopup is not null) { notificationPopup.Show(); return; }
+        notificationPopup = ModalHost.Open(this, "Уведомления", notifications, 560);
+        notificationPopup.Closed += () => notificationPopup = null;
+    }
+    private void UpdateRecordingControls() => cancelRecordButton.Visibility = recorder.IsRecording || recordedPath is not null || (pendingAttachment is not null && store.GetAsset(pendingAttachment)?.Kind == "voice") ? Visibility.Visible : Visibility.Collapsed;
     private List<Community> MyCommunities() => cloud is null ? store.GetCommunities() : store.GetCommunities().Where(c => store.GetMembers(c.Id).Any(m => m.Id == profile.Id)).ToList();
     private void RenderServers()
     {
@@ -195,23 +224,37 @@ public sealed class MainWindow : ThemedWindow
             foreach (var c in store.GetChannels(community.Id).Where(x => x.IsVoice == voiceKind))
             {
                 var count = DisplayPresence.Count(p => p.VoiceChannelId == c.Id);
-                var b = Btn(voiceKind ? $"♫  {c.Name}     {count}/5" : $"#  {c.Name}", async () => { SelectChannel(c); if (c.IsVoice) await JoinVoice(c); });
-                b.HorizontalContentAlignment = HorizontalAlignment.Left; if (c.Id == selectedChannel?.Id) b.SetResourceReference(Control.BackgroundProperty, "Card"); channels.Children.Add(b);
+                var b = Btn(voiceKind ? $"{(voiceChannelId == c.Id ? "✓" : "♫")}  {c.Name}  {count}/5" : $"#  {c.Name}", async () => { if (c.IsVoice) await JoinVoice(c); else SelectChannel(c); });
+                b.HorizontalContentAlignment = HorizontalAlignment.Left;
+                if (voiceKind)
+                {
+                    var row = new DockPanel(); var chat = Btn("Чат", () => SelectChannel(c), "Открыть текстовый чат голосового канала");
+                    chat.Padding = new Thickness(6, 8, 6, 8); DockPanel.SetDock(chat, Dock.Right); row.Children.Add(chat); row.Children.Add(b); channels.Children.Add(row);
+                }
+                else channels.Children.Add(b);
                 if (voiceKind) foreach (var p in DisplayPresence.Where(p => p.VoiceChannelId == c.Id)) channels.Children.Add(new TextBlock { Text = $"    ● {p.Profile.Username}{(p.Deafened ? " · без звука" : p.Muted ? " · микр. выкл." : "")}", FontSize = 12, Margin = new Thickness(18, 2, 0, 4), Opacity = .7 });
             }
         }
     }
-    private void SelectChannel(Channel c) { if (recorder.IsRecording || recordedPath is not null) throw new InvalidOperationException("Сначала отправь голосовую запись."); selectedChannel = c; channelTitle.Text = $"{(c.IsVoice ? "♫" : "#")} {c.Name}"; pendingAttachment = null; renderedMessages.Clear(); messages.Children.Clear(); foreach (var m in store.GetMessages(c.Id)) AddMessage(m); RenderChannels(); Notify(c.IsVoice ? "Голосовой канал · максимум 5 участников. Для связи нужна активная P2P-сессия." : "Сообщения и вложения сохраняются локально. Подключённые участники получают новые сообщения."); }
+    private void SelectChannel(Channel c) { if (recorder.IsRecording || recordedPath is not null) throw new InvalidOperationException("Сначала отправь голосовую запись."); selectedChannel = c; channelTitle.Text = $"{(c.IsVoice ? "♫" : "#")} {c.Name}"; pendingAttachment = null; draftEmojis.Clear(); UpdateAttachmentPreview(); renderedMessages.Clear(); messages.Children.Clear(); foreach (var m in store.GetMessages(c.Id)) AddMessage(m); RenderChannels(); Notify(c.IsVoice ? "Голосовой канал · максимум 5 участников. Для связи нужна активная P2P-сессия." : "Сообщения и вложения сохраняются локально. Подключённые участники получают новые сообщения."); }
     private void RenderMembers()
     {
-        members.Children.Clear(); if (community is null) return;
+        if (community is null) { members.Children.Clear(); return; }
         var saved = store.GetMembers(community.Id).ToDictionary(x => x.Id); saved[profile.Id] = profile;
         foreach (var p in DisplayPresence) saved[p.Profile.Id] = p.Profile;
-        foreach (var p in saved.Values.OrderByDescending(x => x.Id == profile.Id || DisplayPresence.Any(s => s.Profile.Id == x.Id)).ThenBy(x => x.Username))
+        saved[profile.Id] = profile;
+        var ordered = saved.Values.OrderByDescending(x => x.Id == profile.Id || DisplayPresence.Any(p => p.Profile.Id == x.Id)).ThenBy(x => x.Username).ToList();
+        var key = string.Join("|", ordered.Select(p => $"{p.Id}:{p.Username}:{p.Game}:{p.About}:{p.BannerAssetId}:{p.BannerPath}:{p.AvatarRevision}:{avatars.Resolve(p,store)}:{DisplayPresence.Any(s => s.Profile.Id == p.Id)}"));
+        if (key == memberRenderKey) return; memberRenderKey = key; members.Children.Clear();
+        foreach (var p in ordered)
         {
-            var online = p.Id == profile.Id || DisplayPresence.Any(s => s.Profile.Id == p.Id); var display = new StackPanel(); display.Children.Add(new TextBlock { Text = $"{(online ? "●" : "○")}  {p.Username}", Opacity = online ? 1 : .45 });
-            var game = presence.FirstOrDefault(x => x.Profile.Id == p.Id)?.Profile.Game ?? (p.Id == profile.Id ? profile.Game : null); display.Children.Add(new TextBlock { Text = game is null ? online ? "В сети" : "Не в сети" : $"Играет в {game}", FontSize = 10, Opacity = .5, Margin = new Thickness(18, 3, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
-            var b = Btn("", () => ViewProfile(p)); b.Content = display; b.HorizontalContentAlignment = HorizontalAlignment.Stretch; members.Children.Add(b);
+            var online = p.Id == profile.Id || DisplayPresence.Any(s => s.Profile.Id == p.Id);
+            var info = new StackPanel { Margin = new Thickness(10, 0, 0, 0) };
+            info.Children.Add(new TextBlock { Text = p.Username, Opacity = online ? 1 : .45, TextTrimming = TextTrimming.CharacterEllipsis });
+            var game = p.Id == profile.Id ? profile.Game : DisplayPresence.FirstOrDefault(s => s.Profile.Id == p.Id)?.Profile.Game;
+            info.Children.Add(new TextBlock { Text = game is null ? online ? "● В сети" : "○ Не в сети" : $"Играет в {game}", FontSize = 10, Opacity = .6, Margin = new Thickness(0, 3, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
+            var row = new DockPanel(); var avatar = avatars.Resolve(p, store); var picture = AvatarCatalog.Circle(avatar, 36); DockPanel.SetDock(picture, Dock.Left); row.Children.Add(picture); row.Children.Add(info);
+            var button = Btn("", () => ViewProfile(p)); button.Content = row; button.HorizontalContentAlignment = HorizontalAlignment.Stretch; button.Padding = new Thickness(6, 8, 6, 8); members.Children.Add(button);
         }
     }
     private void UpdateStatus() { var inVoice = voiceChannelId is not null;
@@ -293,6 +336,7 @@ public sealed class MainWindow : ThemedWindow
         else { cloudChannelId = null; if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); UpdateStatus(); Notify("Канал заполнен: максимум 5 человек.", true); }
     }
     private async Task LeaveVoice() { if (rtc is not null) await rtc.LeaveAsync(); cloudChannelId = null; cloudPresence = cloudPresence.Where(p => p.Profile.Id != profile.Id).ToList(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); if (node.IsConnected) await node.SetVoiceChannelAsync(null, muted, deafened); StopVoice(); presence = node.Presence; RenderChannels(); sounds.Play("disconnect"); }
+    public void Quit() { exitRequested = true; Close(); }
     private void RestoreFromTray() { Show(); WindowState = WindowState.Normal; Activate(); foreach (var v in viewers.Values) v.Window.Show(); }
     private async Task SignOut()
     {
@@ -301,37 +345,104 @@ public sealed class MainWindow : ThemedWindow
         SessionVault.Clear(store.RootDirectory);
         try { await Disconnect(); } finally { exitRequested = true; Close(); }
     }
-    private void StopVoice() { StopSharing(); voice.Stop(); voiceChannelId = null; foreach (var v in viewers.Values.ToList()) v.Window.Close(); viewers.Clear(); UpdateStatus(); }
+    private void StopVoice() { StopSharing(); voice.Stop(); voiceChannelId = null; foreach (var v in viewers.Values.ToList()) v.Window.Close(); viewers.Clear(); remoteScreens.Clear(); dismissedScreens.Clear(); UpdateStatus(); }
     private async Task Disconnect() { if (rtc is not null) await rtc.LeaveAsync(); cloudChannelId = null; cloudPresence = Array.Empty<PeerPresence>(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); Interlocked.Increment(ref sessionEpoch); latestFrames.Clear(); StopVoice(); await node.DisconnectAsync(); presence = Array.Empty<PeerPresence>(); sessionCommunityId = null; currentInvite = null; RenderMembers(); RenderChannels(); UpdateStatus(); sounds.Play("disconnect"); }
     private async Task ToggleMic() { muted = !muted; voice.Muted = muted; if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(muted ? "mute" : "unmute"); UpdateStatus(); }
-    private async Task ToggleDeafen() { deafened = !deafened; voice.Deafened = deafened; if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (deafened) sounds.StopFile(); if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(deafened ? "deafen" : "undeafen"); UpdateStatus(); }
+    private async Task ToggleDeafen() { deafened = !deafened; voice.Deafened = deafened; if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (deafened) { sounds.StopFile(); VoiceMessagePlayer.PauseActive(); } if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(deafened ? "deafen" : "undeafen"); UpdateStatus(); }
     private async Task UpdateGame()
     {
         var game = GamePresenceService.DetectGame(); if (game == profile.Game) return; profile = profile with { Game = game }; store.SaveProfile(profile); await node.UpdateProfileAsync(profile); RenderMembers();
     }
     private async Task SendMessage()
     {
-        if (selectedChannel is null || (string.IsNullOrWhiteSpace(composer.Text) && pendingAttachment is null)) return;
-        var m = new ChatMessage(Guid.NewGuid().ToString("N"), selectedChannel.Id, profile.Id, profile.Username, composer.Text.Trim(), DateTimeOffset.UtcNow, pendingAttachment);
-        if (cloud is not null && community is not null) await cloud.SendMessageAsync(community.Id, m);
-        if (node.IsConnected) await node.SendAsync(new WireMessage("chat", profile.Id, selectedChannel.Id, JsonSerializer.SerializeToUtf8Bytes(m)));
-        store.SaveMessage(m); AddMessage(m); composer.Clear(); pendingAttachment = null; sounds.Play("message"); Notify(cloud is not null ? "Отправлено в Firebase." : node.IsConnected ? "Отправлено участникам сессии." : "Сохранено локально. Для отправки друзьям нужна P2P-сессия.");
+        if (recorder.IsRecording) { Notify("Сначала заверши запись голосового сообщения.", true); return; }
+        if (sendingMessage || selectedChannel is null || (string.IsNullOrWhiteSpace(composer.Text) && pendingAttachment is null)) return;
+        sendingMessage = true; sendButton.Content = "Отправка…"; sendButton.IsEnabled = false;
+        var channel = selectedChannel; var communityId = community?.Id; var text = composer.Text; var attachment = pendingAttachment;
+        try
+        {
+            var catalog = communityId is null ? new List<MediaAsset>() : store.GetAssets(communityId, "emoji");
+            var used = new Dictionary<string,string>();
+            foreach (Match match in Regex.Matches(text, @":[\p{L}\p{N}_-]{1,40}:"))
+            {
+                var token = match.Value;
+                var asset = draftEmojis.GetValueOrDefault(token) ?? catalog.FirstOrDefault(a => EmojiToken(a) == token);
+                if (asset is null) continue; used[token] = asset.Id;
+                if (cloud is not null && !publishedEmojis.Contains(asset.Id))
+                {
+                    await cloud.PutAsync($"profiles/{profile.Id}/Images/{asset.Id}", new AssetTransfer(asset.Id, asset.Name, "emoji", await File.ReadAllBytesAsync(asset.LocalPath)));
+                    publishedEmojis.Add(asset.Id);
+                }
+                await BroadcastAsset(asset);
+            }
+            if (attachment is not null && store.GetAsset(attachment) is { } attached)
+            {
+                if (cloud is not null && !publishedFiles.Contains(attached.Id)) { await CloudFiles.UploadAsync(cloud, attached); publishedFiles.Add(attached.Id); }
+                await BroadcastAsset(attached);
+            }
+            var message = new ChatMessage(Guid.NewGuid().ToString("N"), channel.Id, profile.Id, profile.Username, text.Trim(), DateTimeOffset.UtcNow, attachment, used.Count == 0 ? null : used);
+            if (cloud is not null && communityId is not null) await cloud.SendMessageAsync(communityId, message);
+            if (node.IsConnected) await node.SendAsync(new WireMessage("chat", profile.Id, channel.Id, JsonSerializer.SerializeToUtf8Bytes(message)));
+            store.SaveMessage(message); if (selectedChannel?.Id == channel.Id) AddMessage(message);
+            if (composer.Text == text) composer.Clear();
+            if (pendingAttachment == attachment) pendingAttachment = null;
+            draftEmojis.Clear(); UpdateAttachmentPreview(); sounds.Play("message");
+        }
+        finally { sendingMessage = false; sendButton.Content = "Отправить"; sendButton.IsEnabled = true; if (Keyboard.FocusedElement == sendButton) composer.Focus(); }
+    }
+    private static string EmojiToken(MediaAsset a)
+    {
+        var name = new string(Path.GetFileNameWithoutExtension(a.Name).Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' ? c : '_').Take(32).ToArray());
+        return ":" + (name.Length == 0 ? "emoji" : name) + ":";
+    }
+    private TextBlock MessageText(ChatMessage message)
+    {
+        var text = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) };
+        int offset = 0;
+        foreach (Match match in Regex.Matches(message.Text, @":[\p{L}\p{N}_-]{1,40}:"))
+        {
+            if (match.Index > offset) text.Inlines.Add(new Run(message.Text[offset..match.Index]));
+            var asset = message.Emojis?.TryGetValue(match.Value, out var id) == true ? store.GetAsset(id) : null;
+            if (asset?.Kind == "emoji" && asset.CommunityId == community?.Id)
+            {
+                try { var image = AvatarCatalog.Image(asset.LocalPath, text.FontSize + 2); image.Stretch = Stretch.Uniform; text.Inlines.Add(new InlineUIContainer(image) { BaselineAlignment = BaselineAlignment.Center }); }
+                catch { text.Inlines.Add(new Run(match.Value)); }
+            }
+            else text.Inlines.Add(new Run(match.Value));
+            offset = match.Index + match.Length;
+        }
+        if (offset < message.Text.Length) text.Inlines.Add(new Run(message.Text[offset..]));
+        return text;
+    }
+    private void UpdateAttachmentPreview()
+    {
+        attachmentPreview.Children.Clear(); UpdateRecordingControls(); if (pendingAttachment is null) return;
+        var asset = store.GetAsset(pendingAttachment); if (asset is null) return;
+        var row = new DockPanel { Margin = new Thickness(0, 4, 0, 6) };
+        var remove = Btn("✕", () => { pendingAttachment = null; UpdateAttachmentPreview(); }, "Убрать вложение"); DockPanel.SetDock(remove, Dock.Right); row.Children.Add(remove);
+        row.Children.Add(new TextBlock { Text = $"{asset.Name} · {asset.Size / 1024} КБ", VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }); attachmentPreview.Children.Add(row);
+        if (new[] { ".png", ".jpg", ".jpeg", ".gif", ".bmp" }.Contains(Path.GetExtension(asset.Name).ToLowerInvariant()))
+        { try { attachmentPreview.Children.Add(new Image { Source = LoadImage(asset.LocalPath, 320), Height = 110, MaxWidth = 260, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left }); } catch { } }
+        else if (asset.Kind == "voice" || new[] { ".wav", ".mp3" }.Contains(Path.GetExtension(asset.Name).ToLowerInvariant())) attachmentPreview.Children.Add(new VoiceMessagePlayer(asset.LocalPath, e => Notify(e, true), () => !deafened));
     }
     private void AddMessage(ChatMessage m)
     {
         if (!renderedMessages.Add(m.Id)) return;
         var row = new StackPanel { Margin = new Thickness(0, 8, 0, 12) }; var meta = new TextBlock { Text = $"{m.AuthorName}   {m.SentAt.LocalDateTime:dd.MM HH:mm}", FontWeight = FontWeights.SemiBold, FontSize = 12 }; meta.SetResourceReference(TextBlock.ForegroundProperty, "Accent"); row.Children.Add(meta);
-        if (!string.IsNullOrEmpty(m.Text)) row.Children.Add(new TextBlock { Text = m.Text, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
+        if (!string.IsNullOrEmpty(m.Text)) row.Children.Add(MessageText(m));
         if (m.AttachmentId is not null)
         {
             var asset = store.GetAsset(m.AttachmentId); if (asset?.CommunityId != community?.Id) asset = null;
             if (asset is not null)
             {
-                if (asset.Kind == "emoji" || new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp" }.Contains(Path.GetExtension(asset.Name).ToLowerInvariant()))
+                if (asset.Kind == "emoji")
+                { try { row.Children.Add(AvatarCatalog.Image(asset.LocalPath, 16)); } catch { } }
+                else if (new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp" }.Contains(Path.GetExtension(asset.Name).ToLowerInvariant()))
                 {
-                    try { row.Children.Add(new Image { Source = LoadImage(asset.LocalPath, 600), MaxHeight = asset.Kind == "emoji" ? 72 : 260, MaxWidth = 500, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) }); } catch { }
+                    try { row.Children.Add(new Image { Source = LoadImage(asset.LocalPath, 600), MaxHeight = 260, MaxWidth = 500, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) }); } catch { }
                 }
-                row.Children.Add(Btn(asset.Kind == "voice" ? "▶ Голосовое сообщение" : $"↓ {asset.Name} · {asset.Size / 1024} КБ", () => OpenAsset(asset)));
+                if (asset.Kind == "voice") row.Children.Add(new VoiceMessagePlayer(asset.LocalPath, e => Notify(e, true), () => !deafened));
+                else if (asset.Kind != "emoji") row.Children.Add(Btn($"↓ {asset.Name} · {asset.Size / 1024} КБ", () => OpenAsset(asset)));
             }
             else row.Children.Add(new TextBlock { Text = "Вложение недоступно на этом компьютере", FontSize = 11, Opacity = .5 });
         }
@@ -352,7 +463,7 @@ public sealed class MainWindow : ThemedWindow
     private async Task AttachFile()
     {
         if (selectedChannel is null) return; var pick = new Microsoft.Win32.OpenFileDialog { Title = "Прикрепить медиа или файл · до 16 МБ" }; if (pick.ShowDialog(this) != true) return;
-        var a = await ImportAndSend(pick.FileName, "attachment"); if (a is not null) { pendingAttachment = a.Id; Notify($"Прикреплён {a.Name}. Нажми «Отправить»."); sounds.Play("message"); }
+        await Task.CompletedTask; var a = community is null ? null : store.ImportAsset(community.Id, pick.FileName, "attachment"); if (a is not null) { pendingAttachment = a.Id; UpdateAttachmentPreview(); Notify($"Прикреплён {a.Name}. Нажми «Отправить»."); sounds.Play("message"); }
     }
     private async Task RecordVoice()
     {
@@ -360,22 +471,28 @@ public sealed class MainWindow : ThemedWindow
         if (!recorder.IsRecording && recordedPath is null)
         {
             if (voiceChannelId is not null) throw new InvalidOperationException("Для голосового сообщения сначала отключись от звонка.");
-            var path = Path.Combine(store.RootDirectory, $"recording-{Guid.NewGuid():N}.wav"); recorder.Start(path); recordButton.Content = "■ Отправить запись"; Notify("Запись микрофона · максимум 60 секунд. Нажми ещё раз, чтобы отправить."); sounds.Play("connect");
+            var path = Path.Combine(store.RootDirectory, $"recording-{Guid.NewGuid():N}.wav"); recorder.Start(path); recordButton.Content = "■ Завершить запись"; UpdateRecordingControls(); Notify("Запись микрофона · максимум 60 секунд. Нажми ещё раз, чтобы прослушать перед отправкой."); sounds.Play("connect");
         }
         else
         {
             sendingRecording = true;
             try { string path = recordedPath ?? await recorder.StopAsync(); recordedPath = null; recordButton.Content = "● Голосовое";
-                try { var a = await ImportAndSend(path, "voice"); if (a is not null) { pendingAttachment = a.Id; await SendMessage(); } } finally { File.Delete(path); }
-            } finally { sendingRecording = false; }
+                StageRecording(path);
+
+            } finally { sendingRecording = false; UpdateRecordingControls(); }
         }
+    }
+    private void StageRecording(string path)
+    {
+        try { if (community is not null) { var asset = store.ImportAsset(community.Id, path, "voice"); pendingAttachment = asset.Id; } }
+        finally { File.Delete(path); recordedPath = null; recordButton.Content = "● Голосовое"; UpdateAttachmentPreview(); UpdateRecordingControls(); }
     }
     private async Task CancelRecording()
     {
-        if (!recorder.IsRecording && recordedPath is null) return;
+        if (!recorder.IsRecording && recordedPath is null) { if (pendingAttachment is not null && store.GetAsset(pendingAttachment)?.Kind == "voice") { pendingAttachment = null; UpdateAttachmentPreview(); UpdateRecordingControls(); } return; }
         sendingRecording = true;
         try { var path = recordedPath ?? await recorder.StopAsync(); recordedPath = null; File.Delete(path); recordButton.Content = "● Голосовое"; Notify("Запись удалена."); sounds.Play("disconnect"); }
-        finally { sendingRecording = false; }
+        finally { sendingRecording = false; UpdateRecordingControls(); }
     }
     private async Task Receive(WireMessage m)
     {
@@ -393,7 +510,7 @@ public sealed class MainWindow : ThemedWindow
                 store.SaveMessage(chat); if (selectedChannel?.Id == chat.ChannelId) AddMessage(chat); if (!deafened) sounds.Play("message"); break;
             case "audio": if (voiceChannelId == m.ChannelId) voice.Receive(m.SenderId, m.Payload); break;
             case "screen": if (voiceChannelId == m.ChannelId) ShowFrame(m.SenderId, m.Payload); break;
-            case "screen-stop": if (viewers.Remove(m.SenderId, out var viewer)) viewer.Window.Close(); break;
+            case "screen-stop": if (viewers.Remove(m.SenderId, out var viewer)) viewer.Window.Close(); remoteScreens.Remove(m.SenderId); dismissedScreens.Remove(m.SenderId); break;
             case "asset":
                 if (community is null) return; var communityId = community.Id; var incoming = JsonSerializer.Deserialize<AssetTransfer>(m.Payload); if (incoming is null || incoming.Data.Length > 16 * 1024 * 1024 || incoming.Name.Length > 200 || incoming.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || incoming.Name != Path.GetFileName(incoming.Name) || incoming.Name is "." or "..") return;
                 using (var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256))
@@ -401,9 +518,9 @@ public sealed class MainWindow : ThemedWindow
                     hash.AppendData(Encoding.UTF8.GetBytes(communityId + "\0" + incoming.Kind + "\0")); hash.AppendData(incoming.Data);
                     if (!string.Equals(Convert.ToHexString(hash.GetHashAndReset()), incoming.Id, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Неверный идентификатор вложения.");
                 }
-                var dir = Path.Combine(store.RootDirectory, "incoming", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(dir); var temporary = Path.Combine(dir, incoming.Name);
-                try { await File.WriteAllBytesAsync(temporary, incoming.Data); var a = store.ImportAsset(communityId, temporary, incoming.Kind); if (a.Id != incoming.Id) Notify("Вложение отклонено: неверный идентификатор.", true);
-                    else if (selectedChannel is not null && store.GetMessages(selectedChannel.Id).Any(msg => msg.AttachmentId == a.Id))
+                var dir = Path.Combine(store.RootDirectory, "incoming", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(dir); var temporary = Path.Combine(dir, "payload.tmp");
+                try { await File.WriteAllBytesAsync(temporary, incoming.Data); var a = store.ImportAsset(communityId, temporary, incoming.Kind, incoming.Name); if (a.Id != incoming.Id) Notify("Вложение отклонено: неверный идентификатор.", true);
+                    else if (selectedChannel is not null && store.GetMessages(selectedChannel.Id).Any(msg => msg.AttachmentId == a.Id || msg.Emojis?.ContainsValue(a.Id) == true))
                     { var history = store.GetMessages(selectedChannel.Id); messages.Children.Clear(); renderedMessages.Clear(); foreach (var msg in history) AddMessage(msg); } } finally { Directory.Delete(dir, true); } break;
             case "sound":
                 if (deafened || voiceChannelId != m.ChannelId) return; var sound = store.GetAsset(Encoding.UTF8.GetString(m.Payload)); if (sound?.Kind == "sound" && sound.CommunityId == community?.Id) sounds.PlayFile(sound.LocalPath); break;
@@ -416,28 +533,46 @@ public sealed class MainWindow : ThemedWindow
         if (sharing) { StopSharing(); return; } if (voiceChannelId is null) throw new InvalidOperationException("Сначала подключись к голосовому каналу.");
         var d = new FormDialog(this, "Демонстрация экрана"); d.Note("Выбери отдельный монитор или окно приложения. До 1280×720, 5 кадров/с для снижения нагрузки. Захватывается изображение без системного звука.");
         CaptureSource? selected = null; foreach (var source in ScreenShareService.GetSources()) d.Action(source.Name, () => { selected = source; d.DialogResult = true; });
-        if (d.ShowDialog() != true || selected is null) return; screen.Start(selected); sharing = true; shareButton.Content = "Остановить показ"; sounds.Play("share"); Notify($"Идёт демонстрация: {selected.Name}");
+        if (d.ShowDialog() != true || selected is null) return; screen.Start(selected); sharing = true; notice.Text = $"Идёт демонстрация: {selected.Name}"; notice.Visibility = Visibility.Visible; shareButton.Content = "Остановить показ"; sounds.Play("share"); Notify($"Демонстрация начата: {selected.Name}");
     }
-    private void StopSharing() { if (!sharing) return; screen.Stop(); sharing = false; shareButton.Content = "Демонстрация"; SendRealtime("screen-stop", Array.Empty<byte>()); sounds.Play("share"); }
+    private void StopSharing() { notice.Text = ""; notice.Visibility = Visibility.Collapsed; if (!sharing) return; screen.Stop(); sharing = false; shareButton.Content = "Демонстрация"; SendRealtime("screen-stop", Array.Empty<byte>()); sounds.Play("share"); Notify("Демонстрация остановлена."); }
     private void ShowFrame(string peerId, byte[] jpeg)
     {
-        if (jpeg.Length > 2 * 1024 * 1024) return;
+        if (jpeg.Length > 2 * 1024 * 1024) return; remoteScreens[peerId] = jpeg; if (dismissedScreens.Contains(peerId)) return;
         try
         {
             using var stream = new MemoryStream(jpeg); var image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad; image.DecodePixelWidth = 1280; image.StreamSource = stream; image.EndInit(); image.Freeze();
             if (!viewers.TryGetValue(peerId, out var view))
             {
-                var target = new Image { Stretch = Stretch.Uniform }; var name = presence.FirstOrDefault(x => x.Profile.Id == peerId)?.Profile.Username ?? "Участник"; var window = new ThemedWindow { Owner = this, Title = $"{name} · Демонстрация", Width = 1000, Height = 640, Content = target }; view = (window, target); viewers[peerId] = view; window.Closed += (_, _) => viewers.Remove(peerId); window.Show();
+                var target = new Image { Stretch = Stretch.Uniform, MaxHeight = 500 }; var name = DisplayPresence.FirstOrDefault(x => x.Profile.Id == peerId)?.Profile.Username ?? "Участник"; var window = ModalHost.Open(this, $"{name} · Демонстрация", target, 1000); view = (window, target); viewers[peerId] = view; window.Closed += () => { viewers.Remove(peerId); dismissedScreens.Add(peerId); };
             }
             view.Image.Source = image;
         }
         catch { /* A malformed or incomplete image is discarded. */ }
     }
+    private void WatchScreens()
+    {
+        var d = new FormDialog(this, "Демонстрации участников");
+        if (remoteScreens.Count == 0) d.Note("Сейчас никто не демонстрирует экран.");
+        foreach (var pair in remoteScreens.ToList()) d.Action(DisplayPresence.FirstOrDefault(p => p.Profile.Id == pair.Key)?.Profile.Username ?? "Участник", () => { d.Close(); dismissedScreens.Remove(pair.Key); ShowFrame(pair.Key, pair.Value); });
+        d.ShowDialog();
+    }
     private void EmojiPanel()
     {
-        if (community is null) return; var d = new FormDialog(this, "Эмодзи сообщества"); d.Note("Выбери эмодзи — он будет отправлен в текущий текстовый чат.");
-        foreach (var a in store.GetAssets(community.Id, "emoji")) d.Action($":{Path.GetFileNameWithoutExtension(a.Name)}:", () => { pendingAttachment = a.Id; d.Close(); Run(async () => { await BroadcastAsset(a); await SendMessage(); }); });
-        d.Action("+ Загрузить эмодзи", () => { var f = new Microsoft.Win32.OpenFileDialog { Filter = "Изображения|*.png;*.jpg;*.jpeg;*.gif", Title = "Эмодзи · до 256 КБ" }; if (f.ShowDialog(d) != true) return; if (new FileInfo(f.FileName).Length > 256 * 1024) throw new InvalidOperationException("Эмодзи должен быть меньше 256 КБ."); d.Close(); Run(async () => { await ImportAndSend(f.FileName, "emoji"); sounds.Play("message"); }); }); d.ShowDialog();
+        if (community is null) return; var d = new FormDialog(this, "Эмодзи сообщества"); d.Note("Эмодзи добавится в текст сообщения на месте курсора.");
+        foreach (var a in store.GetAssets(community.Id, "emoji"))
+        {
+            var button = d.Action(EmojiToken(a), () =>
+            {
+                var token = EmojiToken(a);
+                if (draftEmojis.TryGetValue(token, out var previous) && previous.Id != a.Id) token = token[..^1] + "_" + a.Id[..6] + ":";
+                draftEmojis[token] = a; d.Close(); var caret = composer.CaretIndex; composer.Text = composer.Text.Insert(caret, token); composer.CaretIndex = caret + token.Length; composer.Focus();
+            });
+            var label = new StackPanel { Orientation = Orientation.Horizontal };
+            try { label.Children.Add(AvatarCatalog.Image(a.LocalPath, 18)); } catch { }
+            label.Children.Add(new TextBlock { Text = "  " + EmojiToken(a) }); button.Content = label;
+        }
+        d.Action("+ Загрузить эмодзи", () => { var f = new Microsoft.Win32.OpenFileDialog { Filter = "Изображения|*.png;*.jpg;*.jpeg;*.gif", Title = "Эмодзи · до 256 КБ" }; if (f.ShowDialog(this) != true) return; if (new FileInfo(f.FileName).Length > 256 * 1024) throw new InvalidOperationException("Эмодзи должен быть меньше 256 КБ."); d.Close(); Run(async () => { await ImportAndSend(f.FileName, "emoji"); sounds.Play("message"); }); }); d.ShowDialog();
     }
     private Task SendPacket(WireMessage message) => rtc?.Joined == true ? rtc.SendAsync(message) : node.IsConnected ? node.SendAsync(message) : Task.CompletedTask;
     private async Task BroadcastAsset(MediaAsset a) { if (node.IsConnected || rtc?.Joined == true) await SendPacket(new WireMessage("asset", profile.Id, null, JsonSerializer.SerializeToUtf8Bytes(new AssetTransfer(a.Id, a.Name, a.Kind, await File.ReadAllBytesAsync(a.LocalPath))))); }
@@ -445,26 +580,28 @@ public sealed class MainWindow : ThemedWindow
     {
         if (community is null) return; var d = new FormDialog(this, "Звуковая панель"); d.Note("Звуки слышат участники твоего голосового канала. WAV или MP3, максимум 2 МБ. Вне звонка доступно локальное прослушивание.");
         foreach (var a in store.GetAssets(community.Id, "sound")) d.Action($"▶ {a.Name}", () => Run(async () => { if (deafened) return; await BroadcastAsset(a); sounds.PlayFile(a.LocalPath); if (voiceChannelId is not null) await SendPacket(new WireMessage("sound", profile.Id, voiceChannelId, Encoding.UTF8.GetBytes(a.Id))); }));
-        d.Action("+ Загрузить звук", () => { var f = new Microsoft.Win32.OpenFileDialog { Filter = "Аудио|*.wav;*.mp3", Title = "Звук · до 2 МБ" }; if (f.ShowDialog(d) != true) return; if (new FileInfo(f.FileName).Length > 2 * 1024 * 1024) throw new InvalidOperationException("Звук должен быть меньше 2 МБ."); d.Close(); Run(async () => { await ImportAndSend(f.FileName, "sound"); sounds.Play("message"); }); }); d.ShowDialog();
+        d.Action("+ Загрузить звук", () => { var f = new Microsoft.Win32.OpenFileDialog { Filter = "Аудио|*.wav;*.mp3", Title = "Звук · до 2 МБ" }; if (f.ShowDialog(this) != true) return; if (new FileInfo(f.FileName).Length > 2 * 1024 * 1024) throw new InvalidOperationException("Звук должен быть меньше 2 МБ."); d.Close(); Run(async () => { await ImportAndSend(f.FileName, "sound"); sounds.Play("message"); }); }); d.ShowDialog();
     }
     private void EditProfile()
     {
-        var d = new FormDialog(this, "Мой профиль"); var name = d.Field("Имя пользователя", profile.Username); var about = d.Field("О себе", profile.About, true); var avatar = profile.AvatarPath; var banner = profile.BannerPath;
+        var d = new FormDialog(this, "Мой профиль"); var name = d.Field("Имя пользователя", profile.Username); var about = d.Field("О себе", profile.About, true); var avatar = avatars.Resolve(profile, store); var banner = profile.BannerPath ?? (profile.BannerAssetId is null ? null : store.GetAsset(profile.BannerAssetId)?.LocalPath);
         void Pick(bool isAvatar)
         {
-            var f = new Microsoft.Win32.OpenFileDialog { Filter = "Изображения|*.png;*.jpg;*.jpeg;*.gif" }; if (f.ShowDialog(d) != true) return;
+            var f = new Microsoft.Win32.OpenFileDialog { Filter = "Изображения|*.png;*.jpg;*.jpeg;*.gif" }; if (f.ShowDialog(this) != true) return;
             if (new FileInfo(f.FileName).Length > 4 * 1024 * 1024) throw new InvalidOperationException("Изображение профиля должно быть меньше 4 МБ.");
-            _ = LoadImage(f.FileName, 1280); var directory = Path.Combine(store.RootDirectory, "profile-images"); Directory.CreateDirectory(directory);
+            AvatarCatalog.Validate(f.FileName); var directory = Path.Combine(store.RootDirectory, "profile-images"); Directory.CreateDirectory(directory);
             var destination = Path.Combine(directory, Guid.NewGuid().ToString("N") + Path.GetExtension(f.FileName)); File.Copy(f.FileName, destination);
             if (isAvatar) avatar = destination; else banner = destination; sounds.Play("message");
         }
         d.Action("Выбрать аватар", () => Pick(true)); d.Action("Выбрать баннер", () => Pick(false)); d.Action("Удалить аватар и баннер", () => { avatar = null; banner = null; });
         d.Note("Аватар и баннер: до 4 МБ каждый. Изменения отправляются участникам активной сессии."); d.Accept();
-        if (d.ShowDialog() != true) return; var proposed = profile with { Username = name.Text.Trim(), About = about.Text.Trim(), AvatarPath = avatar, BannerPath = banner, AvatarAssetId = null, BannerAssetId = null }; store.SaveProfile(proposed); profile = proposed; if (community is not null) store.UpsertMember(community.Id, profile); Run(async () => { await PublishProfile(); RenderMembers(); UpdateStatus(); sounds.Play("message"); });
+        if (d.ShowDialog() != true) return; var proposed = profile with { Username = name.Text.Trim(), About = about.Text.Trim(), AvatarPath = avatar, BannerPath = banner, AvatarAssetId = null, BannerAssetId = null, AvatarRevision = avatar is null ? null : AvatarCatalog.Revision(avatar) }; store.SaveProfile(proposed); profile = proposed; if (community is not null) store.UpsertMember(community.Id, profile); Run(async () => { await PublishProfile(); RenderMembers(); UpdateStatus(); sounds.Play("message"); });
     }
     private async Task PublishProfile()
     {
         if (closing) return;
+        if (cloud is not null && profile.AvatarPath is not null && profile.AvatarRevision is not null && profile.AvatarRevision != cloud.Profile?.AvatarRevision)
+            await cloud.PutAsync($"profiles/{profile.Id}/Images/{profile.AvatarRevision}", new AssetTransfer(profile.AvatarRevision, Path.GetFileName(profile.AvatarPath), "avatar", await File.ReadAllBytesAsync(profile.AvatarPath)));
         if ((node.IsConnected || rtc?.Joined == true) && community is not null)
         {
             var capturedProfile = profile;
@@ -472,16 +609,16 @@ public sealed class MainWindow : ThemedWindow
             var banner = capturedProfile.BannerPath is not null && File.Exists(capturedProfile.BannerPath) ? await ImportAndSend(capturedProfile.BannerPath, "banner") : null;
             if (profile.Id == capturedProfile.Id && profile.AvatarPath == capturedProfile.AvatarPath && profile.BannerPath == capturedProfile.BannerPath) profile = profile with { AvatarAssetId = avatar?.Id, BannerAssetId = banner?.Id };
         }
-        await node.UpdateProfileAsync(profile);
+        store.SaveProfile(profile); await node.UpdateProfileAsync(profile);
         if (cloud is not null) await cloud.SaveProfileAsync(profile);
     }
     private void ViewProfile(UserProfile p)
     {
         var d = new FormDialog(this, p.Username);
         string? banner = p.Id == profile.Id ? profile.BannerPath : p.BannerAssetId is not null ? store.GetAsset(p.BannerAssetId)?.LocalPath : null;
-        string? avatar = p.Id == profile.Id ? profile.AvatarPath : p.AvatarAssetId is not null ? store.GetAsset(p.AvatarAssetId)?.LocalPath : null;
+        string? avatar = avatars.Resolve(p.Id == profile.Id ? profile : p, store);
         if (banner is not null && File.Exists(banner)) { try { d.Add(new Image { Source = LoadImage(banner, 800), Height = 130, Stretch = Stretch.UniformToFill }); } catch { } }
-        if (avatar is not null && File.Exists(avatar)) { try { d.Add(new Image { Source = LoadImage(avatar, 160), Height = 80, Width = 80, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 12, 0, 12), Stretch = Stretch.UniformToFill }); } catch { } }
+        d.Add(AvatarCatalog.Circle(avatar, 80));
         d.Note(p.Game is null ? "Участник сообщества" : $"Играет в {p.Game}"); d.Note(p.About.Length == 0 ? "Пока ничего о себе не рассказал." : p.About);
         if (p.Id == profile.Id) d.Action("Редактировать профиль", () => { d.Close(); EditProfile(); });
         d.Note($"Идентификатор: {p.Id}"); d.Accept("Закрыть"); d.ShowDialog();
@@ -501,14 +638,34 @@ public sealed class MainWindow : ThemedWindow
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (community?.Id != id || closing) return;
             cloudPresence = online.Values.Where(p => now - p.SeenAt < 45000 && now >= p.SeenAt - 10000).Select(p => new PeerPresence(p.Profile, p.ChannelId, false, false)).ToList();
+            foreach (var user in cloudPresence.Select(p => p.Profile)) await avatars.FetchAsync(cloud, user);
             RenderMembers(); RenderChannels(); UpdateStatus();
             if (channelId is not null)
             {
                 var history = await cloud.MessagesAsync(id, channelId);
-                foreach (var message in history.OrderBy(m => m.SentAt)) { store.SaveMessage(message); if (selectedChannel?.Id == channelId) AddMessage(message); }
+                foreach (var message in history.OrderBy(m => m.SentAt)) {
+                    if (message.AttachmentId is not null && Regex.IsMatch(message.AttachmentId, "^[a-f0-9]{64}$") && store.GetAsset(message.AttachmentId) is null && !unavailableFiles.Contains(message.AttachmentId))
+                    { if (await CloudFiles.DownloadAsync(cloud, store, id, message.AuthorId, message.AttachmentId) is null) unavailableFiles.Add(message.AttachmentId); }
+                    await FetchEmojis(message, id); store.SaveMessage(message); if (selectedChannel?.Id == channelId) AddMessage(message); }
             }
         }
         finally { cloudPolling = false; }
+    }
+    private async Task FetchEmojis(ChatMessage message, string communityId)
+    {
+        if (cloud is null || message.Emojis is null) return;
+        foreach (var id in message.Emojis.Values.Distinct().Take(64))
+        {
+            if (string.IsNullOrWhiteSpace(id) || !Regex.IsMatch(id, "^[a-f0-9]{64}$") || store.GetAsset(id) is not null) continue;
+            var asset = await cloud.GetAsync<AssetTransfer>($"profiles/{message.AuthorId}/Images/{id}");
+            if (asset is null || asset.Data is null || asset.Kind != "emoji" || asset.Data.Length > 256 * 1024 || asset.Name != Path.GetFileName(asset.Name) || asset.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || asset.Name is "." or ".." || asset.Name.Length > 200) continue;
+            using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+            hash.AppendData(Encoding.UTF8.GetBytes(communityId + "\0emoji\0")); hash.AppendData(asset.Data);
+            if (Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant() != id) continue;
+            var directory = Path.Combine(store.RootDirectory, "incoming", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory); var path = Path.Combine(directory, "emoji.payload");
+            try { await File.WriteAllBytesAsync(path, asset.Data); AvatarCatalog.Validate(path); store.ImportAsset(communityId, path, "emoji", asset.Name); }
+            finally { Directory.Delete(directory, true); }
+        }
     }
     private void ToggleTheme()
     {

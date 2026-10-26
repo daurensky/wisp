@@ -32,22 +32,49 @@ public sealed class AuthWindow : ThemedWindow
     }
 }
 
-public sealed class FormDialog : ThemedWindow
+public sealed class FormDialog : ContentControl
 {
     private readonly StackPanel panel = new() { Margin = new Thickness(24) };
+    private ModalHandle? handle;
+    private Button? accept;
+    private TextBox? firstField;
+    private bool? result;
+    public Window OwnerWindow { get; }
+    public string Title { get; }
+    public bool? DialogResult { get => result; set { result = value; Close(); } }
     public FormDialog(Window owner, string title, double width = 460)
     {
-        Owner = owner; Title = title; Width = width; SizeToContent = SizeToContent.Height; MaxHeight = 800; WindowStartupLocation = WindowStartupLocation.CenterOwner; ResizeMode = ResizeMode.NoResize;
+        OwnerWindow = owner; Title = title; Width = width;
         Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         panel.Children.Add(new TextBlock { Text = title, FontSize = 23, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 18) });
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter && e.OriginalSource is TextBox field && !field.AcceptsReturn && accept is not null)
+            { e.Handled = true; accept.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); }
+        };
     }
+    public bool? ShowDialog()
+    {
+        var frame = new System.Windows.Threading.DispatcherFrame();
+        handle = ModalHost.Open(OwnerWindow, "", this, Width);
+        if (firstField is not null) Dispatcher.BeginInvoke(() => firstField.Focus());
+        handle.Closed += () => frame.Continue = false;
+        System.Windows.Threading.Dispatcher.PushFrame(frame);
+        return result;
+    }
+    public void Close() => handle?.Close();
     public void Note(string text) => panel.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, Opacity = .7, Margin = new Thickness(0, 8, 0, 8) });
     public void Add(UIElement element) => panel.Children.Add(element);
     public TextBox Field(string label, string value = "", bool multiline = false)
     {
-        panel.Children.Add(new TextBlock { Text = label }); var field = new TextBox { Text = value, AcceptsReturn = multiline, MinHeight = multiline ? 80 : 0, TextWrapping = TextWrapping.Wrap }; panel.Children.Add(field); return field;
+        panel.Children.Add(new TextBlock { Text = label }); var field = new TextBox { Text = value, AcceptsReturn = multiline, MinHeight = multiline ? 80 : 0, TextWrapping = TextWrapping.Wrap }; panel.Children.Add(field); firstField ??= field; return field;
     }
     public CheckBox Check(string label, bool value = false) { var c = new CheckBox { Content = label, IsChecked = value }; panel.Children.Add(c); return c; }
-    public Button Action(string label, Action action) { var b = new Button { Content = label }; b.Click += (_, _) => { try { action(); } catch (Exception ex) { System.Windows.MessageBox.Show(this, ex.Message, "Wisp"); } }; panel.Children.Add(b); return b; }
-    public void Accept(string label = "Сохранить") => Action(label, () => DialogResult = true);
+    public Button Action(string label, Action action)
+    {
+        var b = new Button { Content = label };
+        b.Click += (_, _) => { try { action(); } catch (Exception ex) { if (OwnerWindow is MainWindow main) main.ReportNotification(ex.Message, true); else Note(ex.Message); } };
+        panel.Children.Add(b); return b;
+    }
+    public void Accept(string label = "Сохранить") => accept = Action(label, () => DialogResult = true);
 }

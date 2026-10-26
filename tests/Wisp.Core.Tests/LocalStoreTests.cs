@@ -9,6 +9,21 @@ public sealed class LocalStoreTests : IDisposable
     private readonly string directory = Path.Combine(Path.GetTempPath(), "wisp-tests-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void AvatarRevisionAndInlineEmojiReferencesSurviveRestart()
+    {
+        string channel, id;
+        using (var store = new LocalStore(directory))
+        {
+            var profile = store.Register("Alice", "password123") with { AvatarRevision = new string('a', 64) }; id = profile.Id;
+            store.SaveProfile(profile); var community = store.CreateCommunity("Friends", profile.Id); channel = store.GetChannels(community.Id).First(c => !c.IsVoice).Id;
+            store.SaveMessage(new("message", channel, profile.Id, profile.Username, "hello :wave:", DateTimeOffset.UtcNow, Emojis: new() { [":wave:"] = "asset-id" }));
+        }
+        using var restored = new LocalStore(directory);
+        Assert.Equal(new string('a', 64), restored.Login("Alice", "password123")?.AvatarRevision);
+        Assert.Equal("asset-id", Assert.Single(restored.GetMessages(channel)).Emojis![":wave:"]);
+    }
+
+    [Fact]
     public void SavedSessionsRestoreOnlyTheCorrectAccountAndCanBeRevoked()
     {
         string session;
