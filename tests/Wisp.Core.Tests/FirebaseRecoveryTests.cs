@@ -121,6 +121,21 @@ public sealed class FirebaseRecoveryTests
     }
 
     [Fact]
+    public async Task RoomParticipantsExposeLiveMuteAndDeafenWithoutChangingPresenceSchema()
+    {
+        var clock = new ManualClock(); var server = new FakeDatabase(clock); server.SeedBob();
+        using var cloud = await Login(server, clock);
+        await using var mesh = new RtcMesh(cloud, new StaticIceServerProvider([]), (_, _, _) => new FakePeer(), false);
+        await mesh.EnterAsync("room", "voice", false, false);
+        await Eventually(() => mesh.Participants.Any(seat => seat.UserId == "bob"));
+        server.Write("communities/room/rtcRooms/voice/s1", JsonSerializer.SerializeToNode(new RtcSeat("bob", new string('b', 32), server.Now.ToUnixTimeMilliseconds(), true, true)));
+        await Eventually(() => mesh.Participants.Any(seat => seat.UserId == "bob" && seat.Muted && seat.Deafened));
+        await mesh.SetMutedAsync(true, true);
+        await Eventually(() => mesh.Participants.Any(seat => seat.UserId == "alice" && seat.Muted && seat.Deafened));
+        Assert.Equal("voice", mesh.ChannelId);
+    }
+
+    [Fact]
     public async Task RetryBudgetUsesAllFourDelaysThenStopsCreatingPeers()
     {
         var clock = new ManualClock();
