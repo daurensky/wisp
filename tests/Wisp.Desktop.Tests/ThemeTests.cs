@@ -113,9 +113,10 @@ public sealed class ThemeTests
         var frozenProbe = new Border { RenderTransform = frozen };
         Motion.Stop(frozenProbe);
         Assert.True(frozen.IsFrozen);
-        foreach (var name in new[] { "x", "send", "mic", "mic-off", "headphone-off", "screen-share", "plus", "pencil", "check", "bell" })
+        var iconResources = Application.Current.Resources.MergedDictionaries[0].MergedDictionaries.Single(dictionary => dictionary.Source.OriginalString.EndsWith("Icons.xaml"));
+        foreach (var key in iconResources.Keys.Cast<string>())
         {
-            var geometry = Assert.IsAssignableFrom<Geometry>(Application.Current.FindResource("Icon." + name));
+            var geometry = Assert.IsAssignableFrom<Geometry>(Application.Current.FindResource(key));
             Assert.True(geometry.IsFrozen);
             Assert.InRange(geometry.Bounds.Left, -.01, 24.01); Assert.InRange(geometry.Bounds.Top, -.01, 24.01);
             Assert.InRange(geometry.Bounds.Right, -.01, 24.01); Assert.InRange(geometry.Bounds.Bottom, -.01, 24.01);
