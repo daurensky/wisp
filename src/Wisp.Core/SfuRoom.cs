@@ -34,6 +34,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
     public IReadOnlyDictionary<string, string> ConnectionPaths => ConnectedPeerIds.ToDictionary(id => id, _ => "SFU");
     public event Action<WireMessage>? MessageReceived;
     public event Action<string>? Error;
+    public event Action<Exception>? DiagnosticError;
     public event Action? Changed;
 
     private sealed class Link(IRtcPeer peer, string remote)
@@ -50,7 +51,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
         if (stop?.IsCancellationRequested != false) return;
         if (outbound?.Writer.TryWrite(value) != true) Fail("Очередь сигналинга SFU переполнена. Подключись снова.");
     }
-    private void Fail(string error)
+    private void Fail(string error,Exception? exception=null)
     {
         if (Interlocked.Exchange(ref failed, 1) != 0) return;
         joined = false;
@@ -66,7 +67,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
             catch(Exception) { /* The failed attempt is already reported below. */ }
             finally { lifecycle.Release(); }
         });
-        Error?.Invoke(error); Changed?.Invoke();
+        DiagnosticError?.Invoke(exception??new IOException(error));Error?.Invoke(error); Changed?.Invoke();
     }
     public async Task EnterAsync(string communityId, string channelId, bool mute, bool deafen, CancellationToken cancellation = default)
     {
@@ -141,7 +142,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception) { Fail("Не удалось отправить сигнал SFU. Проверь соединение с сервером."); }
+        catch (Exception ex) { if(!token.IsCancellationRequested)Fail("Не удалось отправить сигнал SFU. Проверь соединение с сервером.",ex); }
     }
     private async Task ReadAsync(CancellationToken token)
     {
@@ -200,7 +201,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception) { Fail("Соединение SFU закрыто: проверь доступ к каналу, сервер и сеть."); }
+        catch (Exception ex) { if(!token.IsCancellationRequested)Fail("Соединение SFU закрыто: проверь доступ к каналу, сервер и сеть.",ex); }
     }
     private async Task MaintainAsync(CancellationToken token)
     {
@@ -218,7 +219,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception) { Fail("Не удалось обновить подключение SFU. Подключись снова."); }
+        catch (Exception ex) { if(!token.IsCancellationRequested)Fail("Не удалось обновить подключение SFU. Подключись снова.",ex); }
     }
     private async Task HealthAsync(CancellationToken token)
     {

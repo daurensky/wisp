@@ -213,6 +213,7 @@ public sealed class MainWindow : ThemedWindow
         _ = Task.Run(ProcessIncoming);
         if (rtc is not null)
         {
+            if(rtc is SfuRoom native)native.DiagnosticError+=error=>DiagnosticLog.Write("sfu",error);
             rtc.MessageReceived += EnqueueIncoming;
             rtc.Error += message => Dispatcher.BeginInvoke(() => { if (!closing) Notify(message, true); });
             rtc.Changed += () => Dispatcher.BeginInvoke(() =>
@@ -518,7 +519,8 @@ public sealed class MainWindow : ThemedWindow
             if(!voiceIntent.IsCurrent(request))return;await rtc.SetMutedAsync(muted,deafened);
             if(!voiceIntent.IsCurrent(request))return;
             voice.Muted=muted;voice.Deafened=deafened;voice.Start();voiceIntent.Complete(request);RenderChannels();UpdateStatus();sounds.Play("connect");
-            await cloud.PresenceAsync(joiningCommunity.Id,profile,c.Id);if(voiceIntent.IsCurrent(request))await RefreshCloud();
+            try {await cloud.PresenceAsync(joiningCommunity.Id,profile,c.Id);if(voiceIntent.IsCurrent(request))await RefreshCloud();}
+            catch(Exception ex){DiagnosticLog.Write("voice-presence",ex);if(voiceIntent.IsCurrent(request))Notify("Голос подключён, но не удалось обновить список участников или чат: "+ex.Message,true);}
             Notify("Подключён к серверу. Голос и демонстрация передаются через SFU.");
         }
         catch
