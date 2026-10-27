@@ -29,7 +29,7 @@ Windows. Windows CI includes native RNNoise/codec tests and a real STA UI test.
 Runtime failures found during the first passes were fixed: stopping frozen WPF
 transforms, implicit styles not matching a derived ListBox, independent SVG
 subpath origins and a duplicate resource key. New assertions/static checks cover
-these cases. Final run results and artifact links are recorded in TESTING.md.
+these cases. Final Windows run 40476065053 passed Core 69/69 and Desktop 10/10 with no skips, build/publish/package successful; PNGs were inspected. Results, artifact links and a pre-existing local parallel-test timing issue are recorded in TESTING.md.
 
 ## Design and components
 
