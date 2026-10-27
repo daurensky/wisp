@@ -11,9 +11,9 @@ public sealed class VoiceMessagePlayer : UserControl, IDisposable
     private readonly string path;
     private readonly Action<string> error;
     private readonly Func<bool> allowed;
-    private readonly Button play = new() { Content = "▶", ToolTip = "Воспроизвести / пауза" };
-    private readonly Slider seek = new() { Minimum = 0, Maximum = 1, MinWidth = 150, VerticalAlignment = VerticalAlignment.Center };
-    private readonly TextBlock time = new() { Text = "0:00", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+    private readonly ToggleIconButton play = new() { IconOff = "play", IconOn = "pause", ToolTipOff = "Воспроизвести", ToolTipOn = "Пауза" };
+    private readonly Slider seek = new() { Minimum = 0, Maximum = 1, MinWidth = Ui.Metric("Width.Seek"), VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock time = new() { Text = "0:00", FontSize = Ui.Caption, VerticalAlignment = VerticalAlignment.Center, Margin = Ui.Insets(Ui.S, 0, 0, 0) };
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private AudioFileReader? reader;
     private WaveOutEvent? output;
@@ -21,7 +21,8 @@ public sealed class VoiceMessagePlayer : UserControl, IDisposable
     public VoiceMessagePlayer(string path, Action<string> error, Func<bool>? allowed = null)
     {
         this.path = path; this.error = error; this.allowed = allowed ?? (() => true);
-        var row = new DockPanel { Margin = new Thickness(0, 8, 0, 0), MaxWidth = 420, HorizontalAlignment = HorizontalAlignment.Left };
+        var row = new DockPanel { Margin = Ui.Insets(0, Ui.S, 0, 0), MaxWidth = Ui.Metric("Width.Player"), HorizontalAlignment = HorizontalAlignment.Left };
+        Ui.Name(seek, "Позиция голосового сообщения"); Ui.Secondary(time);
         DockPanel.SetDock(play, Dock.Left); row.Children.Add(play); DockPanel.SetDock(time, Dock.Right); row.Children.Add(time); row.Children.Add(seek); Content = row;
         play.Click += (_, _) => { try { Toggle(); } catch (Exception ex) { Dispose(); error(ex.Message); } };
         seek.ValueChanged += (_, _) => { if (updating) return; try { EnsureReader(); reader!.CurrentTime = TimeSpan.FromSeconds(Math.Clamp(seek.Value, 0, reader.TotalTime.TotalSeconds)); Refresh(); } catch (Exception ex) { error(ex.Message); } };
@@ -40,16 +41,16 @@ public sealed class VoiceMessagePlayer : UserControl, IDisposable
             output = new WaveOutEvent { DesiredLatency = 100 }; output.Init(reader);
         }
         if (reader!.CurrentTime >= reader.TotalTime - TimeSpan.FromMilliseconds(50)) reader.CurrentTime = TimeSpan.Zero;
-        active = new(this); output!.Play(); play.Content = "Ⅱ"; timer.Start(); Refresh();
+        active = new(this); output!.Play(); play.IsChecked = true; timer.Start(); Refresh();
     }
-    private void Pause() { output?.Pause(); play.Content = "▶"; timer.Stop(); Refresh(); }
+    private void Pause() { output?.Pause(); play.IsChecked = false; timer.Stop(); Refresh(); }
     public static void PauseActive() { if (active?.TryGetTarget(out var player) == true) player.Pause(); }
     private void Refresh()
     {
         if (reader is null) return;
         updating = true; seek.Value = reader.CurrentTime.TotalSeconds; updating = false;
         time.Text = $"{reader.CurrentTime:m\\:ss} / {reader.TotalTime:m\\:ss}";
-        if (output?.PlaybackState == PlaybackState.Stopped) { play.Content = "▶"; timer.Stop(); }
+        if (output?.PlaybackState == PlaybackState.Stopped) { play.IsChecked = false; timer.Stop(); }
     }
-    public void Dispose() { timer.Stop(); output?.Stop(); output?.Dispose(); output = null; reader?.Dispose(); reader = null; play.Content = "▶"; }
+    public void Dispose() { timer.Stop(); output?.Stop(); output?.Dispose(); output = null; reader?.Dispose(); reader = null; play.IsChecked = false; }
 }

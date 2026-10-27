@@ -10,6 +10,7 @@ public static class ThemeManager
 
     public static void Initialize(string rootDirectory)
     {
+        Motion.Initialize(rootDirectory);
         preferencePath = Path.Combine(rootDirectory, "theme.txt");
         var light = false;
         try { light = File.Exists(preferencePath) && File.ReadAllText(preferencePath).Trim() == "light"; }
@@ -28,12 +29,18 @@ public static class ThemeManager
     {
         IsLight = light;
         var colors = light
-            ? new[] { "#FFFFFF", "#F1F2F6", "#E2E3EC", "#181923", "#626577", "#6350DA" }
-            : new[] { "#000000", "#101114", "#1C1D23", "#EDEDF2", "#9899AA", "#8B78FF" };
-        var keys = new[] { "Bg", "Panel", "Card", "Fg", "Muted", "Accent" };
+            ? new[] { "#FFFFFF", "#F1F2F6", "#E2E3EC", "#181923", "#626577", "#6350DA", "#D2D4DF", "#8E919E", "#7563E9", "#5140BC", "#B3263B", "#FBE8EC", "#18794E", "#E8E9F0", "#E4DFFA" }
+            : new[] { "#000000", "#101114", "#1C1D23", "#EDEDF2", "#9899AA", "#8B78FF", "#2A2C34", "#686B7A", "#A294FF", "#7261D9", "#F07B86", "#3C2028", "#65C99E", "#24262F", "#302A48" };
+        var keys = new[] { "Background", "Surface", "SurfaceElevated", "TextPrimary", "TextSecondary", "Accent", "Border", "TextDisabled", "AccentHover", "AccentPressed", "Danger", "DangerSurface", "Success", "Hover", "Selected" };
         var resources = System.Windows.Application.Current.Resources;
         for (int i = 0; i < keys.Length; i++)
-            resources[keys[i]] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colors[i]));
+        {
+            var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colors[i]));
+            brush.Freeze();
+            resources[keys[i]] = brush;
+        }
+        var aliases = new[] { "Bg", "Panel", "Card", "Fg", "Muted" };
+        for (int i = 0; i < aliases.Length; i++) resources[aliases[i]] = resources[keys[i]];
         Changed?.Invoke();
     }
 }
