@@ -1,98 +1,13 @@
-# Архитектура
+# Architecture
 
-Firebase-режим использует WebRTC mesh (`RtcMesh`, `RtcPeer`), настраиваемые UDP STUN-серверы (по умолчанию Google), без TURN по решению владельца, отдельные SRTP-дорожки голоса/звука демонстрации/H.264, авторизованный сигналинг и серверный лимит мест в RTDB. [Актуальное описание](FIREBASE.md). Описание TLS-звезды ниже относится к поддерживаемому режиму без Firebase.
+WPF/.NET8 Windows client, Go/Pion media/API service, PostgreSQL17+ metadata/media database. SQLite is a per-server local cache, not account authority. ServerConfig pins the HTTPS/WSS certificate and namespaces local cache/session data by endpoint. DPAPI protects the rotating refresh token. API tokens are sent as Bearer headers or inside pinned WSS, never URL query strings.
 
-## Компоненты
+The server uses salted Argon2id passwords, random hashed access/refresh tokens with rotation/revocation, normalized user/community/member/invite/session tables and versioned JSONB documents. Generic data paths are explicitly validated and authorized. Community media is member-scoped; profiles/avatars are readable by signed-in users. Content-addressed file chunks are immutable and checked against the complete manifest hash before publication. Avatar/emoji images have bounded dimensions and decode validation. HTTP bodies, password work, DB pool and API concurrency are bounded.
 
-`Wisp.Desktop` — WPF-приложение для Windows. Интерфейс не запускает браузерный движок. Нативные устройства ввода/вывода обслуживает NAudio; сжатие голоса — Concentus (Opus). Демонстрация использует Windows.Graphics.Capture (окно/монитор), резерв GDI и нативный H.264 MFT с ограничением размера и частоты кадров. Потоки захвата создаются только при соответствующем действии пользователя.
+SFU signaling and room presence are owned by authenticated WSS connections. There are no database seat leases or five-slot structures. Roster/mute updates are broadcast to room members; server API exposes current room state for other channels. Global maxSessions=0 means no fixed cap; operators may impose a resource cap. A single UDP mux publishes the VPS public address. Clients use no external STUN servers; the WebRTC ICE connectivity checks still use STUN messages with the SFU itself. No TURN or direct client mesh exists.
 
-`Wisp.Core` — независимые от WPF модели, локальное хранилище SQLite и транспорт `PeerNode`. `Wisp.Core.Tests` проверяет логику без запуска Windows-интерфейса. Конкретный перечень выполняемых тестов определяется исходниками тестового проекта и результатами workflow.
+One native publishing RtcPeer and one source-bound subscription per remote user preserve separate Opus microphone, Opus share-audio and H.264 streams. The server forwards compressed packets and handles RTCP/NACK/PLI; clients decode locally. Link count therefore grows with channel size: removing a five-person policy does not make a 1-vCPU VPS unlimited. SCTP is used for small events; durable chat/assets use the API/database. DTLS/SRTP protects each client–server leg, not end-to-end encryption between users.
 
-## Локальные данные
+VoiceService applies saved per-user software gains after decode and before mix. It never changes Windows master/other-application volume. WASAPI tries GameChat, falls back to neutral Other and selects multimedia endpoints by default; driver failures include HRESULTs. Hardware and Bluetooth mode behavior require user-PC validation.
 
-Одна локальная база `%LOCALAPPDATA%\Wisp\wisp.db` содержит профили, аккаунты, сообщества, каналы, членство, сообщения и метаданные файлов. SQLite работает с внешними ключами и WAL. SQL-параметры используются для пользовательских значений. Файлы копируются в управляемый каталог `media`; передача пути от удалённого компьютера не даёт права читать произвольный локальный файл.
-
-Аккаунт — локальная запись для входа в приложение, а не глобальная регистрация. PBKDF2-SHA256 с индивидуальной солью и 210000 итерациями хранит проверочное значение пароля; сравнение выполняется за постоянное время. Идентификаторы профилей не зависят от отображаемого имени. Хранилище сертификата сети отдельно от пароля и защищается правами текущего пользователя Windows, а не шифрованием базы.
-
-## Сессия сообщества
-
-```text
-             компьютер участника A (хост)
-              TLS /       |       \ TLS
-                 B        C        D …
-```
-
-Сессию открывает владелец сообщества. Он принимает TLS/TCP-подключения на своём ПК и пересылает сообщения другим подключённым участникам. Хост проверяет допустимость голосового канала и максимум 5 участников, происхождение сообщений и границы пакетов. Голос и демонстрации получают участники того же голосового канала. Лимит относится к каждому голосовому каналу, а не числу установленных приложений или локальных аккаунтов.
-
-Приглашение содержит адрес/порт, SHA-256 отпечаток сертификата и случайный секрет сессии. Передача приглашения должна происходить по доверенному каналу. Клиент не использует произвольный сертификат сервера вместо указанного отпечатка. Сертификаты участников закрепляются хостом при первом подключении (TOFU); это не удостоверение реальной личности.
-
-Список каналов задаётся при открытии сессии. Интерфейс разрешает создание каналов владельцу при остановленной сессии; для передачи нового списка участникам владелец открывает новую сессию и выдаёт новое приглашение. Сообщение хранит текст с токенами `:name:` и словарь токен → хеш эмодзи; SQLite v3 сохраняет этот словарь и ревизию аватара при миграции старого кэша. В Firebase-режиме эмодзи, аватары и вложения также доступны через базу без голосовой сессии. В режиме прямой связи эмодзи передаются как медиа, а звуковая панель отправляет файл и команду его воспроизведения участникам текущего голосового канала.
-
-Шифрование заканчивается на хосте. Топология не является полным mesh, передачи роли хоста и повторного подключения к новому хосту автоматически нет. При потере связи копии SQLite остаются у участников, но приложение не поддерживает распределённый консенсус, офлайн-очередь или полное восстановление истории из других реплик.
-
-## Ограничение нагрузки
-
-- Голос: 48 кГц, моно, Opus 32 кбит/с, кадр 20 мс, DTX/VBR, ограниченный буфер воспроизведения. Удаляются устаревшие аудиоданные, чтобы очередь не наращивала задержку.
-- Экран: H.264 до 1920×1080/60, один кодировщик на показывающего; исходящий трафик = битрейт × число зрителей. Process-loopback передаёт отдельный стереопоток (Windows build 20348+).
-- Передачи файлов ограничены по размеру. Реализация хранит файл/JSON-пакет в памяти; это не потоковая передача больших файлов.
-- Очереди транспорта ограничены; при перегрузке realtime-пакеты могут отбрасываться. TLS/TCP сохраняет порядок и надёжность, но при потере пакетов может давать задержки, характерные для TCP.
-- Нагрузка хоста выше нагрузки остальных участников, поскольку он пересылает данные. Необходимо измерять CPU/RAM, исходящий трафик и задержку на реальных целевых ПК; текущие настройки — ограничения расхода, а не доказанный бюджет производительности.
-
-Для производственного выпуска остаются важны испытания на разных аудиоустройствах и драйверах, обработка длительных сетевых сбоев, профилирование, установщик и подпись, дополнительные меры против злоупотреблений, независимый аудит протокола и возможный переход realtime-медиа на транспорт с подходящими свойствами потерь/задержки.
-
-## Медиатранспорт v2 и просмотр
-
-`RtcPeer` согласует Opus/111 (микрофон), Opus/112 (звук демонстрации), H.264/96 (видео) и два SCTP-канала: `wisp-events-v2` для команд и `wisp-control-v2` для файлов. Аудио не ждёт фрагментации видео или файла. Кодирование/декодирование Opus использует нативный libopus из Concentus.Native.NetCore; `OpusFrameDecoder` валидирует размер и длительность 20 мс, сбрасывает повреждённое состояние без уведомления на каждый пакет.
-
-`ScreenShareService` использует `IScreenCapture`: WGC с двухкадровым free-threaded pool и переиспользуемой staging-текстурой; GDI с reusable bitmap/graphics остаётся резервом. Курсор включён, Windows capture border сохраняется. Resize пересоздаёт pool, сворачивание повторяет последний кадр раз в секунду, закрытие источника останавливает показ. Отдельный поток с пониженным приоритетом вызывает нативный цветовой конвертер и H.264 MFT. Параметры изображения не превышают 1920×1080, профиль Baseline исключает задержку от B-кадров. `screen-start` сообщает размер/FPS/битрейт и новую сессию; параметры повторно передаются новым участникам. `ScreenVideoReceiver` декодирует кадры последовательно вне UI; переполнение очереди переключает его на ожидание IDR. UI хранит только последний готовый RGB-кадр каждого зрителя.
-
-`ScreenViewer` размещается в том же Grid главного окна: всё окно, mini справа снизу или безрамочный полноэкранный режим выбранного монитора. Выход восстанавливает стиль, размеры и Topmost окна. Закрытие просмотра освобождает декодер и выключает его звук; повторное открытие запрашивает IDR; запросы ограничены разом в секунду с обеих сторон. Плановый GOP — 3 секунды. `ShareAudioCapture` использует process-loopback Windows для приложения либо всего рабочего стола с исключением процесса Wisp.
-
-Повторные уведомления объединяются со счётчиком. Даже разные ошибки не могут воспроизводить звуковые сигналы чаще одного раза в 15 секунд.
-
-`IIceServerProvider` отделяет ICE-конфигурацию от `RtcPeer`. Файловый провайдер читает только список UDP STUN URL из `network.json`, проверяет формат и сохраняет атомарно. В тестах используется пустой список без внешних STUN-запросов. Типы номинированной пары читаются через проверенные в SIPSorcery 10.0.17 `GetRtpChannel().NominatedEntry`; IP-адреса в уведомления не выводятся.
-
-## Hardening сигналинга и аудио
-
-`FirebaseBackend` оценивает UTC по Date ответа, затем использует монотонный TimeProvider. ETag защищает занятие, продление и удаление места от гонок. Аренда 45 секунд / продление 10 / независимая остановка транспорта 40 сохранены. Permission denied больше не повторяется как конфликт места.
-
-У пары есть SessionId и Attempt. Новые попытки создают новый native peer с задержками 2/5/15/30 секунд, затем исчерпывают бюджет. Сбой ICE после disconnected в течение 5 секунд запускает restart, ещё через 5 — новую пару. NetworkAddressChanged дебаунсится 1,5 секунды. В 10.0.17 restart сохраняет завершённый checklist/NominatedEntry; для уже номинированной пары wrapper запрашивает создание новой пары через backoff вместо вмешательства в private state. Три дорожки и два SCTP-канала создаются сразу, динамического renegotiation нет.
-
-На голосовой клиент приходится один room SSE: места и ограниченные wake-маркеры без адресов. SDP остаётся в защищённом rtcSignals, кандидаты в rtcCandidates/…/Meta+c00..c63; чтение только текущей парой с актуальными сессиями. JSON tree применяет put/patch, включая удаления и multi-path. При auth_revoked обновляется токен, при сбое используется временный опрос. Вне канала SSE нет. TTL чтения — 10 минут; физическая серверная очистка аварийных остатков потребует отдельного доверенного задания.
-
-RTCP RR/SR по собственному video SSRC дают потери/jitter/RTT. После трёх плохих отчётов VideoRateController уменьшает общий битрейт, затем FPS; неподдержанное live изменение MFT видно в статусе и компенсируется 15 FPS. Таймстампы RTP считаются от монотонного времени; public SendRtpRaw и FU-A сохраняют реальное время пропусков. TWCC присутствует в SIPSorcery 10.0.17, но отдельный транспортный feedback TWCC здесь не согласуется.
-
-`VoiceService` захватывает shared WASAPI с категорией Communications через IAudioClient2 и системной конвертацией 48k/16-bit/mono. Выбор устройств сохраняется локально; MMNotificationClient инициирует замену capture/output, сохраняя канал и микшер. Категория не гарантирует системные AEC/NS/AGC: эффект определяется драйвером. Потери RTP становятся внутренними JsonIgnore-метаданными, затем FEC/PLC в Opus. PCM-кольцо целится в 40–80 мс и мягко подрезает хвост задержки. Отдельные AEC/АРУ и аппаратные асинхронные MFT отложены до отдельного согласования/измерений.
-
-### Обработка микрофона
-
-`WASAPI → PCM16 48 кГц моно, 960 отсчётов → MicProcessingChain → RnNoiseProcessor → Opus VOIP`.
-Цепочка принадлежит захвату под `VoiceService.gate`, не затрагивает входящий голос,
-`ShareAudioCapture` или голосовые сообщения. Новые `IMicProcessor` можно добавить
-после RNNoise для будущей АРУ/AEC, но AEC также потребует синхронизированного
-референса воспроизведения. Формат пакетов и параметры Opus не меняются.
-
-RNNoise 0.2 из официального релиза с фиксированным SHA-256 собирается в CI.
-Два блока по 480 float в масштабе PCM16 проходят обработку без дополнительной
-очереди и аллокаций; выход проверяется на finite и ограничивается PCM16.
-Вероятность речи не используется для гейта. Встроенная задержка модели измеряется
-отдельно от времени CPU и сетевой задержки (см. TESTING).
-
-`Enabled` — атомарная настройка с поколением: даже быстрое выкл/вкл между
-кадрами приводит к `rnnoise_init(state, NULL)` на потоке захвата. Состояние также
-сбрасывается перед новым звонком и при паузе обработки ≥3 секунд (mute/deafen,
-отключение устройства). Мьютовые кадры не обрабатываются и не кодируются.
-Восстановительный буфер цепочки возвращает вход отказавшего этапа; этап
-изолируется до завершения приложения, одно уведомление не прерывает микрофон.
-SafeHandle освобождает состояние; DLL загружается только по абсолютному пути
-рядом с приложением, зависимости ищутся в его каталоге/System32.
-
-Настройка хранится в существующем локальном `audio.json` вместе с устройствами,
-по умолчанию включена (старые настройки без поля также включают её). Переключатель
-в модальном окне звука сразу сохраняется и применяется, включая закрытие окна
-без «Применить»; кнопка «Применить» относится к выбору устройств. При отсутствии
-DLL переключатель помечен «недоступно», голос остаётся необработанным.
-
-## Экспериментальный SFU
-
-`IVoiceRoom` объединяет контракт комнаты; `ConfiguredVoiceRoom` выбирает RtcMesh либо SfuRoom при входе по локальному voice-server.json. SfuRoom использует прежний RtcPeer для одной публикации и четырёх подписок, SfuSeatLease сохраняет CAS и независимый lease guard. Linux-служба Go/Pion пересылает RTP и SCTP без декодирования, проверяет Firebase token и доступ, ограничивает комнату пятью пользователями. TLS pin обязателен, автоматического fallback нет. Протокол, эксплуатация и ограничения описаны в [SFU.md](SFU.md).
+UI uses pixel virtualization and native relative wheel commands; no wheel animation timer exists. Rail list-item backgrounds are transparent so hover cannot paint the button's bottom gap. Participant context menus contain a local voice slider and profile action. All larger forms remain in the main-window modal layer. See SERVER.md and TESTING.md for operation and checks.

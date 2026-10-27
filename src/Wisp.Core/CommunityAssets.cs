@@ -7,7 +7,7 @@ namespace Wisp.Core;
 /// <summary>Server emoji data belongs to the community, not the author's public profile.</summary>
 public static class CommunityAssets
 {
-    public static async Task UploadEmojiAsync(FirebaseBackend cloud, MediaAsset asset)
+    public static async Task UploadEmojiAsync(ServerBackend cloud, MediaAsset asset)
     {
         if (asset.Kind != "emoji" || asset.Size is <= 0 or > 256 * 1024 ||
             string.IsNullOrWhiteSpace(asset.Name) || asset.Name.Length > 200 ||

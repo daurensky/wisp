@@ -6,7 +6,7 @@ using NAudio.Wave.SampleProviders;
 using Wisp.Core;
 namespace Wisp.Desktop.Media;
 
-/// <summary>Independent WASAPI microphone, four Opus decoders and one mixed communications output.</summary>
+/// <summary>Independent WASAPI microphone, per-user Opus decoders and one mixed communications output.</summary>
 public sealed class VoiceService : IDisposable
 {
     private const int FrameSamples = 960;
@@ -219,8 +219,7 @@ public sealed class VoiceService : IDisposable
             if (mixer is null) return;
             if (!peers.TryGetValue(peerId, out var peer))
             {
-                if (peers.Count >= 4) return;
-                peer = new PlaybackPeer(); peers.Add(peerId, peer); mixer.AddMixerInput(peer);
+                peer = new PlaybackPeer { Gain = GetPeerVolume(peerId) }; peers.Add(peerId, peer); mixer.AddMixerInput(peer);
             }
             if (!peer.Decoder.TryDecodeWithRecovery(packet, missingFrames, peer.Samples, out int samples)) return;
             if (samples >= FrameSamples) ObserveSpeech(peerId, peer.Samples.AsSpan(samples - FrameSamples, FrameSamples));
@@ -271,13 +270,34 @@ public sealed class VoiceService : IDisposable
         Stop();
         lock (gate) { micProcessing?.Dispose(); micProcessing = null; denoiser = null; }
     }
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string,float> gains = new(StringComparer.Ordinal);
+    private string? volumePath;
+    public float GetPeerVolume(string id) => gains.GetValueOrDefault(id,1f);
+    public void SetPeerVolume(string id,float gain)
+    {
+        gain=float.IsFinite(gain)?Math.Clamp(gain,0,1):1;
+        gains[id]=gain;
+        lock(gate)if(peers.TryGetValue(id,out var peer))peer.Gain=gain;
+    }
+    public void LoadPeerVolumes(string root)
+    {
+        volumePath=Path.Combine(root,"user-volumes.json");
+        try {if(File.Exists(volumePath))foreach(var pair in System.Text.Json.JsonSerializer.Deserialize<Dictionary<string,float>>(File.ReadAllText(volumePath))??new())SetPeerVolume(pair.Key,pair.Value);}
+        catch(Exception ex)when(ex is IOException or System.Text.Json.JsonException){Error?.Invoke("Не удалось прочитать громкость участников.");}
+    }
+    public void SavePeerVolumes()
+    {
+        if(volumePath is null)return;
+        File.WriteAllText(volumePath+".tmp",System.Text.Json.JsonSerializer.Serialize(gains));File.Move(volumePath+".tmp",volumePath,true);
+    }
     private sealed class PlaybackPeer : ISampleProvider
     {
+        public volatile float Gain = 1;
         public readonly OpusFrameDecoder Decoder = new();
         public readonly short[] Samples = new short[FrameSamples * 4];
         public readonly PcmJitterBuffer Buffer = new();
         public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(48000, 1);
-        public int Read(float[] buffer, int offset, int count) { Buffer.Read(buffer.AsSpan(offset, count)); return count; }
+        public int Read(float[] buffer, int offset, int count) { Buffer.Read(buffer.AsSpan(offset, count)); float gain=Gain; for(int i=offset;i<offset+count;i++)buffer[i]*=gain; return count; }
     }
     private sealed class LimitedSampleProvider(ISampleProvider source) : ISampleProvider
     {

@@ -1,25 +1,70 @@
-// Cross-runtime probe: real SIPSorcery/SFU RTP + SCTP, entirely synthetic Firebase.
-using System.Net;
-using System.Net.Http.Json;
+// Real native client against the PostgreSQL-backed server. No auth bypass.
 using System.Text.Json;
 using Wisp.Core;
-
-var settings = new VoiceServerSettings(true, args[0], args[1]);
-var db = new FixtureDatabase();
-TaskCompletionSource? delayedSource = null;
-var clients = new List<SfuRoom>(); var backends = new List<FirebaseBackend>();
+var settings = new VoiceServerSettings(true,args[0],args[1]);
+var endpoint = new UriBuilder(args[0]) { Scheme="https",Path="/" }.Uri.AbsoluteUri.TrimEnd('/');
+var config = new ServerConfig(endpoint,args[1]);
+TaskCompletionSource? delayedSource=null;
+var clients=new List<SfuRoom>();var backends=new List<ServerBackend>();
+string sourceId="";string? invitation=null;
+var observed=new System.Collections.Concurrent.ConcurrentBag<(int Owner,RtcPeer Peer)>();
 try
 {
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 6; i++)
     {
-        var cloud = new FirebaseBackend(new("fixture", "fixture", "https://fixture.firebaseio.com"), new FixtureHttp(db, "user" + i));
-        backends.Add(cloud); await cloud.SignInAsync("fixture@example.com", "fixture", false, "fixture");
-        var room = new SfuRoom(cloud, settings, new StaticIceServerProvider(Array.Empty<string>()), i == 4 ? (remote, channel, servers) => new SlowAnswerPeer(new RtcPeer(remote, channel, servers), () => { if (remote == "user0") delayedSource?.TrySetResult(); }) : null);
+        var cloud=new ServerBackend(config);backends.Add(cloud);
+        await cloud.SignInAsync("user"+i+"@example.com","fixture-password-123",true,"user"+i);
+        await cloud.SaveProfileAsync(cloud.Profile! with{About="native-profile-"+i});
+        if(i==0)
+        {
+            sourceId=cloud.Profile!.Id;
+            var community=new Community("community","Native probe",sourceId);
+            await cloud.CreateCommunityAsync(new(community,[new("voice","community","Voice",true),new("text","community","Text")],[cloud.Profile]));
+            await cloud.SendMessageAsync("community",new ChatMessage("native-message","text",sourceId,"user0","native persistent chat",DateTimeOffset.UtcNow));
+            invitation=await cloud.CreateInviteAsync("community");
+        }
+        else await cloud.JoinCommunityAsync(invitation!);
+        if(i==1)
+        {
+            var history=await cloud.MessagesAsync("community","text");
+            if(history.Count!=1||history[0].Text!="native persistent chat"||history[0].AuthorId!=sourceId)throw new Exception("Persistent chat DTO round trip failed");
+            var ownerProfile=await cloud.GetAsync<UserProfile>($"profiles/{sourceId}/Info");if(ownerProfile?.About!="native-profile-0")throw new Exception("Profile round trip failed");
+            var mediaRoot=Path.Combine(Path.GetTempPath(),"wisp-media-probe-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(mediaRoot);
+            try
+            {
+                var file=Path.Combine(mediaRoot,"native.txt");await File.WriteAllTextAsync(file,"content-addressed upload from .NET to PostgreSQL");
+                using var senderStore=new LocalStore(Path.Combine(mediaRoot,"sender"));using var receiverStore=new LocalStore(Path.Combine(mediaRoot,"receiver"));
+                var snapshot=(await cloud.CommunitiesAsync()).Single();senderStore.SaveSnapshot(snapshot);receiverStore.SaveSnapshot(snapshot);
+                var asset=senderStore.ImportAsset("community",file,"attachment");await CloudFiles.UploadAsync(backends[0],asset);
+                var downloadedFile=await CloudFiles.DownloadAsync(cloud,receiverStore,"community",sourceId,asset.Id);
+                if(downloadedFile is null||await File.ReadAllTextAsync(downloadedFile.LocalPath)!=await File.ReadAllTextAsync(file))throw new Exception("Persistent attachment DTO/hash round trip failed");
+            }
+            finally{Directory.Delete(mediaRoot,true);}
+            Console.WriteLine("PASS: real account/profile/chat/attachment API DTOs and PostgreSQL persistence");
+        }
+        int owner=i;
+        var room=new SfuRoom(cloud,settings,(remote,channel,servers)=>
+        {
+            var peer=new RtcPeer(remote,channel,servers);observed.Add((owner,peer));
+            return owner==5?new SlowAnswerPeer(peer,()=>{if(remote==sourceId)delayedSource?.TrySetResult();}):peer;
+        });
         clients.Add(room); room.Error += error => Console.WriteLine("ROOM " + i + ": " + error);
-        await room.EnterAsync("community", "voice", false, false);
+        var joining=room.EnterAsync("community","voice",false,false);
+        if(await Task.WhenAny(joining,Task.Delay(10000))!=joining)
+        {
+            foreach(var p in observed)
+            {
+                const System.Reflection.BindingFlags flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+                var pc=(SIPSorcery.Net.RTCPeerConnection)typeof(RtcPeer).GetField("pc",flags)!.GetValue(p.Peer)!;
+                var c=typeof(RtcPeer).GetField("control",flags)!.GetValue(p.Peer) as SIPSorcery.Net.RTCDataChannel;
+                var e=typeof(RtcPeer).GetField("events",flags)!.GetValue(p.Peer) as SIPSorcery.Net.RTCDataChannel;
+                Console.WriteLine($"PENDING owner={p.Owner} pc={pc.connectionState} ice={pc.iceConnectionState} control={c?.readyState} events={e?.readyState}");
+            }
+        }
+        await joining;
         Console.WriteLine("Joined " + i);
     }
-    await Until(() => clients.All(c => c.ConnectedCount == 4), "all 20 downlinks connected");
+    await Until(() => clients.All(c => c.ConnectedCount == 5), "all 30 downlinks connected");
     await Until(() => clients.All(c => c.ConnectionInfo.PingMilliseconds is >= 0), "pinned HTTPS health RTT for every joined client");
     var a = clients[0]; var b = clients[1];
     var received = new System.Collections.Concurrent.ConcurrentDictionary<string, WireMessage>();
@@ -37,59 +82,44 @@ try
     var bulk = new byte[128000]; Random.Shared.NextBytes(bulk);
     await a.SendAsync(new("asset", "forged", null, bulk));
     await Until(() => new[] { "audio", "screen-audio", "screen-h264", "screen-start", "asset" }.All(received.ContainsKey), "voice/share/video/events/file delivery");
-    foreach (var m in received.Values.Where(m => m.Type != "video-report")) if (m.SenderId != "user0" || m.ChannelId != "voice") throw new Exception("Forged identity accepted");
+    foreach (var m in received.Values.Where(m => m.Type != "video-report")) if (m.SenderId != sourceId || m.ChannelId != "voice") throw new Exception("Forged identity accepted");
     if (!received["audio"].Payload.SequenceEqual(new byte[]{1,2,3}) || !received["screen-audio"].Payload.SequenceEqual(new byte[]{4,5,6}) || !received["asset"].Payload.SequenceEqual(bulk) || !received["screen-h264"].Payload.AsSpan().EndsWith(h264.AsSpan(4))) throw new Exception("Media payload changed");
-    Console.WriteLine("PASS: five users, voice + independent share audio + H264 + events + fragmented control; bound source identity");
+    Console.WriteLine("PASS: six users, voice + independent share audio + H264 + events + fragmented control; bound source identity");
     // A 2MB file must not starve microphone packets while sharing.
     received.TryRemove("asset", out _); int before = voice;
     var transfer = a.SendAsync(new("asset", "user0", null, new byte[2000000]));
-    for (int i = 0; i < 50; i++) { await a.SendAsync(new("audio", "user0", "voice", [1,2,3])); await a.SendAsync(new("screen-h264", "user0", "voice", H264Frame.Pack(60,h264))); await Task.Delay(20); }
+    for (int i = 0; i < 60; i++) { await a.SendAsync(new("audio", "user0", "voice", [1,2,3])); await a.SendAsync(new("screen-h264", "user0", "voice", H264Frame.Pack(60,h264))); await Task.Delay(20); }
     await transfer;
     await Until(() => received.TryGetValue("asset",out var m) && m.Payload.Length == 2000000, "2MB attachment delivery");
     if (voice-before<40) throw new Exception("Voice starved during media/file transfer");
     Console.WriteLine("PASS: voice continues during video and 2MB file transfer");
     await a.SetMutedAsync(true, true);
-    await Until(() => b.Participants.Any(s => s.UserId == "user0" && s.Muted && s.Deafened), "mute/deafen presence");
-    await clients[4].LeaveAsync();
-    await Until(() => clients.Take(4).All(c => c.ConnectedCount==3), "leave removes source without disconnecting others");
+    await Until(() => b.Participants.Any(s => s.UserId == sourceId && s.Muted && s.Deafened), "mute/deafen presence");
+    await clients[5].LeaveAsync();
+    await Until(() => clients.Take(5).All(c => c.ConnectedCount==4), "leave removes source without disconnecting others");
     delayedSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    await clients[4].EnterAsync("community","voice",false,false);
+    await clients[5].EnterAsync("community","voice",false,false);
     await delayedSource.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await clients[0].LeaveAsync();
-    await Until(() => clients.Skip(1).All(c => c.Joined && c.ConnectedCount == 3), "departure during delayed SDP does not disconnect remaining users");
+    await Until(() => clients.Skip(1).All(c => c.Joined && c.ConnectedCount == 4), "departure during delayed SDP does not disconnect remaining users");
     await clients[0].EnterAsync("community", "voice", false, false);
-    await Until(() => clients.All(c=>c.ConnectedCount==4), "fresh rejoin recreates source links");
+    await Until(() => clients.All(c=>c.ConnectedCount==5), "fresh rejoin recreates source links");
     Console.WriteLine("PASS: mute/deafen presence, delayed SDP/ICE, source departure during answer and fresh rejoin");
+}
+catch
+{
+    foreach(var p in observed)
+    {
+        const System.Reflection.BindingFlags flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+        var pc=(SIPSorcery.Net.RTCPeerConnection)typeof(RtcPeer).GetField("pc",flags)!.GetValue(p.Peer)!;
+        var control=typeof(RtcPeer).GetField("control",flags)!.GetValue(p.Peer) as SIPSorcery.Net.RTCDataChannel;
+        var events=typeof(RtcPeer).GetField("events",flags)!.GetValue(p.Peer) as SIPSorcery.Net.RTCDataChannel;
+        Console.WriteLine($"STATE owner={p.Owner} connected={p.Peer.Connected} pc={pc.connectionState} ice={pc.iceConnectionState} control={control?.readyState} events={events?.readyState}");
+    }
+    throw;
 }
 finally { foreach (var room in clients) await room.DisposeAsync(); foreach (var cloud in backends) cloud.Dispose(); }
 static async Task Until(Func<bool> check,string stage) {using var end=new CancellationTokenSource(TimeSpan.FromSeconds(25));try{while(!check())await Task.Delay(25,end.Token);}catch(OperationCanceledException){throw new Exception("Timed out: "+stage);}}
-sealed class FixtureDatabase { public readonly object Gate=new();public readonly Dictionary<string,string> Values=new();public long Version; }
-sealed class FixtureHttp(FixtureDatabase db,string uid):HttpMessageHandler
-{
- protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req,CancellationToken token)
- {
-    string path=req.RequestUri!.AbsolutePath;
-    if(path.Contains("accounts:signIn"))return Reply(new{idToken="fixture-"+uid,refreshToken="fixture",localId=uid});
-    if(path.Contains("profiles/"))return Reply(new UserProfile(uid,uid));
-    string key=path.Replace(".json","").Trim('/');
-    string? content=req.Content is null?null:await req.Content.ReadAsStringAsync(token);
-    lock(db.Gate)
-    {
-        if(req.Method==HttpMethod.Put)
-        {
-            if(req.Headers.TryGetValues("if-match",out var etags)&&etags.Single()!="\"v"+db.Version+"\"")return new(HttpStatusCode.PreconditionFailed);
-            if(content=="null")db.Values.Remove(key);else db.Values[key]=content!;db.Version++;
-            return Reply(true);
-        }
-        if(db.Values.TryGetValue(key,out var value))return ReplyRaw(value);
-        var children=db.Values.Where(p=>p.Key.StartsWith(key+"/")).ToDictionary(p=>p.Key[(key.Length+1)..],p=>JsonSerializer.Deserialize<JsonElement>(p.Value));
-        return children.Count>0?Reply(children):ReplyRaw("null");
-    }
- }
- private HttpResponseMessage Reply(object value)=>ReplyRaw(JsonSerializer.Serialize(value));
- private HttpResponseMessage ReplyRaw(string value){var response=new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent(value)};response.Headers.Date=DateTimeOffset.UtcNow;response.Headers.TryAddWithoutValidation("ETag","\"v"+db.Version+"\"");return response;}
-}
-
 // Force at least one maintenance tick after local SDP exists but before its
 // answer is published. Candidates must not overtake SDP on the websocket.
 sealed class SlowAnswerPeer(IRtcPeer inner, Action prepared) : IRtcPeer

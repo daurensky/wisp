@@ -80,17 +80,23 @@ internal sealed class CommunicationsCapture(string endpointId, Action<string> st
             Marshal.ThrowExceptionForHR(enumerator.GetDevice(id, out endpoint));
             var iid = typeof(IAudioClient2).GUID;
             Marshal.ThrowExceptionForHR(endpoint.Activate(ref iid, 23, IntPtr.Zero, out audio));
-            var properties = new AudioClientProperties
+            var properties = new NativeAudioClientProperties
             {
-                cbSize = (uint)Marshal.SizeOf<AudioClientProperties>(),
-                eCategory = AudioStreamCategory.GameChat
+                cbSize = (uint)Marshal.SizeOf<NativeAudioClientProperties>(),
+                eCategory = (int)AudioStreamCategory.GameChat
             };
-            var memory = Marshal.AllocHGlobal(Marshal.SizeOf<AudioClientProperties>());
+            var memory = Marshal.AllocHGlobal(Marshal.SizeOf<NativeAudioClientProperties>());
             try
             {
                 Marshal.StructureToPtr(properties, memory, false);
                 try { ((IAudioClient2)audio).SetClientProperties(memory); }
-                catch (COMException) { status("Драйвер не принял категорию GameChat; используется обычный WASAPI без изменения системной громкости."); }
+                catch (COMException first)
+                {
+                    properties.eCategory = (int)AudioStreamCategory.Other;
+                    Marshal.StructureToPtr(properties,memory,false);
+                    try { ((IAudioClient2)audio).SetClientProperties(memory); }
+                    catch(COMException fallback) { status($"Категория микрофона недоступна (0x{first.HResult:X8}/0x{fallback.HResult:X8}); используется мультимедийное устройство без запроса Communications."); }
+                }
             }
             finally { Marshal.FreeHGlobal(memory); }
             var result = new AudioClient((IAudioClient)audio);
@@ -106,6 +112,15 @@ internal sealed class CommunicationsCapture(string endpointId, Action<string> st
     }
     public void StopRecording() { stop.Cancel(); if (worker is not null && Thread.CurrentThread != worker) worker.Join(TimeSpan.FromSeconds(2)); }
     public void Dispose() { StopRecording(); if (worker?.IsAlive != true) stop.Dispose(); }
+    // AUDIOCLIENT_PROPERTIES includes the Options DWORD on supported Windows.
+    // Keep an explicit 16-byte ABI while trying GameChat, then neutral Other.
+    [StructLayout(LayoutKind.Sequential)] internal struct NativeAudioClientProperties
+    {
+        public uint cbSize;
+        public int bIsOffload;
+        public int eCategory;
+        public int Options;
+    }
     [DllImport("ole32.dll")] private static extern int CoInitializeEx(IntPtr reserved, uint mode);
     [DllImport("ole32.dll")] private static extern void CoUninitialize();
     [ComImport, Guid("a95664d2-9614-4f35-a746-de8db63617e6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

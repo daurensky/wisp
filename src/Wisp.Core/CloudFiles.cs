@@ -6,13 +6,13 @@ namespace Wisp.Core;
 
 public sealed record FileManifest(string Name, string Kind, long Size, int Chunks);
 
-/// <summary>Community-scoped, immutable RTDB chunks. Publish metadata only after a complete upload.</summary>
+/// <summary>Community-scoped, immutable PostgreSQL chunks. Publish metadata only after a complete upload.</summary>
 public static class CloudFiles
 {
     public const int ChunkBytes = 512 * 1024;
     public const int MaximumChunks = 32;
 
-    public static async Task UploadAsync(FirebaseBackend cloud, MediaAsset asset)
+    public static async Task UploadAsync(ServerBackend cloud, MediaAsset asset)
     {
         ValidateId(asset.Id);
         var manifest = new FileManifest(asset.Name, asset.Kind, asset.Size,
@@ -66,17 +66,11 @@ public static class CloudFiles
     }
 
     public static async Task<MediaAsset?> DownloadAsync(
-        FirebaseBackend cloud, LocalStore store, string community, string author, string id)
+        ServerBackend cloud, LocalStore store, string community, string author, string id)
     {
         ValidateId(id);
         var path = $"communities/{community}/files/{id}";
         var meta = await cloud.GetAsync<FileManifest>($"{path}/Info");
-        // Old originals are private to their author. Never probe somebody else's legacy directory.
-        if (meta is null && cloud.Profile?.Id == author)
-        {
-            path = $"profiles/{author}/Files/{id}";
-            meta = await cloud.GetAsync<FileManifest>($"{path}/Info");
-        }
         if (meta is null)
             return null;
         ValidateManifest(meta);

@@ -23,18 +23,23 @@ public sealed class AvatarCatalog(string root, string localId)
         var legacy = p.AvatarAssetId is null ? null : store.GetAsset(p.AvatarAssetId)?.LocalPath;
         return legacy is not null && File.Exists(legacy) ? legacy : null;
     }
-    public async Task<bool> FetchAsync(FirebaseBackend cloud, UserProfile p)
+    public async Task<bool> FetchAsync(ServerBackend cloud, UserProfile p)
     {
         var path = CachePath(p); if (path is null || File.Exists(path) || (p.Id == localId && p.AvatarPath is not null && File.Exists(p.AvatarPath))) return false;
         var media = await cloud.GetAsync<AssetTransfer>($"profiles/{p.Id}/Images/avatar");
-        if (media is null)
-        {
-            try { media = await cloud.GetAsync<AssetTransfer>($"profiles/{p.Id}/Images/{p.AvatarRevision}"); }
-            catch (InvalidOperationException) { return false; } // An unavailable legacy image is not public.
-        }
         if (media is null || media.Data is null || media.Data.Length > 4 * 1024 * 1024 || Convert.ToHexString(SHA256.HashData(media.Data)).ToLowerInvariant() != p.AvatarRevision) return false;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!); await File.WriteAllBytesAsync(path, media.Data);
         try { Validate(path); } catch { File.Delete(path); throw; } return true;
+    }
+    public async Task<string?> FetchBannerAsync(ServerBackend cloud,UserProfile profile)
+    {
+        if(profile.BannerAssetId is null||!System.Text.RegularExpressions.Regex.IsMatch(profile.BannerAssetId,"^[a-f0-9]{64}$"))return null;
+        var path=Path.Combine(root,"banners",Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(profile.Id)))+"_"+profile.BannerAssetId+".img");
+        if(File.Exists(path))return path;
+        var asset=await cloud.GetAsync<AssetTransfer>($"profiles/{profile.Id}/Images/banner");
+        if(asset?.Data is null||asset.Kind!="banner"||asset.Data.Length>4*1024*1024||Convert.ToHexString(SHA256.HashData(asset.Data)).ToLowerInvariant()!=profile.BannerAssetId)return null;
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);await File.WriteAllBytesAsync(path,asset.Data);
+        try{Validate(path);}catch{File.Delete(path);throw;}return path;
     }
     public static void Validate(string path)
     {

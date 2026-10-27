@@ -13,19 +13,19 @@ public sealed class SfuHealthTests
     [InlineData(200,ConnectionQuality.Poor)]
     public void PingBandsAreExplicit(double latency, ConnectionQuality quality) => Assert.Equal(quality, new SfuConnectionInfo(Settings.Url,ServerConnectionState.Connected,latency).Quality);
     [Fact]
-    public async Task MeasuresPinnedServersHealthPathWithoutSendingFirebaseCredentials()
+    public async Task MeasuresPinnedServersHealthPathWithoutSendingCredentials()
     {
         using var probe=new SfuHealthProbe(Settings,new Handler((r,_)=>
         {
             Assert.Equal("https://example.com:8443/healthz",r.RequestUri!.AbsoluteUri);
             Assert.Null(r.Headers.Authorization);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent("wisp-sfu protocol=1\n")});
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent("wisp-sfu protocol=2\n")});
         }));
         Assert.True(await probe.MeasureAsync() is >=0);
     }
     [Theory]
     [InlineData("unrelated web server")]
-    [InlineData("wisp-sfu protocol=2")]
+    [InlineData("wisp-sfu protocol=3")]
     public async Task RejectsUnrelatedOrIncompatibleHealthResponses(string body)
     {
         using var probe=new SfuHealthProbe(Settings,new Handler((_,_)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent(body)})));

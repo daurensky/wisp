@@ -7,15 +7,16 @@ using SIPSorcery.Net;
 namespace Wisp.Core;
 
 /// <summary>One SRTP uplink and up to four source-bound downlinks. The SFU never transcodes.</summary>
-public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings, IIceServerProvider ice, RtcPeerFactory? peerFactory = null) : IVoiceRoom
+public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, RtcPeerFactory? peerFactory = null) : IVoiceRoom
 {
     private readonly ConcurrentDictionary<string, Link> links = new();
     private readonly SemaphoreSlim lifecycle = new(1);
-    private readonly string uid = cloud.Profile?.Id ?? throw new InvalidOperationException("Firebase login required.");
+    private readonly string uid = cloud.Profile?.Id ?? throw new InvalidOperationException("Server login required.");
     private ClientWebSocket? socket;
     private CancellationTokenSource? stop;
     private Channel<object>? outbound;
-    private SfuSeatLease? seat;
+    private IReadOnlyList<RtcSeat> participants = Array.Empty<RtcSeat>();
+    private string session = "";
     private Task? reader, writer, maintenance, health;
     private SfuConnectionInfo connectionInfo = new(settings.Url, ServerConnectionState.Disconnected);
     public SfuConnectionInfo ConnectionInfo => Volatile.Read(ref connectionInfo) with { CandidateTypes = links.TryGetValue("pub", out var pub) ? pub.Peer.SelectedCandidateTypes : null };
@@ -27,7 +28,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
     public bool Joined => joined && Volatile.Read(ref failed) == 0;
     public string? ChannelId => Joined ? channel : null;
     public string TransportName => "WebRTC · SFU";
-    public IReadOnlyList<RtcSeat> Participants => seat?.Participants ?? Array.Empty<RtcSeat>();
+    public IReadOnlyList<RtcSeat> Participants => Volatile.Read(ref participants);
     public IReadOnlyList<string> ConnectedPeerIds => Joined ? links.Values.Where(l => l.Remote != uid && l.Peer.Connected).Select(l => l.Remote).ToArray() : Array.Empty<string>();
     public int ConnectedCount => ConnectedPeerIds.Count;
     public IReadOnlyDictionary<string, string> ConnectionPaths => ConnectedPeerIds.ToDictionary(id => id, _ => "SFU");
@@ -76,17 +77,15 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
             var token = deadline.Token;
             try
             {
-                servers = await ice.GetAsync(token);
-                seat = new SfuSeatLease(cloud, communityId, channelId);
-                seat.Changed += () => Changed?.Invoke(); seat.Lost += Fail;
-                await seat.ClaimAsync(mute, deafen, token);
+                servers = Array.Empty<RTCIceServer>();
+                session = Guid.NewGuid().ToString("N");
                 socket = new ClientWebSocket();
                 socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(10);
                 socket.Options.RemoteCertificateValidationCallback = (_, cert, _, errors) => settings.ValidateCertificate(cert, errors);
                 await socket.ConnectAsync(endpoint, token);
                 writer = Task.Run(() => WriteAsync(stop.Token));
                 reader = Task.Run(() => ReadAsync(stop.Token));
-                Queue(new { type = "join", version = 1, token = await cloud.GetAccessTokenAsync(token), community = communityId, channel = channelId, session = seat.Session });
+                Queue(new { type = "join", version = 2, token = await cloud.GetAccessTokenAsync(token), community = communityId, channel = channelId, session, muted = mute, deafened = deafen });
                 await ready.Task.WaitAsync(token);
                 var pub = CreateLink("pub", uid);
                 var sdp = await pub.Peer.OfferAsync(token);
@@ -157,14 +156,18 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
                 switch (type)
                 {
                     case "ready":
-                        if (m.GetProperty("version").GetInt32() != 1) throw new InvalidDataException();
+                        if (m.GetProperty("version").GetInt32() != 2) throw new InvalidDataException();
                         ready!.TrySetResult(); break;
+                    case "roster":
+                        var roster = m.GetProperty("participants").Deserialize<RtcSeat[]>() ?? Array.Empty<RtcSeat>();
+                        if (roster.Any(s => string.IsNullOrEmpty(s.UserId) || s.UserId.Length > 128 || s.SessionId.Length != 32) || roster.Select(s => s.UserId).Distinct().Count() != roster.Length) throw new InvalidDataException();
+                        Volatile.Write(ref participants, roster); Changed?.Invoke(); break;
                     case "answer":
                         if (m.GetProperty("id").GetString() != "pub" || !links.TryGetValue("pub", out var pub) || pub.Answered) throw new InvalidDataException();
                         pub.Answered = true; pub.Peer.AcceptAnswer(m.GetProperty("sdp").GetString()!); break;
                     case "offer":
                         string id = m.GetProperty("id").GetString()!, remote = m.GetProperty("peer").GetString()!;
-                        if (id.Length > 180 || remote.Length is 0 or > 128 || remote == uid || links.Count >= 5 || !id.StartsWith("s_", StringComparison.Ordinal) || links.Values.Any(l => l.Remote == remote)) throw new InvalidDataException();
+                        if (id.Length > 180 || remote.Length is 0 or > 128 || remote == uid || !id.StartsWith("s_", StringComparison.Ordinal) || links.Values.Any(l => l.Remote == remote)) throw new InvalidDataException();
                         var sub = CreateLink(id, remote);
                         var answer = await sub.Peer.AnswerAsync(m.GetProperty("sdp").GetString()!, token);
                         Queue(new { type = "answer", id, sdp = answer }); sub.LocalPublished = true; break;
@@ -196,7 +199,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
                     foreach (var c in link.Peer.LocalCandidates)
                         if (link.Sent.Add(c.Candidate)) Queue(new { type = "candidate", id, candidate = new { candidate = c.Candidate, sdpMid = c.SdpMid, sdpMLineIndex = c.SdpMLineIndex } });
                 if (links.TryGetValue("pub", out var pub) && pub.Peer.Connected) published?.TrySetResult();
-                if (++tick % 300 == 0) Queue(new { type = "auth", token = await cloud.GetAccessTokenAsync(token) });
+                if (++tick % 60 == 0) Queue(new { type = "auth", token = await cloud.GetAccessTokenAsync(token) });
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
@@ -218,7 +221,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
     }
-    public Task SetMutedAsync(bool mute, bool deafen) => seat?.SetMutedAsync(mute, deafen) ?? Task.CompletedTask;
+    public Task SetMutedAsync(bool mute, bool deafen) { if(Joined) Queue(new { type="mute", muted=mute, deafened=deafen }); return Task.CompletedTask; }
     public Task SendAsync(WireMessage message) => Joined && links.TryGetValue("pub", out var pub) ? pub.Peer.SendAsync(message) : Task.CompletedTask;
     public async Task LeaveAsync()
     {
@@ -230,7 +233,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
         foreach (var l in links.Values) l.Peer.Dispose();
         try { await Task.WhenAll(new[] { reader, writer, maintenance, health }.OfType<Task>()); } catch (OperationCanceledException) { }
         links.Clear();
-        if (seat is not null) { seat.Lost -= Fail; await seat.DisposeAsync(); seat = null; }
+        Volatile.Write(ref participants, Array.Empty<RtcSeat>());
         socket?.Dispose(); socket = null; stop?.Dispose(); stop = null;
         outbound = null; reader = writer = maintenance = health = null;
         Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Disconnected)); channel = null;

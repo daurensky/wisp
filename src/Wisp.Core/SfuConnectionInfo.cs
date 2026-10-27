@@ -51,7 +51,7 @@ public sealed class SfuHealthProbe : IDisposable
                 if (count == 0) break;
                 length += count;
             }
-            if (length == bytes.Length || Encoding.UTF8.GetString(bytes, 0, length).Trim() != "wisp-sfu protocol=1") return null;
+            if (length == bytes.Length || Encoding.UTF8.GetString(bytes, 0, length).Trim() != "wisp-sfu protocol=2") return null;
             return Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested) { return null; }

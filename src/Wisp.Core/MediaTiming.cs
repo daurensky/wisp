@@ -32,7 +32,6 @@ public sealed class VideoRateController(int bitrate, int fps, TimeProvider? time
         if (!double.IsFinite(report.Loss) || report.Loss is < 0 or > 1 || !double.IsFinite(report.JitterMilliseconds)) return false;
         long now = time.GetTimestamp();
         foreach (var key in reports.Where(pair => time.GetElapsedTime(pair.Value.Seen, now) > TimeSpan.FromSeconds(15)).Select(pair => pair.Key).ToArray()) reports.Remove(key);
-        if (!reports.ContainsKey(peer) && reports.Count >= 4) return false;
         reports.TryGetValue(peer, out var previous);
         int bad = report.Loss >= .08 ? previous.Bad + 1 : 0;
         reports[peer] = (bad, now);

@@ -7,7 +7,7 @@ namespace Wisp.Desktop;
 public sealed class AuthWindow : ThemedWindow
 {
     public UserProfile? Profile { get; private set; }
-    public AuthWindow(LocalStore store, FirebaseBackend? cloud = null)
+    public AuthWindow(LocalStore store, ServerBackend? cloud = null)
     {
         Title = "Wisp · Вход"; Width = Ui.Metric("Width.DialogMedium"); SizeToContent = SizeToContent.Height; MaxHeight = SystemParameters.WorkArea.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var panel = new StackPanel { Margin = Ui.Insets(Ui.Xxl, Ui.Xl) }; Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
@@ -29,7 +29,7 @@ public sealed class AuthWindow : ThemedWindow
         }
         var login = Buttons.Create("Войти", () => Submit(false), "Войти · Enter", "arrow-right", "Button.Primary"); login.IsDefault = true; login.Margin = Ui.Insets(0, 0, 0, Ui.S); panel.Children.Add(login);
         var signup = Buttons.Create("Создать аккаунт", () => Submit(true), "Создать аккаунт", "plus"); signup.Margin = Ui.Insets(0); panel.Children.Add(signup); Loaded += (_, _) => user.Focus();
-        panel.Children.Add(new TextBlock { Text = cloud is null ? "Локальный аккаунт. Вход сохраняется на этом ПК на 90 дней." : "Аккаунт хранится в Firebase. Вход будет сохранён на этом ПК.", FontSize = Ui.Caption, Opacity = .6, TextWrapping = TextWrapping.Wrap, Margin = Ui.Insets(0, Ui.L, 0, 0) });
+        panel.Children.Add(new TextBlock { Text = cloud is null ? "Локальный аккаунт. Вход сохраняется на этом ПК на 90 дней." : "Аккаунт хранится на твоём сервере Wisp. Вход будет сохранён на этом ПК.", FontSize = Ui.Caption, Opacity = .6, TextWrapping = TextWrapping.Wrap, Margin = Ui.Insets(0, Ui.L, 0, 0) });
     }
 }
 

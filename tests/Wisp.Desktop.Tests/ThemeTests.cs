@@ -322,6 +322,22 @@ public sealed class ThemeTests
         item.IsSelected = true; item.ApplyTemplate();
         Assert.Equal(Colors.Transparent, BrushColor(((Border)item.Template.FindName("Item", item)).Background));
         item.IsSelected = false;
+        var rail=(VirtualRows)typeof(MainWindow).GetField("servers",flags)!.GetValue(main)!;
+        var railItem=Assert.IsType<ListBoxItem>(rail.ItemContainerGenerator.ContainerFromIndex(0));railItem.ApplyTemplate();
+        Assert.Equal(Colors.Transparent,BrushColor(((Border)railItem.Template.FindName("Item",railItem)).Background));
+        double height=railItem.ActualHeight;
+        railItem.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice,Environment.TickCount){RoutedEvent=Mouse.MouseEnterEvent});main.UpdateLayout();
+        Assert.Equal(height,railItem.ActualHeight);
+        using(var audio=new Wisp.Desktop.Media.VoiceService())
+        {
+            bool saved=false;
+            var remote=new VoiceParticipantRow(new PeerPresence(new UserProfile("remote","RemoteUser"),channelId,false,false),null,audio,false,null,()=>saved=true);
+            var userPopup=ModalHost.Open(main,"Участник",remote,400);PumpLayout(main);
+            remote.ContextMenu.PlacementTarget=remote;remote.ContextMenu.IsOpen=true;PumpLayout(main);
+            var panel=Assert.IsType<StackPanel>(Assert.IsType<MenuItem>(remote.ContextMenu.Items[1]).Header);
+            var slider=Assert.Single(panel.Children.OfType<Slider>());slider.Value=25;Assert.Equal(.25f,audio.GetPeerVolume("remote"));
+            remote.ContextMenu.IsOpen=false;PumpLayout(main);Assert.True(saved);userPopup.Close();
+        }
         var content = new StackPanel(); for (int i=0;i<200;i++) content.Children.Add(new TextBlock { Text="Scroll row " + i, Height=24 });
         var view = new ScrollViewer { Content=content, Height=180, VerticalScrollBarVisibility=ScrollBarVisibility.Auto };
         var overlay = ModalHost.Open(main, "Прокрутка", view, 420); PumpLayout(main);
@@ -329,9 +345,7 @@ public sealed class ThemeTests
         Motion.SetReduced(false);
         var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120) { RoutedEvent=Mouse.PreviewMouseWheelEvent };
         view.RaiseEvent(wheel); Assert.True(wheel.Handled);
-        var frame = new DispatcherFrame();
-        var timer = new DispatcherTimer { Interval=TimeSpan.FromMilliseconds(300) };
-        timer.Tick += (_,_) => { timer.Stop(); frame.Continue=false; }; timer.Start(); Dispatcher.PushFrame(frame); main.UpdateLayout();
+        main.UpdateLayout(); PumpLayout(main);
         Assert.InRange(view.VerticalOffset, 1, 200); // movement, bounded independently of Windows' wheel-line preference
         Motion.SetReduced(true); overlay.Close();
     }

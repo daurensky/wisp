@@ -9,6 +9,3 @@ artifacts/
 
 **/*_wpftmp.csproj
 **/node_modules/
-**/firebase-debug.log
-**/database-debug.log
-**/.firebase/
