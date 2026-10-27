@@ -18,19 +18,34 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+      - name: Build pinned RNNoise 0.2 (Windows x64, SSE2)
+        shell: pwsh
+        run: |
+          cmake -S native/rnnoise -B artifacts/rnnoise-build -A x64 -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/artifacts/native"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build artifacts/rnnoise-build --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --install artifacts/rnnoise-build --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-FileHash artifacts/native/rnnoise.dll -Algorithm SHA256
       - name: Restore
         run: dotnet restore Wisp.sln
       - name: Test core
         run: dotnet test tests/Wisp.Core.Tests/Wisp.Core.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=core.trx" --results-directory artifacts/test-results
-      - name: Test Windows themes
+      - name: Test Windows UI, codecs and microphone processing
+        env:
+          WISP_REQUIRE_RNNOISE: '1'
         run: dotnet test tests/Wisp.Desktop.Tests/Wisp.Desktop.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=desktop.trx" --results-directory artifacts/test-results
       - name: Build Windows application
         run: dotnet build src/Wisp.Desktop/Wisp.Desktop.csproj -c Release --no-restore
       - name: Publish portable x64 application
-        run: dotnet publish src/Wisp.Desktop/Wisp.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o artifacts/Wisp-win-x64
+        run: dotnet publish src/Wisp.Desktop/Wisp.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:RequireRnNoise=true -o artifacts/Wisp-win-x64
       - name: Package
         shell: pwsh
-        run: Compress-Archive -Path artifacts/Wisp-win-x64/* -DestinationPath artifacts/Wisp-win-x64.zip
+        run: |
+          if (!(Test-Path artifacts/Wisp-win-x64/rnnoise.dll)) { throw 'Missing RNNoise DLL in portable build' }
+          if (!(Test-Path artifacts/Wisp-win-x64/licenses/RNNoise.txt)) { throw 'Missing RNNoise license in portable build' }
+          Compress-Archive -Path artifacts/Wisp-win-x64/* -DestinationPath artifacts/Wisp-win-x64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: Wisp-win-x64

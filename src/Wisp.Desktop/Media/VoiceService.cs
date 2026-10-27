@@ -23,6 +23,22 @@ public sealed class VoiceService : IDisposable
     private CancellationTokenSource? debounce;
     private int captureCount;
     private volatile bool muted, deafened, running;
+    private volatile bool noiseSuppression = true, noiseSuppressionAvailable;
+    private bool processingInitialized, processingWarningShown;
+    private RnNoiseProcessor? denoiser;
+    private MicProcessingChain? micProcessing;
+    public bool NoiseSuppressionAvailable => noiseSuppressionAvailable;
+    public event Action? NoiseSuppressionAvailabilityChanged;
+    public bool NoiseSuppression
+    {
+        get => noiseSuppression;
+        set
+        {
+            noiseSuppression = value;
+            var processor = denoiser;
+            if (processor is not null) processor.Enabled = value && noiseSuppressionAvailable;
+        }
+    }
     public AudioDeviceSettings Devices { get; private set; } = new();
     public event Action<byte[]>? PacketReady;
     public event Action<string>? Error;
@@ -32,11 +48,44 @@ public sealed class VoiceService : IDisposable
         get => deafened;
         set { deafened = value; lock (gate) foreach (var peer in peers.Values) peer.Buffer.Clear(); }
     }
+    public void InitializeMicrophoneProcessing(bool enabled = true)
+    {
+        lock (gate)
+        {
+            NoiseSuppression = enabled;
+            if (processingInitialized) return;
+            processingInitialized = true;
+            try
+            {
+                denoiser = new RnNoiseProcessor { Enabled = enabled };
+                micProcessing = new MicProcessingChain(denoiser);
+                micProcessing.ProcessorFailed += (_, _) => MicrophoneProcessingFailed();
+                noiseSuppressionAvailable = true;
+            }
+            catch (Exception)
+            {
+                denoiser?.Dispose(); denoiser = null;
+                micProcessing = new MicProcessingChain();
+                MicrophoneProcessingFailed();
+            }
+        }
+    }
+    private void MicrophoneProcessingFailed()
+    {
+        noiseSuppressionAvailable = false;
+        if (denoiser is not null) denoiser.Enabled = false;
+        NoiseSuppressionAvailabilityChanged?.Invoke();
+        if (processingWarningShown) return;
+        processingWarningShown = true;
+        Error?.Invoke("Шумоподавление недоступно. Микрофон продолжает работать без обработки. Попробуй заново распаковать полную Windows x64 сборку Wisp.");
+    }
     public void Start()
     {
         lock (gate)
         {
             if (running) return;
+            if (!processingInitialized) InitializeMicrophoneProcessing(NoiseSuppression);
+            denoiser?.RequestReset();
             encoder = OpusCodecFactory.CreateEncoder(48000, 1, OpusApplication.OPUS_APPLICATION_VOIP);
             encoder.Bitrate = 32000; encoder.Complexity = 5; encoder.UseVBR = true;
             encoder.UseDTX = true; encoder.UseInbandFEC = true; encoder.PacketLossPercent = 5;
@@ -115,6 +164,7 @@ public sealed class VoiceService : IDisposable
                     captureFrame[captureCount++] = (short)(args.Buffer[offset] | args.Buffer[offset + 1] << 8);
                     if (captureCount != FrameSamples) continue;
                     captureCount = 0;
+                    if (micProcessing?.Process(captureFrame, muted, deafened) == false) continue;
                     var packet = new byte[1275];
                     if (encoder is null) return;
                     int length = encoder.Encode(captureFrame.AsSpan(), FrameSamples, packet.AsSpan(), packet.Length);
@@ -175,7 +225,11 @@ public sealed class VoiceService : IDisposable
         }
         finally { deviceSwitch.Release(); }
     }
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        Stop();
+        lock (gate) { micProcessing?.Dispose(); micProcessing = null; denoiser = null; }
+    }
     private sealed class PlaybackPeer : ISampleProvider
     {
         public readonly OpusFrameDecoder Decoder = new();

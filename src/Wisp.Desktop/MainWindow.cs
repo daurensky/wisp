@@ -156,8 +156,10 @@ public sealed class MainWindow : ThemedWindow
             catch (Exception ex) { Notify(ex.Message, true); }
         });
         node.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
-        _ = voice.ConfigureDevicesAsync(AudioDeviceSettings.Load(store.RootDirectory));
         voice.PacketReady += p => SendRealtime("audio", p); voice.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
+        var audioSettings = AudioDeviceSettings.Load(store.RootDirectory);
+        voice.InitializeMicrophoneProcessing(audioSettings.NoiseSuppression);
+        _ = voice.ConfigureDevicesAsync(audioSettings);
         screen.FrameReady += p => SendRealtime("screen-h264", p);
         screen.Status += text => Dispatcher.BeginInvoke(() => { if (!closing && sharing) Notify(text); });
         screen.PauseChanged += paused => { if (screen.CurrentInfo is { } info) SendRealtime("screen-state", JsonSerializer.SerializeToUtf8Bytes(new ScreenCommand(profile.Id, info.SessionId, paused))); };
@@ -691,7 +693,28 @@ public sealed class MainWindow : ThemedWindow
     private void EditAudioDevices()
     {
         var dialog = new FormDialog(this, "Устройства связи", 600);
-        dialog.Note("Устройства можно менять во время разговора. По умолчанию используются устройства связи Windows. Категория Communications запрашивает обработку голоса у системы; AEC/шумоподавление зависят от драйвера.");
+        dialog.Note("Устройства можно менять во время разговора. По умолчанию используются устройства связи Windows. Эхоподавление зависит от драйвера; отдельные AEC и автоусиление пока не добавлены.");
+        var suppression = dialog.Check("Шумоподавление", voice.NoiseSuppression);
+        suppression.ToolTip = "Убирает фоновый шум (вентилятор, клавиатура). Может слегка менять тембр голоса. Не влияет на звук демонстрации.";
+        void UpdateSuppressionAvailability()
+        {
+            suppression.IsEnabled = voice.NoiseSuppressionAvailable;
+            suppression.Content = voice.NoiseSuppressionAvailable ? "Шумоподавление" : "Шумоподавление · недоступно";
+        }
+        void AvailabilityChanged() => Dispatcher.BeginInvoke(UpdateSuppressionAvailability);
+        void SaveSuppression()
+        {
+            var settings = AudioDeviceSettings.Load(store.RootDirectory) with { NoiseSuppression = suppression.IsChecked == true };
+            try { settings.Save(store.RootDirectory); voice.NoiseSuppression = settings.NoiseSuppression; }
+            catch (Exception ex)
+            {
+                suppression.IsChecked = voice.NoiseSuppression;
+                Notify("Не удалось сохранить настройку шумоподавления: " + ex.Message, true);
+            }
+        }
+        UpdateSuppressionAvailability();
+        suppression.Checked += (_, _) => { if (suppression.IsChecked != voice.NoiseSuppression) SaveSuppression(); };
+        suppression.Unchecked += (_, _) => { if (suppression.IsChecked != voice.NoiseSuppression) SaveSuppression(); };
         ComboBox DeviceList(string label, bool capture, string? selected)
         {
             dialog.Note(label);
@@ -703,8 +726,12 @@ public sealed class MainWindow : ThemedWindow
         var headphones = DeviceList("Голос участников", false, voice.Devices.OutputId);
         dialog.Note("Настройка выхода относится к голосовому разговору. Мультимедиа чата и звук демонстрации используют системный выход Windows.");
         dialog.Accept("Применить");
-        if (dialog.ShowDialog() != true) return;
-        var settings = new AudioDeviceSettings(((AudioDeviceChoice)microphone.SelectedItem).Id, ((AudioDeviceChoice)headphones.SelectedItem).Id);
+        bool? accepted;
+        voice.NoiseSuppressionAvailabilityChanged += AvailabilityChanged;
+        try { accepted = dialog.ShowDialog(); }
+        finally { voice.NoiseSuppressionAvailabilityChanged -= AvailabilityChanged; }
+        if (accepted != true) return;
+        var settings = new AudioDeviceSettings(((AudioDeviceChoice)microphone.SelectedItem).Id, ((AudioDeviceChoice)headphones.SelectedItem).Id, voice.NoiseSuppression);
         settings.Save(store.RootDirectory);
         Run(async () => { await voice.ConfigureDevicesAsync(settings); Notify("Аудиоустройства сохранены. Голосовой канал остаётся подключённым."); });
     }
