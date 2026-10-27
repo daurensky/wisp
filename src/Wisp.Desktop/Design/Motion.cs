@@ -9,6 +9,15 @@ namespace Wisp.Desktop;
 /// <summary>Finite render-only transitions. No idle rendering loop or animation timer.</summary>
 public static class Motion
 {
+    public static readonly DependencyProperty PopupTransitionProperty = DependencyProperty.RegisterAttached("PopupTransition", typeof(bool), typeof(Motion), new PropertyMetadata(false, PopupEnabled));
+    public static void SetPopupTransition(DependencyObject element, bool value) => element.SetValue(PopupTransitionProperty, value);
+    public static bool GetPopupTransition(DependencyObject element) => (bool)element.GetValue(PopupTransitionProperty);
+    private static void PopupEnabled(DependencyObject element, DependencyPropertyChangedEventArgs args)
+    {
+        if (element is not FrameworkElement popup || !(bool)args.NewValue) return;
+        popup.Loaded += (_, _) => { Fade(popup, 0, 1); };
+        popup.Unloaded += (_, _) => Stop(popup);
+    }
     private static string? preferencePath;
     private static bool observingSystem;
     private static readonly ConditionalWeakTable<FrameworkElement, Completion> completions = new();
@@ -39,6 +48,8 @@ public static class Motion
     public static bool Allowed(FrameworkElement element)
     {
         var window = Window.GetWindow(element);
+        if (window is null && element is ToolTip tip && tip.PlacementTarget is DependencyObject tipTarget) window = Window.GetWindow(tipTarget);
+        if (window is null && element is ContextMenu menu && menu.PlacementTarget is DependencyObject menuTarget) window = Window.GetWindow(menuTarget);
         return !Reduce && SystemParameters.ClientAreaAnimation && element.IsVisible &&
             window is { IsActive: true } && window.WindowState != WindowState.Minimized;
     }
@@ -86,8 +97,8 @@ public static class Motion
     {
         if (completions.TryGetValue(element, out var completion)) { completions.Remove(element); completion.Finish(); }
         element.BeginAnimation(UIElement.OpacityProperty, null);
-        if (element.RenderTransform is TranslateTransform translate) translate.BeginAnimation(TranslateTransform.YProperty, null);
-        if (element.RenderTransform is ScaleTransform scale)
+        if (element.RenderTransform is TranslateTransform { IsFrozen: false } translate) translate.BeginAnimation(TranslateTransform.YProperty, null);
+        if (element.RenderTransform is ScaleTransform { IsFrozen: false } scale)
         {
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
@@ -102,6 +113,7 @@ public static class Motion
         {
             root = button.Template.FindName("Root", button) as FrameworkElement;
             scale = root?.RenderTransform as ScaleTransform;
+            if (scale?.IsFrozen == true && root is not null) { scale = scale.Clone(); root.RenderTransform = scale; }
             hover = button.Template.FindName("HoverSurface", button) as FrameworkElement;
         };
         void Press(bool pressed)

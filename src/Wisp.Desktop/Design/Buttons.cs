@@ -3,11 +3,13 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Data;
 using System.Windows.Threading;
+using System.Runtime.CompilerServices;
 
 namespace Wisp.Desktop;
 
 public static class Buttons
 {
+    private static readonly ConditionalWeakTable<Button, Action> flashes = new();
     public static Button Create(string text, Action action, string? tooltip = null, string? icon = null, string style = "Button.Secondary")
     {
         var button = new Button();
@@ -15,7 +17,7 @@ public static class Buttons
         Label(button, text, icon);
         button.ToolTip = tooltip ?? text;
         Ui.Name(button, tooltip ?? text);
-        button.Click += (_, _) => action();
+        button.Click += (_, _) => { action(); if (Clean(text).StartsWith("Скопировать", StringComparison.Ordinal)) Flash(button, "check", "copy"); };
         Motion.Interactive(button);
         return button;
     }
@@ -27,17 +29,19 @@ public static class Buttons
     }
     public static void Flash(Button button, string kind, string restore = "send")
     {
-        button.Content = new Icon { Kind = kind };
-        if (button.Content is FrameworkElement content) Motion.Pulse(content);
+        if (flashes.TryGetValue(button, out var previous)) previous();
+        var glyph = button.Content as Icon ?? (button.Content as Panel)?.Children.OfType<Icon>().FirstOrDefault();
+        if (glyph is null) return;
+        glyph.Kind = kind; Motion.Pulse(glyph);
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1200) };
         RoutedEventHandler? unloaded = null;
         void Finish()
         {
-            timer.Stop(); button.Unloaded -= unloaded;
-            if (button.Content is Icon icon && icon.Kind == kind) icon.Kind = restore;
+            timer.Stop(); button.Unloaded -= unloaded; flashes.Remove(button);
+            if (glyph.Kind == kind) glyph.Kind = restore;
         }
         unloaded = (_, _) => Finish(); button.Unloaded += unloaded;
-        timer.Tick += (_, _) => Finish(); timer.Start();
+        flashes.Add(button, Finish); timer.Tick += (_, _) => Finish(); timer.Start();
     }
     public static void Label(Button button, string text, string? icon = null)
     {

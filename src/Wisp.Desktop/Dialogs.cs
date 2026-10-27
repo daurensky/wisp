@@ -91,12 +91,20 @@ public sealed class FormDialog : ContentControl
         panel.Children.Add(b); return b;
     }
     public void Accept(string label = "Сохранить")
+        => PrimaryAction(label, () => DialogResult = true);
+    public void PrimaryAction(string label, Action action)
     {
         footer.Visibility = Visibility.Visible;
         if (accept is not null) actions.Children.Remove(accept);
         if (actions.Children.Count == 0 && label is not "Закрыть" and not "Готово")
             actions.Children.Add(Buttons.Create("Отмена", Close, "Отмена · Esc", "x", "Button.Ghost"));
-        accept = Buttons.Create(label, () => DialogResult = true, label + " · Enter", Buttons.ForLabel(label), "Button.Primary");
+        accept = Buttons.Create(label, () => { try { action(); } catch (Exception ex) { if (OwnerWindow is MainWindow main) main.ReportNotification(ex.Message, true); else Note(ex.Message); } }, label + " · Enter", Buttons.ForLabel(label), "Button.Primary");
         actions.Children.Add(accept);
+    }
+    public void FooterAction(string label, Action action)
+    {
+        footer.Visibility = Visibility.Visible;
+        var button = Buttons.Create(label, () => { try { action(); } catch (Exception ex) { if (OwnerWindow is MainWindow main) main.ReportNotification(ex.Message, true); else Note(ex.Message); } });
+        actions.Children.Insert(0, button);
     }
 }

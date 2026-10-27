@@ -109,6 +109,10 @@ public sealed class ThemeTests
         Assert.Equal(Color.FromRgb(28, 29, 35), BrushColor(tip.Background));
         Assert.Equal(Color.FromRgb(237, 237, 242), BrushColor(tip.Foreground));
         var avatar = Assert.IsType<Image>(AvatarCatalog.Circle(null, 36));
+        var frozen = new ScaleTransform(1, 1); frozen.Freeze();
+        var frozenProbe = new Border { RenderTransform = frozen };
+        Motion.Stop(frozenProbe);
+        Assert.True(frozen.IsFrozen);
         Assert.IsType<EllipseGeometry>(avatar.Clip); Assert.NotNull(avatar.Source);
         var gif = Path.Combine(root, "loop.gif");
         File.WriteAllBytes(gif, Convert.FromBase64String("R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEBAAAh+QQACAAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCAABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7"));

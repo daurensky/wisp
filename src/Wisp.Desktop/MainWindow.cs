@@ -146,7 +146,11 @@ public sealed class MainWindow : ThemedWindow
         ((ToggleIconButton)shareButton).SetResourceReference(ToggleIconButton.CheckedBrushProperty, "Accent"); toolbar.Children.Add(shareButton);
         toolbar.Children.Add(Tool("monitor", "Смотреть демонстрации", WatchScreens));
         notificationButton = Tool("bell", "Уведомления", ShowNotifications); toolbar.Children.Add(notificationButton);
-        notifications.Changed += count => { notificationButton.ToolTip = count == 0 ? "Уведомления" : $"Уведомления · {count}"; Ui.Name(notificationButton, (string)notificationButton.ToolTip); notificationButton.SetResourceReference(Control.ForegroundProperty, count == 0 ? "TextSecondary" : "Accent"); };
+        var bell = new Grid(); bell.Children.Add(new Icon { Kind = "bell", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
+        var badgeText = Ui.Label("", Ui.Caption); badgeText.SetResourceReference(TextBlock.ForegroundProperty, "OnAccent");
+        var badge = new Border { Child = badgeText, CornerRadius = Ui.Radius(), Padding = Ui.Insets(Ui.Xs, 0), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Visibility = Visibility.Collapsed };
+        badge.SetResourceReference(Border.BackgroundProperty, "Accent"); bell.Children.Add(badge); notificationButton.Content = bell;
+        notifications.Changed += count => { bool reveal = badge.Visibility != Visibility.Visible && count > 0; badge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed; badgeText.Text = count > 99 ? "99+" : count.ToString(); if (reveal) Motion.Pulse(badge); notificationButton.ToolTip = count == 0 ? "Уведомления" : $"Уведомления · {count}"; Ui.Name(notificationButton, (string)notificationButton.ToolTip); notificationButton.SetResourceReference(Control.ForegroundProperty, count == 0 ? "TextSecondary" : "Accent"); };
         DockPanel.SetDock(toolbar, Dock.Right); top.Children.Add(toolbar);
         channelTitle.TextTrimming = TextTrimming.CharacterEllipsis; channelTitle.VerticalAlignment = VerticalAlignment.Center; top.Children.Add(channelTitle);
         var topPanel = new Border { Child = top, BorderThickness = new Thickness(0, 0, 0, Ui.Metric("Size.Hairline")) }; topPanel.SetResourceReference(Border.BorderBrushProperty, "Border");
@@ -520,7 +524,7 @@ public sealed class MainWindow : ThemedWindow
             store.SaveMessage(message); if (selectedChannel?.Id == channel.Id) AddMessage(message);
             if (composer.Text == text) composer.Clear();
             if (pendingAttachment == attachment) pendingAttachment = null;
-            draftEmojis.Clear(); UpdateAttachmentPreview(); sounds.Play("message");
+            draftEmojis.Clear(); UpdateAttachmentPreview(); sounds.Play("message"); Buttons.Flash(sendButton, "check");
         }
         finally { sendingMessage = false; sendButton.ToolTip = "Отправить сообщение · Enter"; sendButton.IsEnabled = true; if (Keyboard.FocusedElement == sendButton) composer.Focus(); }
     }
@@ -875,7 +879,7 @@ public sealed class MainWindow : ThemedWindow
         catch (Exception ex) { Notify(ex.Message, true); current = FileIceServerProvider.Defaults; }
         dialog.Note("Один STUN URL на строку. Пустой список оставляет только локальные ICE-кандидаты. Адреса STUN и SDP раскрывают IP участников; содержимое разговора защищено DTLS/SRTP.");
         var urls = dialog.Field("STUN-серверы", string.Join(Environment.NewLine, current), true);
-        dialog.Action("Сохранить", () =>
+        dialog.PrimaryAction("Сохранить", () =>
         {
             iceServers.Save(urls.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries));
             dialog.DialogResult = true;
