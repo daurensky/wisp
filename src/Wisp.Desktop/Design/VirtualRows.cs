@@ -21,6 +21,8 @@ public sealed class VirtualRows : ListBox
     public IEnumerable<string> Keys => rows.Select(row => row.Key);
     public VirtualRows()
     {
+        // WPF implicit styles do not apply to derived controls.
+        Ui.Style(this, "List.Virtual");
         ItemsSource = rows;
         var presenter = new FrameworkElementFactory(typeof(RowPresenter));
         presenter.SetBinding(FrameworkElement.DataContextProperty, new Binding());

@@ -113,6 +113,13 @@ public sealed class ThemeTests
         var frozenProbe = new Border { RenderTransform = frozen };
         Motion.Stop(frozenProbe);
         Assert.True(frozen.IsFrozen);
+        foreach (var name in new[] { "x", "send", "mic", "mic-off", "headphone-off", "screen-share", "plus", "pencil", "check", "bell" })
+        {
+            var geometry = Assert.IsAssignableFrom<Geometry>(Application.Current.FindResource("Icon." + name));
+            Assert.True(geometry.IsFrozen);
+            Assert.InRange(geometry.Bounds.Left, -.01, 24.01); Assert.InRange(geometry.Bounds.Top, -.01, 24.01);
+            Assert.InRange(geometry.Bounds.Right, -.01, 24.01); Assert.InRange(geometry.Bounds.Bottom, -.01, 24.01);
+        }
         Assert.IsType<EllipseGeometry>(avatar.Clip); Assert.NotNull(avatar.Source);
         var gif = Path.Combine(root, "loop.gif");
         File.WriteAllBytes(gif, Convert.FromBase64String("R0lGODlhAgACAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEBAAAh+QQACAAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCAABACwAAAAAAgACAIEAAP8AAAAAAAAAAAAIBgABCAQQEAA7"));
@@ -210,6 +217,7 @@ public sealed class ThemeTests
             phase("responsive layout"); main.Width = Ui.Metric("Width.WindowMinimum"); PumpLayout(main); SaveSnapshot(main, "main-compact-dark");
             var lists = VisualDescendants(main).OfType<VirtualRows>().ToArray();
             Assert.Equal(4, lists.Length); Assert.Equal(3, lists.Count(list => list.IsVisible));
+            Assert.All(lists, list => Assert.Equal(Colors.Transparent, BrushColor(list.Background)));
             main.Width = Ui.Metric("Width.Window"); ThemeManager.Toggle(); PumpLayout(main); SaveSnapshot(main, "main-light"); ThemeManager.Toggle();
         }
         finally
