@@ -48,6 +48,7 @@ public sealed class ServerBackend:IDisposable
     public ServerConfig Config {get;}
     public string? RefreshToken{get;private set;}
     public UserProfile? Profile{get;private set;}
+    public event Action<string>? SessionChanged;
     public TimeProvider Clock=>time;
     public DateTimeOffset ServerNow()=>anchor==default?time.GetUtcNow():anchor+time.GetElapsedTime(Interlocked.Read(ref anchorTicks));
     public ServerBackend(ServerConfig config,HttpMessageHandler? handler=null,TimeProvider? timeProvider=null)
@@ -62,6 +63,7 @@ public sealed class ServerBackend:IDisposable
     {
         if(auth.AccessToken.Length!=43||auth.RefreshToken.Length!=43||auth.ExpiresIn<180)throw new InvalidDataException("Некорректная сессия сервера.");
         accessToken=auth.AccessToken;RefreshToken=auth.RefreshToken;Profile=auth.Profile with{AvatarPath=null,BannerPath=null};expires=time.GetUtcNow().AddSeconds(auth.ExpiresIn-120);
+        SessionChanged?.Invoke(auth.RefreshToken);
     }
     public async Task<UserProfile> SignInAsync(string email,string password,bool register,string username)
     {

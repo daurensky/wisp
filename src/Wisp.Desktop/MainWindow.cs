@@ -937,13 +937,13 @@ public sealed class MainWindow : ThemedWindow
         d.Action("Звук · устройства", () => { d.Close(); EditAudioDevices(); });
         d.Action("Сервер голоса", () => { d.Close(); EditVoiceServer(); });
         d.Action("Выбрать аватар", () => Pick(true)); d.Action("Выбрать баннер", () => Pick(false)); d.Action("Удалить аватар и баннер", () => { avatar = null; banner = null; });
-        d.Note("Аватар и баннер: до 4 МБ каждый. Изменения отправляются участникам активной сессии."); d.Accept();
+        d.Note("Аватар и баннер: до 4 МБ каждый. Изменения сохраняются на сервере."); d.Accept();
         if (d.ShowDialog() != true) return; var proposed = profile with { Username = name.Text.Trim(), About = about.Text.Trim(), AvatarPath = avatar, BannerPath = banner, AvatarAssetId = null, BannerAssetId = null, AvatarRevision = avatar is null ? null : AvatarCatalog.Revision(avatar) }; store.SaveProfile(proposed); profile = proposed; if (community is not null) store.UpsertMember(community.Id, profile); Run(async () => { await PublishProfile(); RenderMembers(); UpdateStatus(); sounds.Play("message"); });
     }
     private void EditAudioDevices()
     {
         var dialog = new FormDialog(this, "Устройства связи", 600);
-        dialog.Note("Устройства можно менять во время разговора. По умолчанию используются устройства связи Windows. Эхоподавление зависит от драйвера; отдельные AEC и автоусиление пока не добавлены.");
+        dialog.Note("Устройства можно менять во время разговора. По умолчанию используются мультимедийные устройства Windows. Эхоподавление зависит от драйвера; отдельные AEC и автоусиление пока не добавлены.");
         var suppression = dialog.Check("Шумоподавление", voice.NoiseSuppression);
         suppression.ToolTip = "Убирает фоновый шум (вентилятор, клавиатура). Может слегка менять тембр голоса. Не влияет на звук демонстрации.";
         void UpdateSuppressionAvailability()

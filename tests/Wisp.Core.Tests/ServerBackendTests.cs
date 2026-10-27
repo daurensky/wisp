@@ -18,7 +18,9 @@ public sealed class ServerBackendTests
             Assert.Equal("Bearer",request.Headers.Authorization!.Scheme);Assert.Equal(new string('a',43),request.Headers.Authorization.Parameter);
             return Reply(new Dictionary<string,bool>{{"community",true}});
         }));
+        string? savedRefresh=null;backend.SessionChanged+=token=>savedRefresh=token;
         await backend.SignInAsync("tester@example.com","fixture-password",true,"tester");
+        Assert.Equal(new string('b',43),savedRefresh);
         var communities=await backend.GetAsync<Dictionary<string,bool>>("users/user/communities");
         Assert.True(communities!["community"]);Assert.Equal(new[]{"/v1/auth/register","/v1/data/users/user/communities"},paths);
         await Assert.ThrowsAsync<ArgumentException>(()=>backend.GetAsync<object>("../private"));

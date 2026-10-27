@@ -18,6 +18,7 @@ public partial class App:System.Windows.Application
             }
             // The self-hosted database starts clean; old caches remain untouched in the old directory.
             store=new LocalStore(config.DataDirectory(root));cloud=new ServerBackend(config);
+            cloud.SessionChanged+=token=>SessionVault.Save(store.RootDirectory,token);
             var saved=SessionVault.Read(store.RootDirectory);UserProfile? profile=null;string? warning=null;
             if(saved is not null)try{profile=await cloud.RestoreAsync(saved);}catch(Exception ex){warning="Не удалось восстановить вход: "+ex.Message;}
             if(profile is null)
