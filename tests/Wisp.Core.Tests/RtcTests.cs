@@ -55,8 +55,10 @@ public sealed class RtcTests
         var offer = await a.OfferAsync(); var answer = await b.AnswerAsync(offer); a.AcceptAnswer(answer);
         if (a.Connected && b.Connected) ready.TrySetResult();
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(20));
-        Assert.Equal("host/host", a.SelectedCandidateTypes);
-        Assert.Equal("host/host", b.SelectedCandidateTypes);
+        // ICE may learn the remote endpoint as peer-reflexive even without STUN.
+        // Both selections are direct; a strict host/host assertion is timing-dependent.
+        Assert.Contains(a.SelectedCandidateTypes, new[] { "host/host", "host/prflx" });
+        Assert.Contains(b.SelectedCandidateTypes, new[] { "host/host", "host/prflx" });
         var opus = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var image = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var shareAudio = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -77,7 +77,7 @@ public sealed class MainWindow : ThemedWindow
     }
     private UserProfile profile;
     private readonly PeerNode node;
-    private readonly RtcMesh? rtc;
+    private readonly IVoiceRoom? rtc;
     private readonly VoiceService voice = new();
     private readonly VoiceRecorder recorder = new();
     private readonly ScreenShareService screen = new();
@@ -127,7 +127,7 @@ public sealed class MainWindow : ThemedWindow
         if (profile.AvatarRevision is null && profile.AvatarPath is not null && File.Exists(profile.AvatarPath)) profile = profile with { AvatarRevision = AvatarCatalog.Revision(profile.AvatarPath) };
         this.store = store; avatars = new AvatarCatalog(store.RootDirectory, profile.Id); this.profile = profile; this.cloud = cloud; savedRefreshToken = cloud?.RefreshToken; node = new PeerNode(profile, store.RootDirectory);
         iceServers = new FileIceServerProvider(store.RootDirectory);
-        rtc = cloud is null ? null : new RtcMesh(cloud, iceServers);
+        rtc = cloud is null ? null : new ConfiguredVoiceRoom(cloud, store.RootDirectory, iceServers);
         Title = "Wisp";
         Width = Ui.Metric("Width.Window"); Height = Ui.Metric("Height.Window");
         MinWidth = Ui.Metric("Width.WindowMinimum"); MinHeight = Ui.Metric("Height.WindowMinimum");
@@ -217,7 +217,7 @@ public sealed class MainWindow : ThemedWindow
                 if (!rtc.Joined && !voiceIntent.Connecting) { cloudChannelId = null; if (voiceChannelId is not null) StopVoice(); }
                 var active = rtc.ConnectedPeerIds; voice.SynchronizePeers(active);
                 var paths = string.Join(", ", rtc.ConnectionPaths.Values.OrderBy(path => path));
-                if (paths.Length > 0 && paths != lastConnectionPaths) Notify("Путь прямого соединения: " + paths);
+                if (paths.Length > 0 && paths != lastConnectionPaths) Notify("Путь соединения: " + paths);
                 lastConnectionPaths = paths;
                 foreach (var id in remoteStreams.Keys.Where(id => !active.Contains(id)).ToList()) StopVideoPeer(id);
                 var peerKey = string.Join("|", active.OrderBy(id => id));
@@ -426,7 +426,7 @@ public sealed class MainWindow : ThemedWindow
         bool inVoice = voiceChannelId is not null;
         leaveButton.Visibility = inVoice || cloudChannelId is not null ? Visibility.Visible : Visibility.Collapsed;
         foreach (var button in new[] { micButton, deafenButton, shareButton }) button.Visibility = inVoice ? Visibility.Visible : Visibility.Collapsed;
-        connection.Text = voiceIntent.Connecting ? "Соединение" : voiceChannelId is not null ? "В канале: " + (community is null ? "" : store.GetChannels(community.Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name) + (rtc is null ? "" : $" · WebRTC: {rtc.ConnectedCount} соединений") : cloudChannelId is not null ? "В канале · голос ещё не подключён" : cloud is not null ? "Firebase подключён" : node.IsConnected ? "P2P-сессия подключена" : "Локальный режим";
+        connection.Text = voiceIntent.Connecting ? "Соединение" : voiceChannelId is not null ? "В канале: " + (community is null ? "" : store.GetChannels(community.Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name) + (rtc is null ? "" : $" · {rtc.TransportName}: {rtc.ConnectedCount} соединений") : cloudChannelId is not null ? "В канале · голос ещё не подключён" : cloud is not null ? "Firebase подключён" : node.IsConnected ? "P2P-сессия подключена" : "Локальный режим";
         userName.Text = profile.Username;
         ((ToggleIconButton)micButton).IsChecked = muted || deafened;
         ((ToggleIconButton)deafenButton).IsChecked = deafened;
@@ -500,7 +500,7 @@ public sealed class MainWindow : ThemedWindow
                 voiceIntent.Complete(request); RenderChannels(); UpdateStatus(); sounds.Play("connect");
                 await cloud.PresenceAsync(joiningCommunity.Id, profile, c.Id);
                 if (voiceIntent.IsCurrent(request)) await RefreshCloud();
-                Notify("WebRTC · STUN. Соединение с участниками устанавливается напрямую.");
+                Notify(rtc.TransportName == "WebRTC · SFU" ? "Голос и демонстрация передаются через SFU." : "WebRTC · STUN. Соединение с участниками устанавливается напрямую.");
             }
             else
             {
@@ -923,6 +923,7 @@ public sealed class MainWindow : ThemedWindow
         void SaveMotion() { try { Motion.SetReduced(reduceMotion.IsChecked == true); } catch (Exception ex) { Notify("Не удалось сохранить настройку анимаций: " + ex.Message, true); } }
         reduceMotion.Checked += (_, _) => SaveMotion(); reduceMotion.Unchecked += (_, _) => SaveMotion();
         d.Action("Звук · устройства", () => { d.Close(); EditAudioDevices(); });
+        d.Action("Сервер голоса", () => { d.Close(); EditVoiceServer(); });
         d.Action("Сеть · STUN", () => { d.Close(); EditNetworkSettings(); });
         d.Action("Выбрать аватар", () => Pick(true)); d.Action("Выбрать баннер", () => Pick(false)); d.Action("Удалить аватар и баннер", () => { avatar = null; banner = null; });
         d.Note("Аватар и баннер: до 4 МБ каждый. Изменения отправляются участникам активной сессии."); d.Accept();
@@ -972,6 +973,21 @@ public sealed class MainWindow : ThemedWindow
         var settings = new AudioDeviceSettings(((AudioDeviceChoice)microphone.SelectedItem).Id, ((AudioDeviceChoice)headphones.SelectedItem).Id, voice.NoiseSuppression);
         settings.Save(store.RootDirectory);
         Run(async () => { await voice.ConfigureDevicesAsync(settings); Notify("Аудиоустройства сохранены. Голосовой канал остаётся подключённым."); });
+    }
+    private void EditVoiceServer()
+    {
+        var dialog = new FormDialog(this, "Сервер голоса · SFU", 600);
+        var settings = VoiceServerSettings.Load(store.RootDirectory);
+        var enabled = dialog.Check("Передавать голос и демонстрацию через сервер", settings.Enabled);
+        var url = dialog.Field("Адрес сервера", settings.Url);
+        var pin = dialog.Field("SHA-256 сертификата", settings.CertificateSha256);
+        dialog.Note("Вставь публичный отпечаток из установщика сервера. Все участники должны выбрать один режим связи. Настройки применятся при следующем входе в канал.");
+        dialog.PrimaryAction("Сохранить", () =>
+        {
+            new VoiceServerSettings(enabled.IsChecked == true, url.Text.Trim(), pin.Text.Replace(":", "").Replace(" ", "").Trim()).Save(store.RootDirectory);
+            dialog.DialogResult = true;
+        });
+        if (dialog.ShowDialog() == true) Notify("Настройки сервера голоса сохранены. Выйди и зайди в канал, чтобы применить.");
     }
     private void EditNetworkSettings()
     {

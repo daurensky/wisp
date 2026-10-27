@@ -319,3 +319,15 @@ Windows CI: [40485909882](https://github.com/daurensky/wisp/actions/runs/4048590
 [Windows x64 ZIP](https://github.com/daurensky/wisp/actions/runs/40485909882/artifacts/12725765419)
 и [TRX/PNG](https://github.com/daurensky/wisp/actions/runs/40485909882/artifacts/12725625958).
 Последующий коммит только дополняет этот отчёт. Обновление правил Firebase не нужно.
+
+## SFU branch
+
+`codex/sfu-server` adds an opt-in Go/Pion forwarding service and a native SIPSorcery client transport. No Firebase schema change or deployment is performed by the agent. Run commands and manual VPS/Windows scenarios are in [SFU.md](SFU.md).
+
+Local cross-runtime integration passed with the Go race detector: five native-client transports and all 20 downlinks; microphone Opus, independent share-audio Opus, H264, events and fragmented files; source identity binding; continued microphone packets during video and a 2 MB file; mute/deafen presence, departure and rejoin. Authorization tests reject invalid tokens, non-members, text channels, stale/future seats and mismatched sessions; admission rejects a sixth user and duplicate login. Core adds WSS endpoint and certificate-pin tests. Resource validation still resolves 155 WPF resources.
+
+Hardware voice/screen capture, Kazakhstan/Korea routes and the 1-vCPU production VPS remain untested. Linux unit runs of the pre-existing direct-P2P bulk-transfer test timed out at `RtcTests.cs:81` while Go compiler jobs were active; this does not establish a production regression or a complete green core suite. Final CI results below supersede local build/load-dependent results.
+
+Final local core run: **78 passed, 0 failed, 0 skipped**. The direct-P2P test now accepts both host/host and host/prflx: ICE can discover a peer-reflexive endpoint without external STUN, so requiring host/host was a timing-dependent assertion. Media/file delivery checks and their deadlines were retained. `go vet`, static Linux amd64 build and the 155-resource WPF check passed.
+
+Additional SFU regression check passed with the Go race detector and one shared UDP mux port with rewritten public candidates. The fifth client deliberately delays SDP answers across a maintenance tick; another source leaves while its answer is pending, then rejoins. Early ICE candidates are bounded/queued until SDP, the native client sends SDP before candidates, and late signals for retired connections are ignored within a bounded 64-ID history. Windows CI on application commit 4a5b688 passed 78 core and 10 desktop tests, no skips, then built/published/packaged successfully; the later signaling changes require their own final CI run.

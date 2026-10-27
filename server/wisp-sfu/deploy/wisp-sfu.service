@@ -1,0 +1,39 @@
+[Unit]
+Description=Wisp small-room media SFU
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=wisp-sfu
+Group=wisp-sfu
+ExecStart=/usr/local/bin/wisp-sfu -config /etc/wisp-sfu/server.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+Environment=GOMAXPROCS=1
+Environment=GOMEMLIMIT=384MiB
+MemoryHigh=512M
+MemoryMax=768M
+TasksMax=128
+LimitNOFILE=4096
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+LockPersonality=yes
+UMask=0077
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=30
+
+[Install]
+WantedBy=multi-user.target

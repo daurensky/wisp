@@ -1,0 +1,49 @@
+name: SFU Linux build and native interoperability
+on:
+  push:
+    branches: ['codex/sfu-server']
+  pull_request:
+    paths: ['server/**', 'src/Wisp.Core/**', 'tools/Wisp.Sfu.Probe/**', '.github/workflows/sfu.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/wisp-sfu/go.mod
+          cache-dependency-path: server/wisp-sfu/go.sum
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build native-client protocol probe
+        run: dotnet build tools/Wisp.Sfu.Probe -c Release
+      - name: Test SFU with race detector and real SIPSorcery clients
+        working-directory: server/wisp-sfu
+        env:
+          WISP_SFU_PROBE: ${{ github.workspace }}/tools/Wisp.Sfu.Probe/bin/Release/net8.0/Wisp.Sfu.Probe.dll
+        run: go test -race -count=1 -v -timeout 180s ./...
+      - name: Build Linux amd64 binary
+        working-directory: server/wisp-sfu
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go vet ./...
+          go build -mod=readonly -trimpath -ldflags='-s -w' -o ../../artifacts/wisp-sfu .
+          mkdir -p ../../artifacts/deploy
+          cp deploy/* ../../artifacts/deploy/
+          cp THIRD_PARTY_NOTICES.txt ../../artifacts/THIRD_PARTY_NOTICES.txt
+          sha256sum ../../artifacts/wisp-sfu > ../../artifacts/wisp-sfu.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wisp-sfu-linux-amd64
+          path: |
+            artifacts/wisp-sfu
+            artifacts/wisp-sfu.sha256
+            artifacts/THIRD_PARTY_NOTICES.txt
+            artifacts/deploy/
+          retention-days: 14
