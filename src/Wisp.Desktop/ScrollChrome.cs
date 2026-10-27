@@ -19,6 +19,7 @@ public static class ScrollChrome
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
         timer.Tick += (_, _) => { if (Mouse.LeftButton == MouseButtonState.Pressed && view.IsMouseOver) return; timer.Stop(); SetIsScrolling(view, false); };
         view.ScrollChanged += (_, changed) => { if (changed.VerticalChange == 0 && changed.HorizontalChange == 0) return; SetIsScrolling(view, true); timer.Stop(); timer.Start(); };
+        view.MouseEnter += (_, _) => { SetIsScrolling(view, true); timer.Stop(); timer.Start(); };
         view.Unloaded += (_, _) => { timer.Stop(); SetIsScrolling(view, false); };
     }
 }

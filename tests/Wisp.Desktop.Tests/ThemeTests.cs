@@ -35,6 +35,7 @@ public sealed class ThemeTests
                 // An old version's marker must not override the new default.
                 File.WriteAllText(Path.Combine(root, "light-theme"), "1");
                 ThemeManager.Initialize(root);
+                Motion.SetReduced(true);
                 Assert.False(ThemeManager.IsLight);
 
                 using var store = new LocalStore(root);
@@ -58,6 +59,7 @@ public sealed class ThemeTests
                 AssertWindowColors(derived, Colors.White, Color.FromRgb(24, 25, 35));
                 AssertWindowColors(auth, Colors.White, Color.FromRgb(24, 25, 35));
                 Assert.Equal(Color.FromRgb(24, 25, 35), BrushColor(password.Foreground));
+                SaveSnapshot(auth, "auth-light");
 
                 var fresh = Path.Combine(root, "fresh");
                 Directory.CreateDirectory(fresh);
@@ -137,6 +139,21 @@ public sealed class ThemeTests
         try
         {
             phase("main layout"); main.Show(); main.UpdateLayout();
+            SaveSnapshot(main, "main-dark");
+            Assert.NotNull(System.Windows.Shell.WindowChrome.GetWindowChrome(main));
+            Assert.Contains(VisualDescendants(main).OfType<Button>(), button => button.Name == "PART_Close");
+            phase("recycling");
+            var virtualRows = new VirtualRows { Width = 240, Height = 160 };
+            int created = 0;
+            for (int i = 0; i < 1000; i++) virtualRows.Add(i.ToString(), () => { created++; return new TextBlock { Text = "Virtualized row", Height = Ui.RowHeight }; });
+            var recycleOverlay = ModalHost.Open(main, "Виртуализация", virtualRows, 400); main.UpdateLayout();
+            Assert.InRange(created, 1, 50);
+            recycleOverlay.Close();
+            Assert.True(VirtualizingPanel.GetIsVirtualizing(virtualRows));
+            var toggle = new ToggleIconButton { IconOff = "mic", IconOn = "mic-off", ToolTipOff = "Выключить микрофон", ToolTipOn = "Включить микрофон" };
+            toggle.IsChecked = true;
+            Assert.Equal("Включить микрофон", System.Windows.Automation.AutomationProperties.GetName(toggle));
+            Assert.Equal(TimeSpan.Zero, Motion.Duration(main).TimeSpan);
             var windowCount = Application.Current.Windows.Count;
             var notices = new NotificationArea(); Assert.True(notices.Add("Тест", true));
             for (int i = 0; i < 500; i++) Assert.False(notices.Add("Тест", true));
@@ -149,7 +166,13 @@ public sealed class ThemeTests
             videoView.ToggleMini(); Assert.True(videoView.IsMini); videoView.ToggleMini(); Assert.False(videoView.IsMini);
             videoView.ToggleFullscreen(); Assert.True(videoView.IsFullscreen); videoView.ToggleFullscreen(); Assert.False(videoView.IsFullscreen); videoView.Close();
             phase("form overlay"); var dialog = new FormDialog(main, "Профиль"); dialog.Field("Имя", "UiTester"); dialog.Accept();
-            main.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => { Assert.Equal(windowCount, Application.Current.Windows.Count); dialog.DialogResult = true; }));
+            main.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+            {
+                Assert.Equal(windowCount, Application.Current.Windows.Count);
+                SaveSnapshot(main, "profile-modal-dark");
+                Assert.Single(VisualDescendants(main).OfType<TextBlock>(), text => text.Text == "Профиль");
+                dialog.DialogResult = true;
+            }));
             Assert.True(dialog.ShowDialog());
             phase("live microphone setting");
             main.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
@@ -174,11 +197,16 @@ public sealed class ThemeTests
             var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(main), 0, Key.Enter) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
             composer.RaiseEvent(key);
             Assert.True(key.Handled); Assert.Empty(composer.Text);
+            PumpLayout(main);
             var message = Assert.Single(store.GetMessages(channel.Id));
             Assert.Equal(emoji.Id, message.Emojis![":loop:"]);
             Assert.Contains(Descendants(main).OfType<TextBlock>(), text => text.Inlines.OfType<InlineUIContainer>().Any());
             using (var exclusive = new FileStream(emoji.LocalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) Assert.True(exclusive.Length > 0);
-            Assert.Equal(Visibility.Collapsed, Descendants(main).OfType<Button>().Single(button => Equals(button.Content, "Отменить запись")).Visibility);
+            Assert.Equal(Visibility.Collapsed, Descendants(main).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetName(button) == "Отменить запись").Visibility);
+            phase("responsive layout"); main.Width = Ui.Metric("Width.WindowMinimum"); PumpLayout(main); SaveSnapshot(main, "main-compact-dark");
+            var lists = VisualDescendants(main).OfType<VirtualRows>().ToArray();
+            Assert.Equal(4, lists.Length); Assert.Equal(3, lists.Count(list => list.IsVisible));
+            main.Width = Ui.Metric("Width.Window"); ThemeManager.Toggle(); PumpLayout(main); SaveSnapshot(main, "main-light"); ThemeManager.Toggle();
         }
         finally
         {
@@ -196,11 +224,35 @@ public sealed class ThemeTests
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject element)
     {
-        foreach (var child in LogicalTreeHelper.GetChildren(element).OfType<DependencyObject>())
+        var seen = new HashSet<DependencyObject>();
+        var queue = new Queue<DependencyObject>(); queue.Enqueue(element);
+        while (queue.Count > 0)
         {
-            yield return child;
-            foreach (var descendant in Descendants(child)) yield return descendant;
+            var current = queue.Dequeue();
+            if (!seen.Add(current)) continue;
+            if (current != element) yield return current;
+            foreach (var child in LogicalTreeHelper.GetChildren(current).OfType<DependencyObject>()) queue.Enqueue(child);
+            if (current is Visual or System.Windows.Media.Media3D.Visual3D)
+                for (int i = 0; i < VisualTreeHelper.GetChildrenCount(current); i++) queue.Enqueue(VisualTreeHelper.GetChild(current, i));
         }
+    }
+    private static IEnumerable<DependencyObject> VisualDescendants(DependencyObject element) => Descendants(element);
+    private static void PumpLayout(Window window)
+    {
+        window.UpdateLayout();
+        var frame = new DispatcherFrame();
+        window.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => frame.Continue = false));
+        Dispatcher.PushFrame(frame); window.UpdateLayout();
+    }
+    private static void SaveSnapshot(Window window, string name)
+    {
+        if (Environment.GetEnvironmentVariable("GITHUB_WORKSPACE") is not { Length: > 0 } workspace) return;
+        window.UpdateLayout();
+        var target = new System.Windows.Media.Imaging.RenderTargetBitmap((int)Math.Ceiling(window.ActualWidth), (int)Math.Ceiling(window.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+        target.Render(window);
+        var directory = Path.Combine(workspace, "artifacts", "test-results", "ui-snapshots"); Directory.CreateDirectory(directory);
+        using var output = File.Create(Path.Combine(directory, name + ".png"));
+        var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder(); encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(target)); encoder.Save(output);
     }
 
     private sealed class DerivedWindow : ThemedWindow { }

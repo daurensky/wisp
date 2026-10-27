@@ -49,10 +49,35 @@ public sealed class AvatarCatalog(string root, string localId)
         using var file = File.OpenRead(path); var header = new byte[6]; _ = file.Read(header);
         if (animate && Encoding.ASCII.GetString(header).StartsWith("GIF8"))
         {
+            AnimationBehavior.SetAutoStart(image, false);
             AnimationBehavior.SetRepeatBehavior(image, RepeatBehavior.Forever);
             // Bounded encoded bytes keep playback independent of the cached file's lifetime.
             // The library retains caller-owned streams across unload/reload; no OS handle stays open.
             AnimationBehavior.SetSourceStream(image, new MemoryStream(File.ReadAllBytes(path), writable: false));
+            Window? owner = null;
+            void UpdatePlayback()
+            {
+                bool play = Motion.Allowed(image);
+                AnimationBehavior.SetAutoStart(image, play);
+                var animator = AnimationBehavior.GetAnimator(image);
+                if (animator is null) return;
+                if (play) { if (animator.IsPaused) animator.Play(); }
+                else animator.Pause();
+            }
+            void WindowChanged(object? sender, EventArgs args) => UpdatePlayback();
+            image.Loaded += (_, _) =>
+            {
+                owner = Window.GetWindow(image);
+                if (owner is not null) { owner.Activated += WindowChanged; owner.Deactivated += WindowChanged; owner.StateChanged += WindowChanged; }
+                Motion.Changed += UpdatePlayback; UpdatePlayback();
+            };
+            image.Unloaded += (_, _) =>
+            {
+                if (owner is not null) { owner.Activated -= WindowChanged; owner.Deactivated -= WindowChanged; owner.StateChanged -= WindowChanged; owner = null; }
+                Motion.Changed -= UpdatePlayback; AnimationBehavior.GetAnimator(image)?.Pause();
+            };
+            image.IsVisibleChanged += (_, _) => UpdatePlayback();
+            AnimationBehavior.AddLoadedHandler(image, (_, _) => UpdatePlayback());
         }
         else
         {
