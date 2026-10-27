@@ -36,6 +36,7 @@ jobs:
           go build -mod=readonly -trimpath -ldflags='-s -w' -o ../../artifacts/wisp-sfu .
           mkdir -p ../../artifacts/deploy
           cp deploy/* ../../artifacts/deploy/
+          cp THIRD_PARTY_NOTICES.txt ../../artifacts/THIRD_PARTY_NOTICES.txt
           sha256sum ../../artifacts/wisp-sfu > ../../artifacts/wisp-sfu.sha256
       - uses: actions/upload-artifact@v4
         with:
@@ -43,5 +44,6 @@ jobs:
           path: |
             artifacts/wisp-sfu
             artifacts/wisp-sfu.sha256
+            artifacts/THIRD_PARTY_NOTICES.txt
             artifacts/deploy/
           retention-days: 14

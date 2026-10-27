@@ -54,6 +54,8 @@ chmod 0640 /etc/wisp-sfu/server.json
 install -o root -g root -m 0755 "$work/wisp-sfu" /usr/local/bin/wisp-sfu.new
 mv -f /usr/local/bin/wisp-sfu.new /usr/local/bin/wisp-sfu
 install -o root -g root -m 0644 "$source_dir/deploy/wisp-sfu.service" /etc/systemd/system/wisp-sfu.service
+install -d -o root -g root -m 0755 /usr/share/doc/wisp-sfu
+install -o root -g root -m 0644 "$source_dir/THIRD_PARTY_NOTICES.txt" /usr/share/doc/wisp-sfu/THIRD_PARTY_NOTICES.txt
 systemctl daemon-reload
 systemctl enable wisp-sfu.service
 systemctl restart wisp-sfu.service
