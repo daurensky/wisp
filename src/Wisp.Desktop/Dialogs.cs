@@ -11,6 +11,7 @@ public sealed class AuthWindow : ThemedWindow
     {
         Title = "Wisp · Вход"; Width = Ui.Metric("Width.DialogMedium"); SizeToContent = SizeToContent.Height; MaxHeight = SystemParameters.WorkArea.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var panel = new StackPanel { Margin = Ui.Insets(Ui.Xxl, Ui.Xl) }; Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var logo = Brand.Image(64); logo.HorizontalAlignment = HorizontalAlignment.Left; logo.Margin = Ui.Insets(0, 0, 0, Ui.M); panel.Children.Add(logo);
         panel.Children.Add(new TextBlock { Text = "Рады видеть тебя", FontSize = Ui.Heading, FontWeight = FontWeights.SemiBold });
         panel.Children.Add(new TextBlock { Text = "Место для своих.", Margin = Ui.Insets(0, Ui.Xs, 0, Ui.Xl) });
         panel.Children.Add(Ui.Label(cloud is null ? "Имя пользователя" : "Email", Ui.Caption, true)); var user = new TextBox(); panel.Children.Add(user);

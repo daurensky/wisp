@@ -27,6 +27,7 @@ public class ThemedWindow : Window
     }
     public ThemedWindow()
     {
+        Icon = Brand.WindowIcon;
         // WPF implicit Window styles do not match custom Window subclasses.
         SetResourceReference(StyleProperty, "WispWindowStyle");
         chrome = new WindowChrome

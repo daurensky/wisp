@@ -42,6 +42,7 @@ public sealed class ConfiguredVoiceRoom(FirebaseBackend cloud, string root, IIce
     public bool Joined => current?.Joined == true;
     public string? ChannelId => current?.ChannelId;
     public string TransportName => current?.TransportName ?? "WebRTC";
+    public SfuConnectionInfo? ConnectionInfo => current?.ConnectionInfo;
     public IReadOnlyList<RtcSeat> Participants => current?.Participants ?? Array.Empty<RtcSeat>();
     public int ConnectedCount => current?.ConnectedCount ?? 0;
     public IReadOnlyList<string> ConnectedPeerIds => current?.ConnectedPeerIds ?? Array.Empty<string>();

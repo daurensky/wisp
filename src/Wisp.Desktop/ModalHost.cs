@@ -29,6 +29,7 @@ public static class ModalHost
         var header = new DockPanel { Margin = Ui.Insets(Ui.Xl, Ui.L, Ui.L, Ui.L) };
         var close = Buttons.Tool("x", "Закрыть · Esc", () => { });
         DockPanel.SetDock(close, Dock.Right); header.Children.Add(close);
+        var logo = Brand.Image(Ui.Metric("Size.Icon")); logo.Margin = Ui.Insets(0, 0, Ui.S, 0); logo.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(logo, Dock.Left); header.Children.Add(logo);
         header.Children.Add(new TextBlock { Text = title, FontSize = Ui.Heading, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = title });
         DockPanel.SetDock(header, Dock.Top); panel.Children.Add(header); panel.Children.Add(content);
         double requested = width > 0 ? width : Ui.Metric("Width.DialogLarge");

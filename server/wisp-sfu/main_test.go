@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"github.com/coder/websocket"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +39,13 @@ func httpHandler(h *hub) *testHandler { return &testHandler{h} }
 
 type testHandler struct{ h *hub }
 
-func (h *testHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.h.serve(w, r) }
+func (h *testHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/healthz" {
+		fmt.Fprintln(w, "wisp-sfu protocol=1")
+		return
+	}
+	h.h.serve(w, r)
+}
 func joinTest(t *testing.T, srv *httptest.Server, uid, token string) (*websocket.Conn, message) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)

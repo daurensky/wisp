@@ -97,6 +97,7 @@ public sealed class MainWindow : ThemedWindow
     private bool loadingHistory;
     private readonly TextBlock serverTitle = new() { FontSize = Ui.Subtitle, FontWeight = FontWeights.SemiBold };
     private readonly TextBlock channelTitle = new() { FontSize = Ui.Subtitle, FontWeight = FontWeights.SemiBold };
+    private readonly Button connectionButton = new();
     private readonly TextBlock connection = new() { FontSize = Ui.Caption, TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock userName = new() { FontWeight = FontWeights.SemiBold };
     private readonly TextBlock notice = new() { TextWrapping = TextWrapping.Wrap, FontSize = Ui.Caption, Margin = Ui.Insets(Ui.Xl, Ui.S) };
@@ -118,6 +119,7 @@ public sealed class MainWindow : ThemedWindow
     private string? voiceChannelId, sessionCommunityId, pendingAttachment;
     private string? currentInvite;
     private bool muted, deafened, sharing, closing;
+    private long shareGeneration;
     private string? recordedPath;
     private bool sendingRecording;
     private IReadOnlyList<PeerPresence> presence = Array.Empty<PeerPresence>();
@@ -140,7 +142,7 @@ public sealed class MainWindow : ThemedWindow
         root.ColumnDefinitions.Add(memberColumn); Content = root;
 
         var rail = new DockPanel { Margin = Ui.Insets(Ui.S, Ui.M) };
-        var home = new Icon { Kind = "circle-dot", ToolTip = "Wisp", HorizontalAlignment = HorizontalAlignment.Center };
+        var home = Brand.Image(Ui.Metric("Size.NavigationIcon")); home.ToolTip = "Wisp"; home.HorizontalAlignment = HorizontalAlignment.Center;
         home.Width = home.Height = Ui.Metric("Size.NavigationIcon"); home.Margin = Ui.Insets(0, 0, 0, Ui.M);
         DockPanel.SetDock(home, Dock.Top); rail.Children.Add(home);
         var railActions = new StackPanel(); DockPanel.SetDock(railActions, Dock.Bottom); rail.Children.Add(railActions);
@@ -159,8 +161,13 @@ public sealed class MainWindow : ThemedWindow
         serverTitle.TextTrimming = TextTrimming.CharacterEllipsis; serverTitle.VerticalAlignment = VerticalAlignment.Center;
         heading.Children.Add(serverTitle); DockPanel.SetDock(heading, Dock.Top); side.Children.Add(heading);
         var self = new StackPanel { Margin = Ui.Insets(Ui.M) };
-        Ui.Secondary(connection); connection.Margin = Ui.Insets(0, 0, 0, Ui.S);
-        self.Children.Add(connection); userName.Margin = Ui.Insets(Ui.Xs, 0, 0, Ui.S); self.Children.Add(userName);
+        Ui.Secondary(connection); connection.Margin = Ui.Insets(0);
+        Ui.Style(connectionButton, "Button.Ghost"); connectionButton.Padding = Ui.Insets(Ui.Xs); connectionButton.Margin = Ui.Insets(0, 0, 0, Ui.Xs);
+        connectionButton.HorizontalContentAlignment = HorizontalAlignment.Left; connectionButton.Content = connection;
+        Ui.Name(connectionButton, "Информация о подключении"); connectionButton.ToolTip = "Подключение, сервер и пинг";
+        connectionButton.Click += (_, _) => ConnectionDetails();
+        messages.SetResourceReference(ItemsControl.ItemContainerStyleProperty, "ListItem.Chat");
+        self.Children.Add(connectionButton); userName.Margin = Ui.Insets(Ui.Xs, 0, 0, Ui.S); self.Children.Add(userName);
         var controls = new StackPanel { Orientation = Orientation.Horizontal };
         micButton = VoiceToggle("mic", "mic-off", "Выключить микрофон", "Включить микрофон", ToggleMic);
         deafenButton = VoiceToggle("headphones", "headphone-off", "Выключить наушники и микрофон", "Включить наушники", ToggleDeafen);
@@ -254,7 +261,7 @@ public sealed class MainWindow : ThemedWindow
         sharePlayback.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true)); screen.Error += e => Dispatcher.BeginInvoke(() => { StopSharing(); Notify(e, true); });
         recorder.Completed += path => Dispatcher.BeginInvoke(() => { if (closing || sendingRecording || !File.Exists(path)) return; Run(() => { recordedPath = path; StageRecording(path); Notify("Запись завершена. Можно прослушать и отправить."); return Task.CompletedTask; }); });
         activityTimer.Tick += (_, _) => Run(UpdateGame); activityTimer.Start();
-        tray = new System.Windows.Forms.NotifyIcon { Icon = (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone(), Text = "Wisp", Visible = true };
+        tray = new System.Windows.Forms.NotifyIcon { Icon = Brand.TrayIcon(), Text = "Wisp", Visible = true };
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("Открыть Wisp", null, (_, _) => Dispatcher.BeginInvoke(RestoreFromTray));
         menu.Items.Add("Выйти из аккаунта", null, (_, _) => Dispatcher.BeginInvoke(() => Run(SignOut)));
@@ -264,6 +271,7 @@ public sealed class MainWindow : ThemedWindow
         cloudTimer.Tick += (_, _) => Run(RefreshCloud); if (cloud is not null) cloudTimer.Start();
         Closing += OnClosing;
         Loaded += (_, _) => { if (cloud is not null && this.profile.AvatarPath is not null) Run(PublishProfile); };
+        UpdateConnectionStatus();
         userName.Text = profile.Username; RenderServers();
         var first = MyCommunities().FirstOrDefault(); if (first is not null) SetCommunity(first); else { serverTitle.Text = "Добро пожаловать"; channelTitle.Text = "Место для своих"; Notify("Создай сообщество кнопкой + слева или присоединись по приглашению ↗."); }
         UpdateStatus(); ModalHost.Prepare(this);
@@ -412,11 +420,11 @@ public sealed class MainWindow : ThemedWindow
             members.Add(p.Id, () =>
             {
                 var row = new DockPanel();
-                var picture = AvatarCatalog.Circle(avatars.Resolve(p, store), Ui.Metric("Size.Avatar"), GifPlaybackMode.Hover); picture.Margin = Ui.Insets(0, 0, Ui.M, 0); DockPanel.SetDock(picture, Dock.Left); row.Children.Add(picture);
+                var picture = AvatarCatalog.Circle(avatars.Resolve(p, store), Ui.Metric("Size.Avatar"), GifPlaybackMode.Hover); picture.Margin = Ui.Insets(0, 0, Ui.S, 0); DockPanel.SetDock(picture, Dock.Left); row.Children.Add(picture);
                 var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center }; info.Children.Add(Ui.Label(p.Username));
                 var status = Ui.Label(game is null ? online ? "В сети" : "Не в сети" : $"Играет в {game}", Ui.Caption, true);
                 if (online && game is null) status.SetResourceReference(TextBlock.ForegroundProperty, "Success"); info.Children.Add(status); row.Children.Add(info);
-                var button = Btn(p.Username, () => ViewProfile(p), p.Username); Ui.Style(button, "Button.Row"); button.Height = Ui.RowHeight; button.Padding = Ui.Insets(Ui.M, Ui.Xs); button.Content = row; GifPlayback.SetScope(picture, button);
+                var button = Btn(p.Username, () => ViewProfile(p), p.Username); Ui.Style(button, "Button.Row"); button.Height = Ui.RowHeight; button.Padding = Ui.Insets(Ui.S, Ui.Xs); button.Margin = Ui.Insets(0); button.Content = row; GifPlayback.SetScope(picture, button);
                 if (!online) button.Opacity = .6; return button;
             }, oldKeys.Count > 0 && !oldKeys.Contains(p.Id));
         }
@@ -427,11 +435,60 @@ public sealed class MainWindow : ThemedWindow
         leaveButton.Visibility = inVoice || cloudChannelId is not null ? Visibility.Visible : Visibility.Collapsed;
         foreach (var button in new[] { micButton, deafenButton, shareButton }) button.Visibility = inVoice ? Visibility.Visible : Visibility.Collapsed;
         connection.Text = voiceIntent.Connecting ? "Соединение" : voiceChannelId is not null ? "В канале: " + (community is null ? "" : store.GetChannels(community.Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name) + (rtc is null ? "" : $" · {rtc.TransportName}: {rtc.ConnectedCount} соединений") : cloudChannelId is not null ? "В канале · голос ещё не подключён" : cloud is not null ? "Firebase подключён" : node.IsConnected ? "P2P-сессия подключена" : "Локальный режим";
+        UpdateConnectionStatus();
         userName.Text = profile.Username;
         ((ToggleIconButton)micButton).IsChecked = muted || deafened;
         ((ToggleIconButton)deafenButton).IsChecked = deafened;
         ((ToggleIconButton)shareButton).IsChecked = sharing;
         shareButton.IsEnabled = inVoice && !voiceIntent.Connecting;
+    }
+    private void UpdateConnectionStatus()
+    {
+        connection.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
+        if (voiceIntent.Connecting)
+        {
+            connection.Text = "Соединение";
+            connection.SetResourceReference(TextBlock.ForegroundProperty, "Warning");
+        }
+        else if (rtc?.ConnectionInfo is { } info)
+        {
+            bool connected = rtc.Joined;
+            var name = community is null ? null : store.GetChannels(community.Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name;
+            connection.Text = connected ? $"Подключён · SFU · {(info.PingMilliseconds is { } ping ? Math.Max(1, Math.Ceiling(ping)).ToString("0") + " мс" : "пинг —")}\nВ канале: {name}" : "SFU · соединение потеряно";
+            string color = !connected ? "Danger" : info.Quality switch
+            {
+                ConnectionQuality.Good => "Success", ConnectionQuality.Fair => "Warning", ConnectionQuality.Poor => "Danger", _ => "Warning"
+            };
+            connection.SetResourceReference(TextBlock.ForegroundProperty, color);
+        }
+        else if (voiceChannelId is not null)
+        {
+            connection.Text = "Подключён · P2P\nВ канале: " + (community is null ? "" : store.GetChannels(community.Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name);
+            connection.SetResourceReference(TextBlock.ForegroundProperty, "Success");
+        }
+    }
+    private void ConnectionDetails()
+    {
+        var dialog = new FormDialog(this, "Подключение", 560);
+        if (rtc?.ConnectionInfo is { } info)
+        {
+            dialog.Note(rtc.Joined ? "Подключён к голосовому серверу" : voiceIntent.Connecting ? "Соединение с сервером" : "Соединение с сервером закрыто");
+            dialog.Note("Сервер: " + info.Endpoint);
+            dialog.Note("Пинг: " + (info.PingMilliseconds is { } ping ? $"{ping:0.0} мс" : "нет свежего измерения"));
+            dialog.Note("Это время ответа HTTPS (RTT), включая обработку на сервере; измеряется каждые 5 секунд. Зелёный: <100 мс; жёлтый: 100–199 мс или проверка недоступна; красный: от 200 мс или разрыв связи.");
+            if (info.MeasuredAt is { } measured) dialog.Note("Последняя проверка: " + measured.LocalDateTime.ToString("HH:mm:ss"));
+            dialog.Note("Медиа: WebRTC → SFU → участники · UDP · DTLS/SRTP");
+            dialog.Note("Сигналинг: WSS/TLS · проверка SHA-256 сертификата");
+            dialog.Note("ICE: " + (info.CandidateTypes ?? "согласование маршрута"));
+            dialog.Note("Голос: Opus · 48 кГц · 20 мс; демонстрация: H.264 + отдельная дорожка Opus");
+        }
+        else dialog.Note(voiceChannelId is null ? "Активного голосового подключения нет." : "Подключён напрямую к участникам · WebRTC P2P · DTLS/SRTP");
+        if (voiceChannelId is not null)
+        {
+            dialog.Note("Канал: " + (community is null ? voiceChannelId : store.GetChannels(community.Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name));
+            dialog.Note($"Участников: {(rtc?.Participants.Count ?? DisplayPresence.Count(p => p.VoiceChannelId == voiceChannelId))}/5 · Соединений с участниками: {rtc?.ConnectedCount ?? 0}");
+        }
+        dialog.Accept("Закрыть"); dialog.ShowDialog();
     }
     private void CreateCommunity()
     {
@@ -785,6 +842,7 @@ public sealed class MainWindow : ThemedWindow
     private async Task ShareScreen()
     {
         if (sharing) { StopSharing(); return; } if (voiceChannelId is null) throw new InvalidOperationException("Сначала подключись к голосовому каналу.");
+        long shareRequest = Interlocked.Increment(ref shareGeneration);
         var d = new FormDialog(this, "Демонстрация экрана", 600);
         d.Note("Выбери окно приложения или монитор. 1080p/60 FPS требует больше ресурсов и скорости сети; при перегрузке кадры пропускаются, чтобы не накапливать задержку.");
         ComboBox Choice(string label, string[] values, int selected) { d.Note(label); var box = new ComboBox { ItemsSource = values, SelectedIndex = selected, Margin = Ui.Insets(0, Ui.Xs, 0, Ui.S) }; d.Add(box); return box; }
@@ -796,17 +854,26 @@ public sealed class MainWindow : ThemedWindow
         d.Note("Окно или монитор");
         var sources = ScreenShareService.GetSources().ToList();
         var sourcePicker = new ComboBox { ItemsSource = sources, DisplayMemberPath = "Name", SelectedIndex = sources.Count > 0 ? 0 : -1 };
-        Ui.Name(sourcePicker, "Окно или монитор"); d.Add(sourcePicker); d.Accept("Начать демонстрацию");
+        Ui.Name(sourcePicker, "Окно или монитор"); d.Add(sourcePicker);
+        var borderless = d.Check("Захват без жёлтой рамки", true);
+        d.Note("Windows может запросить разрешение убрать рамку. Если оно недоступно, используется совместимый захват без рамки: перекрытые окна некоторых приложений могут отображаться иначе, нагрузка может быть выше.");
+        d.Accept("Начать демонстрацию");
         if (d.ShowDialog() != true || sourcePicker.SelectedItem is not CaptureSource selected) return;
+        string? sharingChannel = voiceChannelId;
+        bool withoutBorder = borderless.IsChecked == true;
+        bool borderlessGranted = withoutBorder && await BorderlessCaptureAccess.RequestAsync();
+        if (closing || sharingChannel is null || voiceChannelId != sharingChannel || shareRequest != Volatile.Read(ref shareGeneration)) return;
         var info = ScreenShareService.Describe(selected, resolution.SelectedIndex == 0 ? 720 : 1080, new[] { 15, 30, 60 }[framerate.SelectedIndex], new[] { 2000000, 4000000, 6000000, 8000000 }[bitrate.SelectedIndex]) with { SessionId = Guid.NewGuid().ToString("N") };
         await SendPacket(new WireMessage("screen-start", profile.Id, voiceChannelId, JsonSerializer.SerializeToUtf8Bytes(info)));
-        screen.Start(selected, info); sharing = true; sharedPeers = "";
+        if (closing || voiceChannelId != sharingChannel || shareRequest != Volatile.Read(ref shareGeneration)) return;
+        screen.Start(selected, info, withoutBorder, borderlessGranted); sharing = true; sharedPeers = "";
         notice.Text = $"Идёт демонстрация: {selected.Name} · {info.Width}×{info.Height} · {info.FramesPerSecond} FPS"; notice.Visibility = Visibility.Visible; ((ToggleIconButton)shareButton).IsChecked = true; sounds.Play("share");
         if (audio.IsChecked == true) { try { await shareAudio.StartAsync(selected); } catch (Exception ex) { Notify(ex.Message, true); } }
         Notify($"Демонстрация начата: {selected.Name} · H.264 · {info.FramesPerSecond} FPS");
     }
     private void StopSharing()
     {
+        Interlocked.Increment(ref shareGeneration);
         notice.Text = ""; notice.Visibility = Visibility.Collapsed; shareAudio.Stop(); screen.Stop(); sharedPeers = "";
         if (!sharing) return; sharing = false; ((ToggleIconButton)shareButton).IsChecked = false; SendRealtime("screen-stop", Array.Empty<byte>()); sounds.Play("share"); Notify("Демонстрация остановлена.");
     }

@@ -16,7 +16,9 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
     private CancellationTokenSource? stop;
     private Channel<object>? outbound;
     private SfuSeatLease? seat;
-    private Task? reader, writer, maintenance;
+    private Task? reader, writer, maintenance, health;
+    private SfuConnectionInfo connectionInfo = new(settings.Url, ServerConnectionState.Disconnected);
+    public SfuConnectionInfo ConnectionInfo => Volatile.Read(ref connectionInfo) with { CandidateTypes = links.TryGetValue("pub", out var pub) ? pub.Peer.SelectedCandidateTypes : null };
     private TaskCompletionSource? ready, published;
     private IReadOnlyList<RTCIceServer> servers = Array.Empty<RTCIceServer>();
     private string? channel;
@@ -51,6 +53,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
     {
         if (Interlocked.Exchange(ref failed, 1) != 0) return;
         joined = false;
+        Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Disconnected));
         ready?.TrySetException(new IOException(error)); published?.TrySetException(new IOException(error));
         stop?.Cancel(); socket?.Abort();
         foreach (var l in links.Values) l.Peer.Dispose();
@@ -64,6 +67,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
             await LeaveCoreAsync();
             var endpoint = settings.Endpoint();
             failed = 0; joined = false; channel = channelId;
+            Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Connecting));
             ready = Completion(); published = Completion();
             stop = new CancellationTokenSource();
             outbound = System.Threading.Channels.Channel.CreateBounded<object>(new BoundedChannelOptions(128) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
@@ -90,7 +94,10 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
                 pub.LocalPublished = true;
                 maintenance = Task.Run(() => MaintainAsync(stop.Token));
                 await published.Task.WaitAsync(token);
-                joined = true; Changed?.Invoke();
+                joined = true;
+                Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Connected));
+                health = Task.Run(() => HealthAsync(stop.Token));
+                Changed?.Invoke();
             }
             catch
             {
@@ -195,6 +202,22 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception) { Fail("Не удалось обновить подключение SFU. Подключись снова."); }
     }
+    private async Task HealthAsync(CancellationToken token)
+    {
+        using var probe = new SfuHealthProbe(settings);
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                double? latency = await probe.MeasureAsync(token);
+                if (token.IsCancellationRequested) return;
+                Volatile.Write(ref connectionInfo, new(settings.Url, latency is null ? ServerConnectionState.Unreachable : ServerConnectionState.Connected, latency, DateTimeOffset.UtcNow));
+                Changed?.Invoke();
+                await Task.Delay(TimeSpan.FromSeconds(5), token);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+    }
     public Task SetMutedAsync(bool mute, bool deafen) => seat?.SetMutedAsync(mute, deafen) ?? Task.CompletedTask;
     public Task SendAsync(WireMessage message) => Joined && links.TryGetValue("pub", out var pub) ? pub.Peer.SendAsync(message) : Task.CompletedTask;
     public async Task LeaveAsync()
@@ -205,11 +228,12 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
     {
         joined = false; stop?.Cancel(); socket?.Abort();
         foreach (var l in links.Values) l.Peer.Dispose();
-        try { await Task.WhenAll(new[] { reader, writer, maintenance }.OfType<Task>()); } catch (OperationCanceledException) { }
+        try { await Task.WhenAll(new[] { reader, writer, maintenance, health }.OfType<Task>()); } catch (OperationCanceledException) { }
         links.Clear();
         if (seat is not null) { seat.Lost -= Fail; await seat.DisposeAsync(); seat = null; }
         socket?.Dispose(); socket = null; stop?.Dispose(); stop = null;
-        outbound = null; reader = writer = maintenance = null; channel = null;
+        outbound = null; reader = writer = maintenance = health = null;
+        Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Disconnected)); channel = null;
         Changed?.Invoke();
     }
     public async ValueTask DisposeAsync() => await LeaveAsync();

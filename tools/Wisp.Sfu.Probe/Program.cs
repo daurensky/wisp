@@ -20,6 +20,7 @@ try
         Console.WriteLine("Joined " + i);
     }
     await Until(() => clients.All(c => c.ConnectedCount == 4), "all 20 downlinks connected");
+    await Until(() => clients.All(c => c.ConnectionInfo.PingMilliseconds is >= 0), "pinned HTTPS health RTT for every joined client");
     var a = clients[0]; var b = clients[1];
     var received = new System.Collections.Concurrent.ConcurrentDictionary<string, WireMessage>();
     int voice = 0;

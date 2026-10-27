@@ -34,7 +34,7 @@ public sealed class ScreenShareService : IDisposable
             Volatile.Write(ref desiredFps, adaptation.FramesPerSecond);
         }
     }
-    public void Start(CaptureSource source, ScreenStreamInfo info)
+    public void Start(CaptureSource source, ScreenStreamInfo info, bool borderless = false, bool borderlessGranted = false)
     {
         Stop();
         if (!info.IsValid) throw new ArgumentException("Некорректный режим демонстрации.");
@@ -45,17 +45,17 @@ public sealed class ScreenShareService : IDisposable
             adaptation = new VideoRateController(info.Bitrate, info.FramesPerSecond);
             desiredBitrate = info.Bitrate; desiredFps = info.FramesPerSecond; keyRequested = 1;
             var lifetime = new CancellationTokenSource(); cancellation = lifetime;
-            _ = Task.Factory.StartNew(() => CaptureLoop(source, info, lifetime), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            _ = Task.Factory.StartNew(() => CaptureLoop(source, info, lifetime, borderless, borderlessGranted), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         }
     }
-    private void CaptureLoop(CaptureSource source, ScreenStreamInfo info, CancellationTokenSource lifetime)
+    private void CaptureLoop(CaptureSource source, ScreenStreamInfo info, CancellationTokenSource lifetime, bool borderless, bool borderlessGranted)
     {
         var token = lifetime.Token;
         Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
         try
         {
             using var encoder = new NativeVideoEncoder(info);
-            using var capture = new ResilientScreenCapture(source, info, text => Status?.Invoke(text));
+            using var capture = new ResilientScreenCapture(source, info, text => Status?.Invoke(text), borderless, borderlessGranted);
             if (token.IsCancellationRequested) return;
             Status?.Invoke("Захват: " + capture.BackendName + "; " + encoder.RateControlStatus);
             var pixels = new byte[info.Width * info.Height * 4];
