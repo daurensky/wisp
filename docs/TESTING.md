@@ -6,6 +6,7 @@
 - `dotnet test tests/Wisp.Core.Tests -c Release`: codec/recovery/timing, local cache, input intent, certificate pinning, server HTTP routes/token headers/cache isolation and dynamic rosters beyond five.
 - Windows-only desktop tests: WPF themes, overlays, selected-message appearance, icon resources, virtualization, relative wheel input, codec/RNNoise and saved per-user PCM attenuation. Native RNNoise is built and required in CI.
 - `python tools/check_ui_resources.py`: design-resource consistency.
+- Connection recovery: bounded old-token overlap, account takeover, abrupt signaling loss/reentry, cancellation of desktop retry, and microphone-thread shutdown error handling. See [RECOVERY.md](RECOVERY.md).
 - Go with a real isolated PostgreSQL schema: accounts/password hashing/login, token rotation, membership/invitations, ownership, chat, attachment hashes/immutability and cross-community isolation.
 - Native .NET/Go integration: six signed-in clients register through the actual API, join via invitations, create 30 downlinks, exchange microphone/share audio/H.264/events/files through one UDP mux, measure pinned HTTPS RTT, update mute/deafen, leave during delayed SDP and rejoin. No production auth bypass exists. `go test -race` checks Go data races.
 

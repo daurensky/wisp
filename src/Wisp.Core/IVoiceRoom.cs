@@ -14,7 +14,7 @@ public interface IVoiceRoom : IAsyncDisposable
     event Action<WireMessage>? MessageReceived;
     event Action<string>? Error;
     event Action? Changed;
-    Task EnterAsync(string communityId, string channelId, bool mute, bool deafen);
+    Task EnterAsync(string communityId, string channelId, bool mute, bool deafen, CancellationToken cancellation = default);
     Task SetMutedAsync(bool mute, bool deafen);
     Task SendAsync(WireMessage message);
     Task LeaveAsync();

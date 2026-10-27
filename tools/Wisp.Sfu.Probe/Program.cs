@@ -41,6 +41,11 @@ try
             }
             finally{Directory.Delete(mediaRoot,true);}
             Console.WriteLine("PASS: real account/profile/chat/attachment API DTOs and PostgreSQL persistence");
+            await cloud.CreateCommunityAsync(new(new Community("reverse","Reverse invite",cloud.Profile!.Id),[new("reverse-voice","reverse","Voice",true)],[cloud.Profile]));
+            string reverseInvite=await cloud.CreateInviteAsync("reverse");
+            await backends[0].JoinCommunityAsync(" \r\n"+reverseInvite+" \r\n");
+            if(!(await backends[0].CommunitiesAsync()).Any(s=>s.Community.Id=="reverse"))throw new Exception("Reverse invitation missing community");
+            Console.WriteLine("PASS: new account joins existing community and reverse invitation also works");
         }
         int owner=i;
         var room=new SfuRoom(cloud,settings,(remote,channel,servers)=>
@@ -66,6 +71,12 @@ try
     }
     await Until(() => clients.All(c => c.ConnectedCount == 5), "all 30 downlinks connected");
     await Until(() => clients.All(c => c.ConnectionInfo.PingMilliseconds is >= 0), "pinned HTTPS health RTT for every joined client");
+    // Force HTTP token rotation while the active WSS still uses the old token.
+    typeof(ServerBackend).GetField("expires",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance)!.SetValue(backends[0],default(DateTimeOffset));
+    await backends[0].GetAccessTokenAsync();
+    await Task.Delay(22000);
+    if(clients.Any(c=>!c.Joined))throw new Exception("Token refresh disconnected an active voice session");
+    Console.WriteLine("PASS: rotating HTTP token preserves voice across periodic SFU authorization");
     var a = clients[0]; var b = clients[1];
     var received = new System.Collections.Concurrent.ConcurrentDictionary<string, WireMessage>();
     int voice = 0;
@@ -105,6 +116,18 @@ try
     await clients[0].EnterAsync("community", "voice", false, false);
     await Until(() => clients.All(c=>c.ConnectedCount==5), "fresh rejoin recreates source links");
     Console.WriteLine("PASS: mute/deafen presence, delayed SDP/ICE, source departure during answer and fresh rejoin");
+    await using(var replacement=new SfuRoom(backends[0],settings))
+    {
+        await replacement.EnterAsync("community","voice",false,false);
+        await Until(()=>!clients[0].Joined&&replacement.Joined,"authenticated takeover releases stale session");
+        await clients[0].EnterAsync("community","voice",false,false);
+        await Until(()=>!replacement.Joined&&clients[0].Joined,"fresh attempt takes account back");
+    }
+    var socket=(System.Net.WebSockets.ClientWebSocket)typeof(SfuRoom).GetField("socket",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance)!.GetValue(clients[0])!;
+    socket.Abort();await Until(()=>!clients[0].Joined,"abrupt signaling loss");
+    await clients[0].EnterAsync("community","voice",false,false);
+    await Until(()=>clients.All(c=>c.Joined&&c.ConnectedCount==5),"same instance recovers after abrupt signaling loss");
+    Console.WriteLine("PASS: account takeover, asynchronous failed-attempt cleanup and same-instance recovery");
 }
 catch
 {

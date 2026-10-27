@@ -26,6 +26,25 @@ public sealed class ServerBackendTests
         await Assert.ThrowsAsync<ArgumentException>(()=>backend.GetAsync<object>("../private"));
     }
     [Fact]
+    public async Task CopiedInvitesAllowWrappedWhitespaceAndExplainExpiredCodes()
+    {
+        int calls=0;
+        using var backend=new ServerBackend(Config,new Handler(request=>
+        {
+            calls++;
+            if(request.RequestUri!.AbsolutePath=="/v1/auth/register")return Reply(new{accessToken=new string('a',43),refreshToken=new string('b',43),expiresIn=900,profile=new UserProfile("user","tester")});
+            Assert.Equal("/v1/invites/accept",request.RequestUri.AbsolutePath);
+            using var json=JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+            Assert.Equal(new string('c',43),json.RootElement.GetProperty("token").GetString());
+            return new HttpResponseMessage(HttpStatusCode.NotFound){Content=new StringContent("{}")};
+        }));
+        await backend.SignInAsync("tester@example.com","fixture-password",true,"tester");
+        var error=await Assert.ThrowsAsync<ServerRequestException>(()=>backend.JoinCommunityAsync("  WISP-INVITE:"+new string('c',20)+"\r\n"+new string('c',23)+"  "));
+        Assert.Contains("Приглашение не найдено",error.Message);
+        await Assert.ThrowsAsync<ArgumentException>(()=>backend.JoinCommunityAsync("wisp://old-invitation"));
+        Assert.Equal(2,calls);
+    }
+    [Fact]
     public void CachesAndSessionsAreIsolatedByServerAndOldDataIsNotDeleted()
     {
         var a=Config.DataDirectory("root");var b=(Config with{Url="https://other.example.com:8443"}).DataDirectory("root");

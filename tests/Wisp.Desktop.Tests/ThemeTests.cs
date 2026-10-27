@@ -248,7 +248,7 @@ public sealed class ThemeTests
             localVoice.Dispose();
             phase("optimistic voice entry and cancellation");
             var voiceChannel = store.GetChannels(community.Id).First(c => c.IsVoice);
-            var joinTask = (Task)typeof(MainWindow).GetMethod("JoinVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, new object[] { voiceChannel })!;
+            var joinTask = (Task)typeof(MainWindow).GetMethod("JoinVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, new object[] { voiceChannel, false, CancellationToken.None })!;
             Assert.False(joinTask.IsCompleted);
             Assert.Contains(Descendants(main).OfType<TextBlock>(), text => text.Text == "Соединение");
             main.UpdateLayout();
@@ -348,6 +348,14 @@ public sealed class ThemeTests
         main.UpdateLayout(); PumpLayout(main);
         Assert.InRange(view.VerticalOffset, 1, 200); // movement, bounded independently of Windows' wheel-line preference
         Motion.SetReduced(true); overlay.Close();
+        var target=new Channel(channelId,communityId,"Reconnect test",true);
+        typeof(MainWindow).GetMethod("BeginReconnect",flags)!.Invoke(main,new object[]{communityId,target});
+        var intent=(VoiceJoinIntent)typeof(MainWindow).GetField("voiceIntent",flags)!.GetValue(main)!;
+        Assert.True(intent.Connecting);
+        var leaving=(Task)typeof(MainWindow).GetMethod("LeaveVoice",flags)!.Invoke(main,null)!;
+        PumpLayout(main);Assert.True(leaving.IsCompletedSuccessfully);
+        Assert.False(intent.Connecting);Assert.Null(intent.ChannelId);
+        Assert.Null(typeof(MainWindow).GetField("reconnect",flags)!.GetValue(main));
     }
     private sealed class TestVoiceRoom(SfuConnectionInfo info, string channel) : IVoiceRoom
     {
@@ -362,7 +370,7 @@ public sealed class ThemeTests
         public event Action<WireMessage>? MessageReceived { add {} remove {} }
         public event Action<string>? Error { add {} remove {} }
         public event Action? Changed { add {} remove {} }
-        public Task EnterAsync(string communityId,string channelId,bool mute,bool deafen)=>Task.CompletedTask;
+        public Task EnterAsync(string communityId,string channelId,bool mute,bool deafen,CancellationToken cancellation=default)=>Task.CompletedTask;
         public Task SetMutedAsync(bool mute,bool deafen)=>Task.CompletedTask;
         public Task SendAsync(WireMessage message)=>Task.CompletedTask;
         public Task LeaveAsync()=>Task.CompletedTask;

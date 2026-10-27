@@ -41,7 +41,7 @@ type testHandler struct{ h *hub }
 
 func (h *testHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/healthz" {
-		fmt.Fprintln(w, "wisp-sfu protocol=1")
+		fmt.Fprintln(w, "wisp-sfu protocol=2")
 		return
 	}
 	h.h.serve(w, r)
@@ -72,7 +72,7 @@ func joinTest(t *testing.T, srv *httptest.Server, uid, token string) (*websocket
 	}
 }
 func TestAdmission(t *testing.T) {
-	_, srv := testHub(t, 0)
+	h, srv := testHub(t, 0)
 	if _, m := joinTest(t, srv, "denied", "bad"); m.Type != "rejected" {
 		t.Fatal("invalid auth accepted")
 	}
@@ -81,8 +81,49 @@ func TestAdmission(t *testing.T) {
 			t.Fatal("unlimited room rejected participant", uid)
 		}
 	}
-	if _, m := joinTest(t, srv, "a", "fixture"); m.Type != "rejected" {
-		t.Fatal("duplicate login admitted")
+	if _, m := joinTest(t, srv, "a", "fixture"); m.Type != "ready" {
+		t.Fatal("authenticated reconnect rejected by stale login")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.sessions) != 7 {
+		t.Fatal("takeover leaked duplicate sessions", len(h.sessions))
+	}
+}
+func TestTakeoverPreservesCapacityAndRequiresAuthentication(t *testing.T) {
+	h, srv := testHub(t, 1)
+	if _, m := joinTest(t, srv, "a", "fixture"); m.Type != "ready" {
+		t.Fatal("first login rejected")
+	}
+	h.mu.Lock()
+	var original *session
+	for s := range h.sessions {
+		original = s
+	}
+	h.mu.Unlock()
+	if _, m := joinTest(t, srv, "a", "bad"); m.Type != "rejected" {
+		t.Fatal("invalid takeover admitted")
+	}
+	select {
+	case <-original.ctx.Done():
+		t.Fatal("invalid token kicked legitimate user")
+	default:
+	}
+	if _, m := joinTest(t, srv, "b", "fixture"); m.Type != "rejected" {
+		t.Fatal("capacity ignored")
+	}
+	if _, m := joinTest(t, srv, "a", "fixture"); m.Type != "ready" {
+		t.Fatal("capacity blocked own reconnect")
+	}
+	select {
+	case <-original.ctx.Done():
+	default:
+		t.Fatal("takeover left old transport alive")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.sessions) != 1 {
+		t.Fatal("takeover leaked session")
 	}
 }
 func TestNativeInterop(t *testing.T) {

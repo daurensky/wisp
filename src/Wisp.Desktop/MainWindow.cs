@@ -76,6 +76,7 @@ public sealed class MainWindow : ThemedWindow
     }
     private UserProfile profile;
     private readonly IVoiceRoom? rtc;
+    private CancellationTokenSource? reconnect;
     private readonly VoiceService voice = new();
     private readonly VoiceRecorder recorder = new();
     private readonly ScreenShareService screen = new();
@@ -217,7 +218,12 @@ public sealed class MainWindow : ThemedWindow
             rtc.Changed += () => Dispatcher.BeginInvoke(() =>
             {
                 if (closing) return;
-                if (!rtc.Joined && !voiceIntent.Connecting) { cloudChannelId = null; if (voiceChannelId is not null) StopVoice(); }
+                if (!rtc.Joined && !voiceIntent.Connecting && voiceChannelId is { } lost && community is { } current)
+                {
+                    var target=store.GetChannels(current.Id).FirstOrDefault(c=>c.Id==lost);
+                    cloudChannelId=null;StopVoice();
+                    if(target is not null)BeginReconnect(current.Id,target);
+                }
                 var active = rtc.ConnectedPeerIds; voice.SynchronizePeers(active);
                 var paths = string.Join(", ", rtc.ConnectionPaths.Values.OrderBy(path => path));
                 if (paths.Length > 0 && paths != lastConnectionPaths) Notify("Путь соединения: " + paths);
@@ -311,7 +317,7 @@ public sealed class MainWindow : ThemedWindow
         toggle.Click += (_, _) => { try { action(); } catch (Exception ex) { Notify(ex.Message, true); } }; return toggle;
     }
     private ToggleIconButton VoiceToggle(string normal, string active, string normalTip, string activeTip, Func<Task> action) => VoiceToggle(normal, active, normalTip, activeTip, () => Run(action));
-    private async void Run(Func<Task> action) { if (closing) return; try { await action(); } catch (Exception ex) { if (!closing) Notify(ex.Message, true); } }
+    private async void Run(Func<Task> action) { if (closing) return; try { await action(); } catch (Exception ex) { DiagnosticLog.Write("action",ex);if (!closing) Notify(ex.Message, true); } }
     private void Notify(string text, bool error = false) { var added = notifications.Add(text, error); if (error && added && DateTimeOffset.UtcNow - lastErrorCue >= TimeSpan.FromSeconds(15)) { lastErrorCue = DateTimeOffset.UtcNow; sounds.Play("error"); } }
     internal void ReportNotification(string text, bool error = false) { Notify(text, error); if (error) ShowNotifications(); }
     private void ShowNotifications()
@@ -488,26 +494,27 @@ public sealed class MainWindow : ThemedWindow
     {
         EnsureNoRecording();if(cloud is null)throw new InvalidOperationException("Нужно подключение к серверу.");
         var dialog=new FormDialog(this,"Присоединиться");var invite=dialog.Field("Приглашение wisp-invite:","",true);dialog.Accept("Подключиться");if(dialog.ShowDialog()!=true)return;
-        await Disconnect();string id=await cloud.JoinCommunityAsync(invite.Text.Trim());
+        string id=await cloud.JoinCommunityAsync(invite.Text.Trim());
         var snapshot=await cloud.GetAsync<CommunitySnapshot>($"communities/{id}/snapshot")??throw new InvalidOperationException("Сообщество не найдено.");
-        store.SaveSnapshot(snapshot);store.UpsertMember(id,profile);SetCommunity(snapshot.Community);await RefreshCloud();sounds.Play("connect");
+        store.SaveSnapshot(snapshot);store.UpsertMember(id,profile);await Disconnect();SetCommunity(snapshot.Community);await RefreshCloud();sounds.Play("connect");
     }
     private void CreateChannel()
     {
         if (community is null) return; if (community.OwnerId != profile.Id) throw new InvalidOperationException("Создавать каналы может владелец сообщества.");
         var d = new FormDialog(this, "Новый канал"); var name = d.Field("Название"); var isVoice = d.Check("Голосовой канал"); d.Accept("Создать"); if (d.ShowDialog() == true) { var c = store.CreateChannel(community.Id, name.Text, isVoice.IsChecked == true); SelectChannel(c); if (cloud is not null) Run(() => cloud.CreateCommunityAsync(new CommunitySnapshot(community, store.GetChannels(community.Id), store.GetMembers(community.Id)))); sounds.Play("message"); }
     }
-    private async Task JoinVoice(Channel c)
+    private async Task JoinVoice(Channel c,bool automatic=false,CancellationToken cancellation=default)
     {
-        if(voiceChannelId==c.Id)return;EnsureNoRecording();if(community is null)return;
+        if(!automatic&&voiceChannelId==c.Id)return;
+        if(!automatic)CancelReconnect();EnsureNoRecording();if(community is null)return;
         var joiningCommunity=community;StopVoice();long request=voiceIntent.Begin(c.Id);
         voiceChannelId=c.Id;cloudChannelId=c.Id;RenderChannels();UpdateStatus();
-        await Dispatcher.Yield(DispatcherPriority.Render);await voiceTransitions.WaitAsync();
+        await Dispatcher.Yield(DispatcherPriority.Render);await voiceTransitions.WaitAsync(cancellation);
         try
         {
             if(!voiceIntent.IsCurrent(request))return;
             if(rtc is null||cloud is null)throw new InvalidOperationException("Нужно подключение к серверу Wisp.");
-            await rtc.EnterAsync(joiningCommunity.Id,c.Id,muted,deafened);
+            await rtc.EnterAsync(joiningCommunity.Id,c.Id,muted,deafened,cancellation);
             if(!voiceIntent.IsCurrent(request))return;await rtc.SetMutedAsync(muted,deafened);
             if(!voiceIntent.IsCurrent(request))return;
             voice.Muted=muted;voice.Deafened=deafened;voice.Start();voiceIntent.Complete(request);RenderChannels();UpdateStatus();sounds.Play("connect");
@@ -523,9 +530,40 @@ public sealed class MainWindow : ThemedWindow
     }
     private async Task LeaveVoice()
     {
-        cloudChannelId=null;StopVoice();RenderChannels();UpdateStatus();await voiceTransitions.WaitAsync();
+        CancelReconnect();cloudChannelId=null;StopVoice();RenderChannels();UpdateStatus();await voiceTransitions.WaitAsync();
         try{if(rtc is not null)await rtc.LeaveAsync();if(cloud is not null&&community is not null)await cloud.PresenceAsync(community.Id,profile,null);sounds.Play("disconnect");}
         finally{voiceTransitions.Release();}
+    }
+    private void CancelReconnect()=>Interlocked.Exchange(ref reconnect,null)?.Cancel();
+    private void BeginReconnect(string communityId,Channel target)
+    {
+        CancelReconnect();var lifetime=new CancellationTokenSource();reconnect=lifetime;
+        Run(async()=>
+        {
+            try
+            {
+                foreach(int delay in new[]{1,2,4,8,15})
+                {
+                    if(closing||community?.Id!=communityId||lifetime.IsCancellationRequested)return;
+                    voiceIntent.Begin(target.Id);voiceChannelId=target.Id;RenderChannels();UpdateStatus();
+                    await Task.Delay(TimeSpan.FromSeconds(delay),lifetime.Token);
+                    try {await JoinVoice(target,true,lifetime.Token);return;}
+                    catch(OperationCanceledException)when(lifetime.IsCancellationRequested){return;}
+                    catch(Exception ex){DiagnosticLog.Write("voice-reconnect",ex);}
+                }
+                Notify("Не удалось восстановить голос после пяти попыток. Проверь сервер и подключись к каналу вручную.",true);
+            }
+            catch(OperationCanceledException)when(lifetime.IsCancellationRequested){}
+            finally
+            {
+                if(ReferenceEquals(reconnect,lifetime))
+                {
+                    reconnect=null;
+                    if(rtc?.Joined!=true){cloudChannelId=null;StopVoice();RenderChannels();UpdateStatus();}
+                }
+                lifetime.Dispose();
+            }
+        });
     }
     public void Quit(){exitRequested=true;Close();}
     private void RestoreFromTray(){Show();WindowState=WindowState.Normal;Activate();foreach(var viewer in viewers.Values)viewer.Show();}
@@ -1088,7 +1126,7 @@ public sealed class MainWindow : ThemedWindow
     {
         if (closing) return;
         if (!exitRequested) { e.Cancel = true; foreach (var v in viewers.Values) v.Hide(); Hide(); return; }
-        e.Cancel = true; closing = true; activityTimer.Stop(); cloudTimer.Stop(); receiveLifetime.Cancel(); incoming.Writer.TryComplete(); latestFrames.Clear();
+        e.Cancel = true; closing = true; CancelReconnect();activityTimer.Stop(); cloudTimer.Stop(); receiveLifetime.Cancel(); incoming.Writer.TryComplete(); latestFrames.Clear();
         try { if (recorder.IsRecording) { var path = await recorder.StopAsync(); File.Delete(path); } if (recordedPath is not null) File.Delete(recordedPath); recorder.Dispose(); if (cloud is not null && community is not null) { try { await cloud.DeleteAsync($"communities/{community.Id}/presence/{profile.Id}"); } catch { } } StopVoice(); if (rtc is not null) await rtc.DisposeAsync(); tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); voice.Dispose(); screen.Dispose(); sounds.Dispose(); shareAudio.Dispose(); sharePlayback.Dispose(); }
         catch { } finally { _ = Dispatcher.BeginInvoke(new Action(Close)); }
     }

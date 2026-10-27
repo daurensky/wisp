@@ -116,7 +116,19 @@ public sealed class ServerBackend:IDisposable
         using var request=new HttpRequestMessage(HttpMethod.Post,path){Content=JsonContent.Create(value)};request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",await TokenAsync());using var response=await http.SendAsync(request);return await Read(response);
     }
     public async Task<string> CreateInviteAsync(string community){using var json=await ApiPost("/v1/invites/create",new{community});return "wisp-invite:"+json.RootElement.GetProperty("token").GetString();}
-    public async Task<string> JoinCommunityAsync(string invite){using var json=await ApiPost("/v1/invites/accept",new{token=invite.StartsWith("wisp-invite:",StringComparison.Ordinal)?invite[12..]:invite});return json.RootElement.GetProperty("community").GetString()!;}
+    public async Task<string> JoinCommunityAsync(string invite)
+    {
+        // Codes contain no whitespace; messaging apps can wrap copied lines.
+        invite=string.Concat(invite.Where(c=>!char.IsWhiteSpace(c)));
+        var token=invite.StartsWith("wisp-invite:",StringComparison.OrdinalIgnoreCase)?invite[12..]:invite;
+        if(!Regex.IsMatch(token,"^[A-Za-z0-9_-]{43}$"))throw new ArgumentException("Нужно новое приглашение wisp-invite: с кодом. Старые ссылки прежнего backend не подходят.");
+        try
+        {
+            using var json=await ApiPost("/v1/invites/accept",new{token});return json.RootElement.GetProperty("community").GetString()!;
+        }
+        catch(ServerRequestException ex)when(ex.Status==HttpStatusCode.NotFound)
+        {throw new ServerRequestException(ex.Status,"Приглашение не найдено или срок его действия истёк. Попроси новое и проверь, что выбран тот же сервер Wisp.");}
+    }
     public async Task<List<CommunitySnapshot>> CommunitiesAsync()
     {
         var ids=await GetAsync<Dictionary<string,bool>>($"users/{Profile!.Id}/communities")??new();var result=new List<CommunitySnapshot>();

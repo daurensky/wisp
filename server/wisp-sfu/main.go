@@ -105,11 +105,16 @@ func (s *session) send(m message) {
 	case <-s.ctx.Done():
 	case s.out <- m:
 	default:
-		go s.stop()
+		go s.stop("signaling queue full")
 	}
 }
-func (s *session) stop() {
+func (s *session) stop(reasons ...string) {
 	s.once.Do(func() {
+		reason := "transport closed"
+		if len(reasons) > 0 {
+			reason = reasons[0]
+		}
+		log.Printf("voice session ended user=%s reason=%s", s.ident.UID, reason)
 		s.cancel()
 		s.ws.CloseNow()
 		h := s.hub
@@ -165,7 +170,7 @@ func (s *session) newPC() (*webrtc.PeerConnection, error) {
 	}
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
 		if st == webrtc.PeerConnectionStateFailed {
-			go s.stop()
+			go s.stop("media transport failed")
 		}
 	})
 	return pc, nil
@@ -204,7 +209,7 @@ func (s *session) relay(data []byte, label string) {
 			continue
 		}
 		if dc.BufferedAmount() > 1024*1024 {
-			go l.owner.stop()
+			go l.owner.stop("control receiver backlog")
 			continue
 		}
 		if err := dc.Send(data); err != nil {
@@ -447,15 +452,17 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 		s.tracks[i] = t
 	}
 	h.mu.Lock()
-	allowed := h.max == 0 || len(h.sessions) < h.max
+	var replaced []*session
 	for old := range h.sessions {
 		if old.ident.UID == ident.UID {
-			allowed = false
+			replaced = append(replaced, old)
 		}
-
 	}
-
+	allowed := h.max == 0 || len(h.sessions)-len(replaced) < h.max
 	if allowed {
+		for _, old := range replaced {
+			delete(h.sessions, old)
+		}
 		h.sessions[s] = true
 		s.muted = m.Muted
 		s.deafened = m.Deafened
@@ -463,8 +470,13 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	h.mu.Unlock()
 	if !allowed {
-		_ = ws.Close(websocket.StatusPolicyViolation, "room or server full; duplicate login")
+		_ = ws.Close(websocket.StatusPolicyViolation, "server full")
 		return
+	}
+	// A freshly authenticated connection takes over its account's stale socket.
+	// Close outside hub.mu: stop also acquires that lock and removes source links.
+	for _, old := range replaced {
+		old.stop("replaced by authenticated reconnect")
 	}
 	<-h.handshakes
 	released = true
@@ -480,14 +492,15 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 				err := ws.Write(wc, websocket.MessageText, b)
 				cc()
 				if err != nil {
-					s.stop()
+					s.stop("signaling write failed")
 					return
 				}
 			}
 		}
 	}()
 	s.send(message{Type: "ready", Version: 2})
-	// Auth refresh is received in-band, then checked every 20s with the seat lease.
+	// Auth refresh is received in-band. Ping bounds stale transport lifetime even
+	// when a vanished client still has an unexpired access token.
 	go func() {
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
@@ -496,19 +509,26 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				pc, pingCancel := context.WithTimeout(ctx, 8*time.Second)
+				err := ws.Ping(pc)
+				pingCancel()
+				if err != nil {
+					s.stop("signaling heartbeat failed")
+					return
+				}
 				s.mu.Lock()
 				a := s.authMessage
 				pub := s.links["pub"]
 				s.mu.Unlock()
 				if pub == nil {
-					s.stop()
+					s.stop("uplink negotiation timed out")
 					return
 				}
 				ac, cc := context.WithTimeout(ctx, 10*time.Second)
 				id, err := h.auth(ac, a)
 				cc()
 				if err != nil || id != s.ident {
-					s.stop()
+					s.stop("session authorization expired or revoked")
 					return
 				}
 			}
@@ -619,7 +639,7 @@ func mediaAPI(publicIP string, port int) (*webrtc.API, func(), error) {
 		settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
 		closeFn = func() { _ = mux.Close() }
 	}
-	settings.SetICETimeouts(10*time.Second, 20*time.Second, 2*time.Second)
+	settings.SetICETimeouts(15*time.Second, 45*time.Second, 2*time.Second)
 	engine := &webrtc.MediaEngine{}
 	for i, c := range trackCodecs() {
 		kind := webrtc.RTPCodecTypeAudio

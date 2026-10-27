@@ -60,7 +60,9 @@ internal sealed class CommunicationsCapture(string endpointId, Action<string> st
             }
             finally { client.Stop(); }
         }
-        catch (Exception ex) when (!stop.IsCancellationRequested) { failure = ex; }
+        // This is a real background Thread. Shutdown/device errors must also be
+        // caught after cancellation, otherwise they terminate the entire process.
+        catch (Exception ex) { if (!stop.IsCancellationRequested) failure = ex; }
         finally
         {
             if (com >= 0) CoUninitialize();

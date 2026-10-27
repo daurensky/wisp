@@ -6,7 +6,7 @@ using SIPSorcery.Net;
 
 namespace Wisp.Core;
 
-/// <summary>One SRTP uplink and up to four source-bound downlinks. The SFU never transcodes.</summary>
+/// <summary>One SRTP uplink and source-bound downlinks. The SFU never transcodes.</summary>
 public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, RtcPeerFactory? peerFactory = null) : IVoiceRoom
 {
     private readonly ConcurrentDictionary<string, Link> links = new();
@@ -56,13 +56,21 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
         joined = false;
         Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Disconnected));
         ready?.TrySetException(new IOException(error)); published?.TrySetException(new IOException(error));
-        stop?.Cancel(); socket?.Abort();
-        foreach (var l in links.Values) l.Peer.Dispose();
+        var lifetime=stop; lifetime?.Cancel(); socket?.Abort();
+        // Native state callbacks may hold transport locks: never close their PC
+        // synchronously from that callback. Also scope cleanup to this attempt.
+        _=Task.Run(async()=>
+        {
+            await lifecycle.WaitAsync();
+            try { if(ReferenceEquals(stop,lifetime))await LeaveCoreAsync(); }
+            catch(Exception) { /* The failed attempt is already reported below. */ }
+            finally { lifecycle.Release(); }
+        });
         Error?.Invoke(error); Changed?.Invoke();
     }
-    public async Task EnterAsync(string communityId, string channelId, bool mute, bool deafen)
+    public async Task EnterAsync(string communityId, string channelId, bool mute, bool deafen, CancellationToken cancellation = default)
     {
-        await lifecycle.WaitAsync();
+        await lifecycle.WaitAsync(cancellation);
         try
         {
             await LeaveCoreAsync();
@@ -72,7 +80,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
             ready = Completion(); published = Completion();
             stop = new CancellationTokenSource();
             outbound = System.Threading.Channels.Channel.CreateBounded<object>(new BoundedChannelOptions(128) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop.Token,cancellation);
             deadline.CancelAfter(TimeSpan.FromSeconds(45));
             var token = deadline.Token;
             try
@@ -114,7 +122,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
         peer.MessageReceived += m => { if (Joined && remote != uid && links.TryGetValue(id, out var active) && ReferenceEquals(active, link)) MessageReceived?.Invoke(m); };
         peer.StateChanged += state =>
         {
-            if (stop?.IsCancellationRequested != false || !links.ContainsKey(id)) return;
+            if (stop?.IsCancellationRequested != false || !links.TryGetValue(id,out var active) || !ReferenceEquals(active,link)) return;
             if (state is "failed" or "invalid-packet" or "restart-required") { Fail("Соединение SFU потеряно. Подключись к каналу снова."); return; }
             if (id == "pub" && peer.Connected) published?.TrySetResult();
             Changed?.Invoke();
@@ -148,6 +156,13 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
                 {
                     if (count == buffer.Length) throw new InvalidDataException();
                     result = await socket!.ReceiveAsync(new ArraySegment<byte>(buffer, count, buffer.Length - count), token);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        Fail(result.CloseStatus==WebSocketCloseStatus.PolicyViolation
+                            ? "SFU отклонил подключение: проверь доступ к каналу или ограничение сервера."
+                            : "SFU закрыл соединение (код "+result.CloseStatus+"). Будет выполнено повторное подключение.");
+                        return;
+                    }
                     if (result.MessageType != WebSocketMessageType.Text) throw new InvalidDataException();
                     count += result.Count;
                 } while (!result.EndOfMessage);

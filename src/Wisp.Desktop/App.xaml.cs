@@ -8,6 +8,9 @@ public partial class App:System.Windows.Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);ShutdownMode=ShutdownMode.OnExplicitShutdown;
+        DispatcherUnhandledException+=(_,args)=>DiagnosticLog.Write("dispatcher",args.Exception);
+        AppDomain.CurrentDomain.UnhandledException+=(_,args)=>{if(args.ExceptionObject is Exception ex)DiagnosticLog.Write("unhandled",ex);};
+        TaskScheduler.UnobservedTaskException+=(_,args)=>DiagnosticLog.Write("background-task",args.Exception);
         try
         {
             var root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Wisp");Directory.CreateDirectory(root);ThemeManager.Initialize(root);

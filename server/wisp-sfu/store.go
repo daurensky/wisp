@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS wisp_sessions (
  access_hash bytea PRIMARY KEY, refresh_hash bytea UNIQUE NOT NULL, user_id text NOT NULL REFERENCES wisp_users(id) ON DELETE CASCADE,
  access_until timestamptz NOT NULL, refresh_until timestamptz NOT NULL);
 CREATE INDEX IF NOT EXISTS wisp_sessions_expiry ON wisp_sessions(refresh_until);
+ALTER TABLE wisp_sessions ADD COLUMN IF NOT EXISTS previous_access_hash bytea;
+ALTER TABLE wisp_sessions ADD COLUMN IF NOT EXISTS previous_access_until timestamptz;
 CREATE TABLE IF NOT EXISTS wisp_communities (id text PRIMARY KEY, owner_id text NOT NULL REFERENCES wisp_users(id));
 CREATE TABLE IF NOT EXISTS wisp_members (community_id text NOT NULL REFERENCES wisp_communities(id) ON DELETE CASCADE,
  user_id text NOT NULL REFERENCES wisp_users(id), PRIMARY KEY(community_id,user_id));
@@ -115,7 +117,7 @@ func (s *store) access(ctx context.Context, token string) (string, error) {
 		return "", denied
 	}
 	var uid string
-	err := s.db.QueryRow(ctx, `SELECT user_id FROM wisp_sessions WHERE access_hash=$1 AND access_until>now() AND refresh_until>now()`, digest(token)).Scan(&uid)
+	err := s.db.QueryRow(ctx, `SELECT user_id FROM wisp_sessions WHERE refresh_until>now() AND ((access_hash=$1 AND access_until>now()) OR (previous_access_hash=$1 AND previous_access_until>now()))`, digest(token)).Scan(&uid)
 	if err != nil {
 		return "", denied
 	}
@@ -250,7 +252,9 @@ func (s *store) auth(w http.ResponseWriter, r *http.Request) {
 		}
 		access, refresh := randomToken(), randomToken()
 		var uid string
-		err := s.db.QueryRow(r.Context(), `UPDATE wisp_sessions SET access_hash=$1,refresh_hash=$2,access_until=now()+interval '15 minutes',refresh_until=now()+interval '90 days' WHERE refresh_hash=$3 AND refresh_until>now() RETURNING user_id`, digest(access), digest(refresh), digest(in.RefreshToken)).Scan(&uid)
+		// Existing API/voice requests may still carry the old token until the next
+		// in-band SFU auth update. Bound overlap to 90s and never extend its expiry.
+		err := s.db.QueryRow(r.Context(), `UPDATE wisp_sessions SET previous_access_hash=access_hash,previous_access_until=LEAST(access_until,now()+interval '90 seconds'),access_hash=$1,refresh_hash=$2,access_until=now()+interval '15 minutes',refresh_until=now()+interval '90 days' WHERE refresh_hash=$3 AND refresh_until>now() RETURNING user_id`, digest(access), digest(refresh), digest(in.RefreshToken)).Scan(&uid)
 		if err != nil {
 			apiError(w, 401, "Session expired")
 			return

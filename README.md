@@ -35,3 +35,5 @@ dotnet test tests/Wisp.Desktop.Tests -c Release
 Сборка RNNoise и portable автоматизированы в Windows CI. Для сервера используются закреплённые `go.mod`/`go.sum`; CI проверяет реальные PostgreSQL-операции и шесть нативных клиентов.
 
 [Архитектура](docs/ARCHITECTURE.md) · [Проверки](docs/TESTING.md) · [Лицензии и ресурсы](docs/licenses/ASSETS.md)
+
+[Восстановление голосового соединения и диагностика](docs/RECOVERY.md).

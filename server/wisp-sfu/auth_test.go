@@ -185,12 +185,39 @@ func TestPostgresAccountsAndCommunityAccess(t *testing.T) {
 		t.Fatal("used refresh token accepted twice")
 	}
 	status, _ = apiCall(t, srv, "GET", "/v1/data/communities/community/snapshot", alice.AccessToken, nil)
+	if status != 200 {
+		t.Fatal("in-flight SFU token was revoked before handover")
+	}
+	var overlap float64
+	if err := s.db.QueryRow(context.Background(), `SELECT EXTRACT(EPOCH FROM previous_access_until-now())::float8 FROM wisp_sessions WHERE access_hash=$1`, digest(refreshed.AccessToken)).Scan(&overlap); err != nil || overlap <= 0 || overlap > 90 {
+		t.Fatal("invalid bounded token overlap", overlap, err)
+	}
+	if _, err := s.db.Exec(context.Background(), `UPDATE wisp_sessions SET previous_access_until=now()-interval '1 second' WHERE access_hash=$1`, digest(refreshed.AccessToken)); err != nil {
+		t.Fatal(err)
+	}
+	status, _ = apiCall(t, srv, "GET", "/v1/data/communities/community/snapshot", alice.AccessToken, nil)
 	if status != 401 {
-		t.Fatal("rotated access token remained valid")
+		t.Fatal("expired overlap still authorized old access token")
 	}
 	status, _ = apiCall(t, srv, "GET", "/v1/data/communities/community/snapshot", refreshed.AccessToken, nil)
 	if status != 200 {
 		t.Fatal("new access token unusable")
+	}
+	status, data = apiCall(t, srv, "POST", "/v1/auth/refresh", "", map[string]string{"refreshToken": refreshed.RefreshToken})
+	if status != 200 {
+		t.Fatal("second refresh failed")
+	}
+	var latest account
+	_ = json.Unmarshal(data, &latest)
+	status, _ = apiCall(t, srv, "POST", "/v1/auth/logout", "", map[string]string{"refreshToken": latest.RefreshToken})
+	if status != 200 {
+		t.Fatal("logout failed")
+	}
+	for _, token := range []string{refreshed.AccessToken, latest.AccessToken} {
+		status, _ = apiCall(t, srv, "GET", "/v1/data/communities/community/snapshot", token, nil)
+		if status != 401 {
+			t.Fatal("logout retained current or overlapping access token")
+		}
 	}
 }
 
