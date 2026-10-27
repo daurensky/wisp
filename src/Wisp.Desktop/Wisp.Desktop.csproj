@@ -13,6 +13,7 @@
 <ItemGroup><Content Include="../../docs/licenses/Opus.txt" Link="licenses/Opus.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/><Content Include="../../docs/licenses/Vortice-MIT.txt" Link="licenses/Vortice-MIT.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"/></ItemGroup>
 <ItemGroup><PackageReference Include="Vortice.Direct3D11" Version="3.8.3" /></ItemGroup>
   <PropertyGroup><RnNoiseBinary>$(MSBuildThisFileDirectory)../../artifacts/native/rnnoise.dll</RnNoiseBinary></PropertyGroup>
+  <ItemGroup><Content Include="../../docs/licenses/Lucide.txt" Link="licenses/Lucide.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
   <ItemGroup>
     <Content Include="$(RnNoiseBinary)" Condition="Exists('$(RnNoiseBinary)')" Link="rnnoise.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../docs/licenses/RNNoise.txt" Link="licenses/RNNoise.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
