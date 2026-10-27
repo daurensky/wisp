@@ -319,3 +319,11 @@ Windows CI: [40485909882](https://github.com/daurensky/wisp/actions/runs/4048590
 [Windows x64 ZIP](https://github.com/daurensky/wisp/actions/runs/40485909882/artifacts/12725765419)
 и [TRX/PNG](https://github.com/daurensky/wisp/actions/runs/40485909882/artifacts/12725625958).
 Последующий коммит только дополняет этот отчёт. Обновление правил Firebase не нужно.
+
+## SFU branch
+
+`codex/sfu-server` adds an opt-in Go/Pion forwarding service and a native SIPSorcery client transport. No Firebase schema change or deployment is performed by the agent. Run commands and manual VPS/Windows scenarios are in [SFU.md](SFU.md).
+
+Local cross-runtime integration passed with the Go race detector: five native-client transports and all 20 downlinks; microphone Opus, independent share-audio Opus, H264, events and fragmented files; source identity binding; continued microphone packets during video and a 2 MB file; mute/deafen presence, departure and rejoin. Authorization tests reject invalid tokens, non-members, text channels, stale/future seats and mismatched sessions; admission rejects a sixth user and duplicate login. Core adds WSS endpoint and certificate-pin tests. Resource validation still resolves 155 WPF resources.
+
+Hardware voice/screen capture, Kazakhstan/Korea routes and the 1-vCPU production VPS remain untested. Linux unit runs of the pre-existing direct-P2P bulk-transfer test timed out at `RtcTests.cs:81` while Go compiler jobs were active; this does not establish a production regression or a complete green core suite. Final CI results below supersede local build/load-dependent results.

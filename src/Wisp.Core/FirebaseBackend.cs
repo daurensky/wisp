@@ -53,6 +53,9 @@ public sealed partial class FirebaseBackend : IDisposable
         var restored = await GetAsync<UserProfile>($"profiles/{uid}/Info") ?? await GetAsync<UserProfile>($"profiles/{uid}") ?? throw new InvalidDataException("Профиль Firebase не найден.");
         return Profile = restored with { Id = uid, AvatarPath = null, BannerPath = null };
     }
+    /// <summary>A short-lived ID token for the configured SFU; never persist or log it.</summary>
+    public Task<string> GetAccessTokenAsync(CancellationToken cancellation = default) => TokenAsync().WaitAsync(cancellation);
+
     private async Task<string> TokenAsync()
     {
         await refreshGate.WaitAsync();

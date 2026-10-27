@@ -12,7 +12,7 @@ public sealed record RtcCandidate(string Candidate, string SdpMid, int SdpMLineI
 public sealed record RtcWake(string FromSession, string ToSession, string Attempt, string Kind, string Version, long CreatedAt);
 
 /// <summary>Five leased seats, deterministic offer roles, one room SSE stream and bounded recovery.</summary>
-public sealed class RtcMesh : IAsyncDisposable
+public sealed class RtcMesh : IVoiceRoom
 {
     private static readonly string[] SlotNames = ["s0", "s1", "s2", "s3", "s4"];
     private static readonly TimeSpan[] RetryDelays = [TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30)];
@@ -35,6 +35,7 @@ public sealed class RtcMesh : IAsyncDisposable
     private bool muted, deafened;
     private string? lastError;
 
+    public string TransportName => "WebRTC · P2P";
     public bool Joined => session is not null && !expired;
     public string? ChannelId => Joined ? channel : null;
     public IReadOnlyList<RtcSeat> Participants
