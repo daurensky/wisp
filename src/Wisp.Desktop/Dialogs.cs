@@ -15,7 +15,7 @@ public sealed class AuthWindow : ThemedWindow
         panel.Children.Add(new TextBlock { Text = "Место для своих.", Margin = Ui.Insets(0, Ui.Xs, 0, Ui.Xl) });
         panel.Children.Add(Ui.Label(cloud is null ? "Имя пользователя" : "Email", Ui.Caption, true)); var user = new TextBox(); panel.Children.Add(user);
         panel.Children.Add(Ui.Label("Пароль · от 8 символов", Ui.Caption, true)); var pass = new PasswordBox(); panel.Children.Add(pass);
-        var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = Ui.Insets(0, Ui.S) }; error.SetResourceReference(TextBlock.ForegroundProperty, "Danger"); panel.Children.Add(error); Ui.Name(user, cloud is null ? "Имя пользователя" : "Email"); Ui.Name(pass, "Пароль");
+        var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = Ui.Insets(0, Ui.S), Visibility = Visibility.Collapsed }; error.SetResourceReference(TextBlock.ForegroundProperty, "Danger"); panel.Children.Add(error); Ui.Name(user, cloud is null ? "Имя пользователя" : "Email"); Ui.Name(pass, "Пароль");
         TextBox? username = null;
         if (cloud is not null) { panel.Children.Add(Ui.Label("Имя пользователя (при регистрации)", Ui.Caption, true)); username = new TextBox { MaxLength = 32 }; panel.Children.Add(username); }
         async void Submit(bool register)
@@ -24,7 +24,7 @@ public sealed class AuthWindow : ThemedWindow
                 if (register && pass.Password.Length < 8) throw new ArgumentException("Пароль должен содержать минимум 8 символов.");
                 if (cloud is not null && register && !System.Text.RegularExpressions.Regex.IsMatch(username!.Text, @"^[\p{L}\p{N}_\-.]{3,32}$")) throw new ArgumentException("Имя: 3–32 буквы, цифры, _, - или точка.");
                 Profile = cloud is not null ? await cloud.SignInAsync(user.Text.Trim(), pass.Password, register, username?.Text ?? "user") : register ? store.Register(user.Text.Trim(), pass.Password) : store.Login(user.Text.Trim(), pass.Password); if (Profile is null) throw new InvalidOperationException("Неверное имя или пароль."); DialogResult = true; }
-            catch (Exception ex) { error.Text = ex.Message; } finally { panel.IsEnabled = true; }
+            catch (Exception ex) { error.Text = ex.Message; error.Visibility = Visibility.Visible; } finally { panel.IsEnabled = true; }
         }
         var login = Buttons.Create("Войти", () => Submit(false), "Войти · Enter", "arrow-right", "Button.Primary"); login.IsDefault = true; login.Margin = Ui.Insets(0, 0, 0, Ui.S); panel.Children.Add(login);
         var signup = Buttons.Create("Создать аккаунт", () => Submit(true), "Создать аккаунт", "plus"); signup.Margin = Ui.Insets(0); panel.Children.Add(signup); Loaded += (_, _) => user.Focus();
