@@ -151,6 +151,24 @@ public sealed class ThemeTests
             phase("form overlay"); var dialog = new FormDialog(main, "Профиль"); dialog.Field("Имя", "UiTester"); dialog.Accept();
             main.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => { Assert.Equal(windowCount, Application.Current.Windows.Count); dialog.DialogResult = true; }));
             Assert.True(dialog.ShowDialog());
+            phase("live microphone setting");
+            main.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+            {
+                var suppression = Assert.Single(Descendants(main).OfType<CheckBox>(), box =>
+                    box.Content?.ToString()?.StartsWith("Шумоподавление") == true);
+                Assert.True(suppression.IsChecked);
+                if (suppression.IsEnabled)
+                {
+                    suppression.IsChecked = false;
+                    Assert.False(Wisp.Desktop.Media.AudioDeviceSettings.Load(root).NoiseSuppression);
+                    suppression.IsChecked = true;
+                    Assert.True(Wisp.Desktop.Media.AudioDeviceSettings.Load(root).NoiseSuppression);
+                }
+                var audioDialog = Assert.Single(Descendants(main).OfType<FormDialog>());
+                audioDialog.Close();
+            }));
+            typeof(MainWindow).GetMethod("EditAudioDevices", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, null);
+            Assert.Equal(windowCount, Application.Current.Windows.Count);
             phase("send on Enter"); var composer = Assert.Single(Descendants(main).OfType<TextBox>(), box => box.AcceptsReturn);
             composer.Text = "hello :loop: world";
             var key = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(main), 0, Key.Enter) { RoutedEvent = Keyboard.PreviewKeyDownEvent };

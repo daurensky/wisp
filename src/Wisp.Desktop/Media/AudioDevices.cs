@@ -4,7 +4,7 @@ using NAudio.CoreAudioApi.Interfaces;
 namespace Wisp.Desktop.Media;
 
 public sealed record AudioDeviceChoice(string? Id, string Name);
-public sealed record AudioDeviceSettings(string? InputId = null, string? OutputId = null)
+public sealed record AudioDeviceSettings(string? InputId = null, string? OutputId = null, bool NoiseSuppression = true)
 {
     public static AudioDeviceSettings Load(string root)
     {
