@@ -16,6 +16,8 @@
     <Setter Property="Margin" Value="{StaticResource Margin.Section}"/>
   </Style>
   <Style x:Key="Button.Base" TargetType="Button">
+    <Setter Property="local:PointerFocus.Track" Value="True"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="Background" Value="{DynamicResource SurfaceElevated}"/>
     <Setter Property="BorderBrush" Value="{DynamicResource Border}"/>
@@ -46,7 +48,7 @@
             <Trigger Property="IsPressed" Value="True">
               <Setter TargetName="HoverSurface" Property="Opacity" Value="1"/>
             </Trigger>
-            <Trigger Property="IsKeyboardFocused" Value="True">
+            <Trigger Property="local:PointerFocus.KeyboardFocus" Value="True">
               <Setter TargetName="FocusRing" Property="Opacity" Value="1"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
@@ -233,10 +235,6 @@
             </Trigger>
             <Trigger Property="IsMouseOver" Value="True">
               <Setter TargetName="Item" Property="Background" Value="{DynamicResource Hover}"/>
-            </Trigger>
-            <Trigger Property="IsKeyboardFocusWithin" Value="True">
-              <Setter TargetName="Item" Property="BorderBrush" Value="{DynamicResource Accent}"/>
-              <Setter TargetName="Item" Property="BorderThickness" Value="1"/>
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>

@@ -22,6 +22,41 @@ public sealed class VoiceService : IDisposable
     private AudioDeviceWatcher? watcher;
     private CancellationTokenSource? debounce;
     private int captureCount;
+    public const string LocalSpeakerId = "";
+    private sealed class Speaker
+    {
+        public readonly SpeechActivity Activity = new();
+        public bool Reported;
+    }
+    private readonly Dictionary<string, Speaker> speakers = new(StringComparer.Ordinal);
+    private Timer? activityTimer;
+    public event Action<string, bool>? SpeakingChanged;
+    public bool IsSpeaking(string peerId) { lock (gate) return speakers.TryGetValue(peerId, out var speaker) && speaker.Activity.Speaking; }
+    private void ObserveSpeech(string peerId, ReadOnlySpan<short> samples)
+    {
+        if (!speakers.TryGetValue(peerId, out var speaker)) speakers[peerId] = speaker = new Speaker();
+        speaker.Activity.Observe(samples);
+        PublishSpeech(peerId, speaker);
+    }
+    private void PublishSpeech(string peerId, Speaker speaker)
+    {
+        bool speaking = speaker.Activity.Speaking;
+        if (speaker.Reported == speaking) return;
+        speaker.Reported = speaking; SpeakingChanged?.Invoke(peerId, speaking);
+    }
+    private void ClearSpeech(string peerId)
+    {
+        if (!speakers.Remove(peerId, out var speaker)) return;
+        if (speaker.Reported) SpeakingChanged?.Invoke(peerId, false);
+    }
+    private void ExpireSpeech(object? _)
+    {
+        lock (gate)
+        {
+            if (!running) return;
+            foreach (var pair in speakers) PublishSpeech(pair.Key, pair.Value);
+        }
+    }
     private volatile bool muted, deafened, running;
     private volatile bool noiseSuppression = true, noiseSuppressionAvailable;
     private bool processingInitialized, processingWarningShown;
@@ -42,11 +77,11 @@ public sealed class VoiceService : IDisposable
     public AudioDeviceSettings Devices { get; private set; } = new();
     public event Action<byte[]>? PacketReady;
     public event Action<string>? Error;
-    public bool Muted { get => muted; set => muted = value; }
+    public bool Muted { get => muted; set { muted = value; if (value) lock (gate) ClearSpeech(LocalSpeakerId); } }
     public bool Deafened
     {
         get => deafened;
-        set { deafened = value; lock (gate) foreach (var peer in peers.Values) peer.Buffer.Clear(); }
+        set { deafened = value; lock (gate) { foreach (var peer in peers.Values) peer.Buffer.Clear(); if (value) foreach (var id in speakers.Keys.ToArray()) ClearSpeech(id); } }
     }
     public void InitializeMicrophoneProcessing(bool enabled = true)
     {
@@ -91,6 +126,7 @@ public sealed class VoiceService : IDisposable
             encoder.UseDTX = true; encoder.UseInbandFEC = true; encoder.PacketLossPercent = 5;
             mixer = new MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(48000, 1)) { ReadFully = true };
             running = true;
+            activityTimer = new Timer(ExpireSpeech, null, 60, 60);
         }
         try { watcher = new AudioDeviceWatcher(ScheduleDeviceRefresh); watcher.Start(); }
         catch (Exception ex) { Error?.Invoke("Наблюдение за аудиоустройствами: " + ex.Message); }
@@ -165,6 +201,7 @@ public sealed class VoiceService : IDisposable
                     if (captureCount != FrameSamples) continue;
                     captureCount = 0;
                     if (micProcessing?.Process(captureFrame, muted, deafened) == false) continue;
+                    ObserveSpeech(LocalSpeakerId, captureFrame);
                     var packet = new byte[1275];
                     if (encoder is null) return;
                     int length = encoder.Encode(captureFrame.AsSpan(), FrameSamples, packet.AsSpan(), packet.Length);
@@ -186,6 +223,7 @@ public sealed class VoiceService : IDisposable
                 peer = new PlaybackPeer(); peers.Add(peerId, peer); mixer.AddMixerInput(peer);
             }
             if (!peer.Decoder.TryDecodeWithRecovery(packet, missingFrames, peer.Samples, out int samples)) return;
+            if (samples >= FrameSamples) ObserveSpeech(peerId, peer.Samples.AsSpan(samples - FrameSamples, FrameSamples));
             peer.Buffer.ObserveArrival(missingFrames);
             peer.Buffer.Write(peer.Samples.AsSpan(0, samples));
         }
@@ -197,6 +235,7 @@ public sealed class VoiceService : IDisposable
             foreach (var id in peers.Keys.Where(id => !active.Contains(id)).ToArray())
             {
                 var peer = peers[id]; mixer?.RemoveMixerInput(peer); peer.Decoder.Dispose(); peers.Remove(id);
+                ClearSpeech(id);
             }
     }
     private void CloseDevices()
@@ -210,6 +249,7 @@ public sealed class VoiceService : IDisposable
     public void Stop()
     {
         running = false;
+        Interlocked.Exchange(ref activityTimer, null)?.Dispose();
         var pending = Interlocked.Exchange(ref debounce, null);
         try { pending?.Cancel(); } catch (ObjectDisposedException) { }
         watcher?.Dispose(); watcher = null;
@@ -221,6 +261,7 @@ public sealed class VoiceService : IDisposable
             {
                 (encoder as IDisposable)?.Dispose(); encoder = null; mixer = null;
                 foreach (var peer in peers.Values) peer.Decoder.Dispose(); peers.Clear();
+                foreach (var id in speakers.Keys.ToArray()) ClearSpeech(id);
             }
         }
         finally { deviceSwitch.Release(); }
