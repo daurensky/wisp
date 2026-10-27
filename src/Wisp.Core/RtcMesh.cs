@@ -36,6 +36,24 @@ public sealed class RtcMesh : IAsyncDisposable
     private string? lastError;
 
     public bool Joined => session is not null && !expired;
+    public string? ChannelId => Joined ? channel : null;
+    public IReadOnlyList<RtcSeat> Participants
+    {
+        get
+        {
+            if (!Joined) return Array.Empty<RtcSeat>();
+            lock (roomGate)
+            {
+                var snapshot = room.Root is null ? JsonSerializer.SerializeToElement<object?>(null) : JsonSerializer.SerializeToElement(room.Root);
+                return ActiveParticipants(snapshot, cloud.ServerNow());
+            }
+        }
+    }
+    public static IReadOnlyList<RtcSeat> ActiveParticipants(JsonElement snapshot, DateTimeOffset now)
+    {
+        long timestamp = now.ToUnixTimeMilliseconds();
+        return ReadSeats(snapshot).Values.Where(seat => timestamp - seat.SeenAt < 45000 && seat.SeenAt <= timestamp + 10000).ToArray();
+    }
     public int ConnectedCount => links.Values.Count(link => !link.Failed && link.Peer.Connected);
     public IReadOnlyList<string> ConnectedPeerIds => links.Where(pair => !pair.Value.Failed && pair.Value.Peer.Connected).Select(pair => pair.Key).ToArray();
     public IReadOnlyDictionary<string, string> ConnectionPaths => links.Where(pair => !pair.Value.Failed && pair.Value.Peer.Connected && pair.Value.Peer.SelectedCandidateTypes is not null).ToDictionary(pair => pair.Key, pair => pair.Value.Peer.SelectedCandidateTypes!);

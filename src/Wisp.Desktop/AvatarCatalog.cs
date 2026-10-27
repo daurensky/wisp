@@ -43,9 +43,10 @@ public sealed class AvatarCatalog(string root, string localId)
         if (decoder.Frames.Count > 500 || decoder.Frames[0].PixelWidth > 2048 || decoder.Frames[0].PixelHeight > 2048)
             throw new InvalidDataException("Аватар: максимум 2048×2048 и 500 кадров GIF.");
     }
-    public static Image Image(string path, double size, bool animate = true)
+    public static Image Image(string path, double size, bool animate = true, GifPlaybackMode mode = GifPlaybackMode.Always, FrameworkElement? hoverScope = null)
     {
         var image = new Image { Width = size, Height = size, Stretch = Stretch.UniformToFill };
+        GifPlayback.SetMode(image, mode); GifPlayback.SetScope(image, hoverScope);
         using var file = File.OpenRead(path); var header = new byte[6]; _ = file.Read(header);
         if (animate && Encoding.ASCII.GetString(header).StartsWith("GIF8"))
         {
@@ -55,9 +56,10 @@ public sealed class AvatarCatalog(string root, string localId)
             // The library retains caller-owned streams across unload/reload; no OS handle stays open.
             AnimationBehavior.SetSourceStream(image, new MemoryStream(File.ReadAllBytes(path), writable: false));
             Window? owner = null;
+            FrameworkElement? scope = null;
             void UpdatePlayback()
             {
-                bool play = Motion.Allowed(image);
+                bool play = GifPlayback.Allowed(image);
                 AnimationBehavior.SetAutoStart(image, play);
                 var animator = AnimationBehavior.GetAnimator(image);
                 if (animator is null) return;
@@ -65,14 +67,19 @@ public sealed class AvatarCatalog(string root, string localId)
                 else animator.Pause();
             }
             void WindowChanged(object? sender, EventArgs args) => UpdatePlayback();
+            void HoverChanged(object? sender, System.Windows.Input.MouseEventArgs args) => UpdatePlayback();
+            GifPlayback.SetUpdate(image, UpdatePlayback);
             image.Loaded += (_, _) =>
             {
                 owner = Window.GetWindow(image);
+                scope = GifPlayback.GetScope(image) ?? image;
+                scope.MouseEnter += HoverChanged; scope.MouseLeave += HoverChanged;
                 if (owner is not null) { owner.Activated += WindowChanged; owner.Deactivated += WindowChanged; owner.StateChanged += WindowChanged; }
                 Motion.Changed += UpdatePlayback; UpdatePlayback();
             };
             image.Unloaded += (_, _) =>
             {
+                if (scope is not null) { scope.MouseEnter -= HoverChanged; scope.MouseLeave -= HoverChanged; scope = null; }
                 if (owner is not null) { owner.Activated -= WindowChanged; owner.Deactivated -= WindowChanged; owner.StateChanged -= WindowChanged; owner = null; }
                 Motion.Changed -= UpdatePlayback; AnimationBehavior.GetAnimator(image)?.Pause();
             };
@@ -85,10 +92,10 @@ public sealed class AvatarCatalog(string root, string localId)
         }
         return image;
     }
-    public static FrameworkElement Circle(string? path, double size)
+    public static FrameworkElement Circle(string? path, double size, GifPlaybackMode mode = GifPlaybackMode.Always, FrameworkElement? hoverScope = null)
     {
         Image image;
-        try { image = path is null ? new Image { Width = size, Height = size, Stretch = Stretch.UniformToFill, Source = new BitmapImage(new Uri("pack://application:,,,/Wisp;component/Assets/wisp.png")) } : Image(path, size); }
+        try { image = path is null ? new Image { Width = size, Height = size, Stretch = Stretch.UniformToFill, Source = new BitmapImage(new Uri("pack://application:,,,/Wisp;component/Assets/wisp.png")) } : Image(path, size, mode: mode, hoverScope: hoverScope); }
         catch { image = new Image { Width = size, Height = size, Stretch = Stretch.UniformToFill, Source = new BitmapImage(new Uri("pack://application:,,,/Wisp;component/Assets/wisp.png")) }; }
         image.Clip = new EllipseGeometry(new Point(size / 2, size / 2), size / 2, size / 2);
         return image;
