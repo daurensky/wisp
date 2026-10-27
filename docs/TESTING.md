@@ -168,6 +168,30 @@ GCC `-O3`, SSE2, RNNoise 0.2 из того же проверенного арх�
 существующего кадра 960 отсчётов. Windows CI отдельно выводит mean/p95/max
 управляемого `Process`, энергию шума и предупреждение при среднем >5 мс.
 
+**Windows CI выполнен**, run [40466350982](https://github.com/daurensky/wisp/actions/runs/40466350982),
+код `81537dda713885b891ca8d5f74b44d892ced54c3`, 2026-10-27:
+Core **69/69**, Desktop **10/10**, skipped **0**; DLL собрана MSVC x64 из
+проверенного архива, build/publish/package прошли. Нативные тесты выполнились,
+включая сигнал, bypass/reset и нулевые managed-аллокации после прогрева;
+STA-тест немедленного сохранения переключателя прошёл. В TRX:
+среднее **0,314 мс**, p95 **0,387 мс**, максимум **2,788 мс** на кадр 20 мс.
+Средняя оценка доли одного ядра — **1,57%**, это синтетический тест на общем
+Windows runner, не измерение CPU Wisp в реальном звонке. Среднее ниже порога
+5 мс (25% кадра), также все измеренные кадры этой серии ниже 5 мс.
+Доля энергии белого шума после прогрева округляется до `0.000000` при выводе
+шести знаков; это не означает буквального отсутствия шума и не доказывает
+сохранение тихой речи. Первичная переносимая сборка:
+[Wisp-win-x64](https://github.com/daurensky/wisp/actions/runs/40466350982/artifacts/12716009253).
+
+Файлы этой доработки (относительно `e8e014a`):
+
+| Статус | Файлы |
+|---|---|
+| Созданы, ядро | `src/Wisp.Core/MicProcessing.cs`, `tests/Wisp.Core.Tests/MicProcessingTests.cs` |
+| Созданы, native и Desktop | `native/rnnoise/CMakeLists.txt`, `native/rnnoise/README.md`, `docs/licenses/RNNoise.txt`, `src/Wisp.Desktop/Media/RnNoiseProcessor.cs`, `tests/Wisp.Desktop.Tests/RnNoiseTests.cs` |
+| Изменены, приложение и CI | `src/Wisp.Desktop/Media/VoiceService.cs`, `src/Wisp.Desktop/Media/AudioDevices.cs`, `src/Wisp.Desktop/MainWindow.cs`, `src/Wisp.Desktop/Wisp.Desktop.csproj`, `.github/workflows/windows.yml`, `tests/Wisp.Desktop.Tests/ThemeTests.cs` |
+| Изменены, документация | `README.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md` |
+
 **Не проверено на Windows с настоящими аудиоустройствами**:
 
 | Сценарий | Что записать |
