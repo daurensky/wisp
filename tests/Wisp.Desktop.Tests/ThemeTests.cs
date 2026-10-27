@@ -230,6 +230,7 @@ public sealed class ThemeTests
             var chatEmoji = Assert.IsType<Image>(body.Paragraph.Inlines.OfType<InlineUIContainer>().Single().Child);
             Assert.Equal(GifPlaybackMode.Hover, GifPlayback.GetMode(chatEmoji));
             Assert.NotNull(GifPlayback.GetScope(chatEmoji));
+            phase("connection status, brand and smooth scrolling"); CheckDesktopPolish(main, community.Id, store.GetChannels(community.Id).First(c => c.IsVoice).Id);
             var inputButton = Descendants(main).OfType<Button>().First(button => Equals(System.Windows.Automation.AutomationProperties.GetName(button), "Профиль и настройки"));
             inputButton.Focus(); PointerFocus.SetKeyboardFocus(inputButton, true); main.UpdateLayout();
             Assert.Equal(1, ((Border)inputButton.Template.FindName("FocusRing", inputButton)).Opacity);
@@ -277,6 +278,82 @@ public sealed class ThemeTests
         }
     }
 
+    private static void CheckDesktopPolish(MainWindow main, string communityId, string channelId)
+    {
+        Assert.NotNull(main.Icon);
+        Assert.Contains(VisualDescendants(main).OfType<Image>(), image => ReferenceEquals(image.Source, Brand.Logo));
+        using (var icon = Brand.TrayIcon()) Assert.True(icon.Width >= 16 && icon.Handle != IntPtr.Zero);
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var roomField = typeof(MainWindow).GetField("rtc", flags)!;
+        var channelField = typeof(MainWindow).GetField("voiceChannelId", flags)!;
+        var oldRoom = roomField.GetValue(main); var oldChannel = channelField.GetValue(main);
+        var info = new SfuConnectionInfo("wss://89.126.195.20:8443/rtc", ServerConnectionState.Connected, 42, DateTimeOffset.UtcNow, "host/host");
+        var room = new TestVoiceRoom(info, channelId);
+        try
+        {
+            roomField.SetValue(main, room); channelField.SetValue(main, channelId);
+            var text = (TextBlock)typeof(MainWindow).GetField("connection", flags)!.GetValue(main)!;
+            void Update(double? ping, ServerConnectionState state, string brush)
+            {
+                room.ConnectionInfo = info with { PingMilliseconds = ping, State = state };
+                typeof(MainWindow).GetMethod("UpdateStatus", flags)!.Invoke(main, null);
+                Assert.Equal(BrushColor((Brush)Application.Current.FindResource(brush)), BrushColor(text.Foreground));
+            }
+            Update(42, ServerConnectionState.Connected, "Success"); Assert.Contains("Подключён · SFU · 42 мс", text.Text);
+            Update(150, ServerConnectionState.Connected, "Warning");
+            Update(250, ServerConnectionState.Connected, "Danger");
+            Update(null, ServerConnectionState.Unreachable, "Warning"); Assert.Contains("пинг —", text.Text);
+            Update(null, ServerConnectionState.Disconnected, "Danger"); Assert.Contains("потеряно", text.Text);
+            Update(42, ServerConnectionState.Connected, "Success");
+            main.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                var details = Descendants(main).OfType<FormDialog>().Single();
+                Assert.Equal("Подключение", details.Title);
+                Assert.Contains(Descendants(details).OfType<TextBlock>(), label => label.Text.Contains("89.126.195.20"));
+                Assert.Contains(Descendants(details).OfType<TextBlock>(), label => label.Text.Contains("RTT"));
+                details.DialogResult = true;
+            }));
+            typeof(MainWindow).GetMethod("ConnectionDetails", flags)!.Invoke(main, null);
+            SaveSnapshot(main, "sfu-connected");
+        }
+        finally { roomField.SetValue(main, oldRoom); channelField.SetValue(main, oldChannel); typeof(MainWindow).GetMethod("UpdateStatus", flags)!.Invoke(main, null); }
+        var messages = (VirtualRows)typeof(MainWindow).GetField("messages", flags)!.GetValue(main)!;
+        var item = Assert.IsType<ListBoxItem>(messages.ItemContainerGenerator.ContainerFromIndex(0));
+        item.IsSelected = true; item.ApplyTemplate();
+        Assert.Equal(Colors.Transparent, BrushColor(((Border)item.Template.FindName("Item", item)).Background));
+        item.IsSelected = false;
+        var content = new StackPanel(); for (int i=0;i<200;i++) content.Children.Add(new TextBlock { Text="Scroll row " + i, Height=24 });
+        var view = new ScrollViewer { Content=content, Height=180, VerticalScrollBarVisibility=ScrollBarVisibility.Auto };
+        var overlay = ModalHost.Open(main, "Прокрутка", view, 420); PumpLayout(main);
+        Assert.True(SmoothScroll.GetEnabled(view));
+        Motion.SetReduced(false);
+        var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120) { RoutedEvent=Mouse.PreviewMouseWheelEvent };
+        view.RaiseEvent(wheel); Assert.True(wheel.Handled);
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer { Interval=TimeSpan.FromMilliseconds(300) };
+        timer.Tick += (_,_) => { timer.Stop(); frame.Continue=false; }; timer.Start(); Dispatcher.PushFrame(frame); main.UpdateLayout();
+        Assert.InRange(view.VerticalOffset, 1, 200); // movement, bounded independently of Windows' wheel-line preference
+        Motion.SetReduced(true); overlay.Close();
+    }
+    private sealed class TestVoiceRoom(SfuConnectionInfo info, string channel) : IVoiceRoom
+    {
+        public SfuConnectionInfo ConnectionInfo { get; set; } = info;
+        public bool Joined => ConnectionInfo.State is ServerConnectionState.Connected or ServerConnectionState.Unreachable;
+        public string? ChannelId => Joined ? channel : null;
+        public string TransportName => "WebRTC · SFU";
+        public IReadOnlyList<RtcSeat> Participants => Array.Empty<RtcSeat>();
+        public int ConnectedCount => 0;
+        public IReadOnlyList<string> ConnectedPeerIds => Array.Empty<string>();
+        public IReadOnlyDictionary<string,string> ConnectionPaths => new Dictionary<string,string>();
+        public event Action<WireMessage>? MessageReceived { add {} remove {} }
+        public event Action<string>? Error { add {} remove {} }
+        public event Action? Changed { add {} remove {} }
+        public Task EnterAsync(string communityId,string channelId,bool mute,bool deafen)=>Task.CompletedTask;
+        public Task SetMutedAsync(bool mute,bool deafen)=>Task.CompletedTask;
+        public Task SendAsync(WireMessage message)=>Task.CompletedTask;
+        public Task LeaveAsync()=>Task.CompletedTask;
+        public ValueTask DisposeAsync()=>ValueTask.CompletedTask;
+    }
     private static Color BrushColor(Brush brush) => Assert.IsType<SolidColorBrush>(brush).Color;
 
     private static IEnumerable<DependencyObject> Descendants(DependencyObject element)

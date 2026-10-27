@@ -19,7 +19,7 @@ public sealed class VoiceParticipantRow : Grid
     {
         this.voice = voice; speakerId = local ? VoiceService.LocalSpeakerId : presence.Profile.Id;
         muted = presence.Muted; deafened = presence.Deafened;
-        Height = Ui.RowHeight; Margin = Ui.Insets(Ui.Xl, 0, Ui.M, 0);
+        Height = Ui.RowHeight; Margin = Ui.Insets(Ui.M, 0, Ui.S, 0);
         ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); ColumnDefinitions.Add(new ColumnDefinition()); ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Avatar = AvatarCatalog.Circle(avatarPath, Ui.Metric("Size.VoiceAvatar"), GifPlaybackMode.Speaking);
         ring = new Border { Width = Ui.Metric("Size.Avatar"), Height = Ui.Metric("Size.Avatar"), Child = Avatar, CornerRadius = new CornerRadius(Ui.L), BorderThickness = new Thickness(2), Margin = Ui.Insets(0, 0, Ui.S, 0), BorderBrush = Brushes.Transparent };

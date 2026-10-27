@@ -29,7 +29,7 @@ internal sealed class WindowsGraphicsScreenCapture : IScreenCapture
     private volatile bool closed;
     public string BackendName => "Windows Graphics Capture";
 
-    public WindowsGraphicsScreenCapture(CaptureSource source, ScreenStreamInfo info)
+    public WindowsGraphicsScreenCapture(CaptureSource source, ScreenStreamInfo info, bool borderless = false)
     {
         this.source = source;
         bitmap = new Bitmap(info.Width, info.Height, PixelFormat.Format32bppRgb);
@@ -53,7 +53,7 @@ internal sealed class WindowsGraphicsScreenCapture : IScreenCapture
             pool = Direct3D11CaptureFramePool.CreateFreeThreaded(projectedDevice, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
             session = pool.CreateCaptureSession(item);
             session.IsCursorCaptureEnabled = true;
-            // Keep Windows' capture border. No border suppression or extra consent API.
+            if (borderless) session.IsBorderRequired = false;
             session.StartCapture();
         }
         catch { Dispose(); throw; }

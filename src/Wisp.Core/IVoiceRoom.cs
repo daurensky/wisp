@@ -6,6 +6,7 @@ public interface IVoiceRoom : IAsyncDisposable
     bool Joined { get; }
     string? ChannelId { get; }
     string TransportName { get; }
+    SfuConnectionInfo? ConnectionInfo => null;
     IReadOnlyList<RtcSeat> Participants { get; }
     int ConnectedCount { get; }
     IReadOnlyList<string> ConnectedPeerIds { get; }

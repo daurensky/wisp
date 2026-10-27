@@ -75,6 +75,7 @@
   <SolidColorBrush x:Key="OnAccent" Color="#FFFFFF" po:Freeze="True"/>
   <SolidColorBrush x:Key="Danger" Color="#F07B86" po:Freeze="True"/>
   <SolidColorBrush x:Key="DangerSurface" Color="#3C2028" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Warning" Color="#E5BD66" po:Freeze="True"/>
   <SolidColorBrush x:Key="Success" Color="#65C99E" po:Freeze="True"/>
   <SolidColorBrush x:Key="Hover" Color="#24262F" po:Freeze="True"/>
   <SolidColorBrush x:Key="Selected" Color="#302A48" po:Freeze="True"/>

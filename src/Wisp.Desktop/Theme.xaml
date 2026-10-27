@@ -121,7 +121,7 @@
                   <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" Margin="{StaticResource Padding.TitleLeading}">
-                  <local:Icon Kind="circle-dot" Width="{StaticResource Size.Icon}" Height="{StaticResource Size.Icon}" VerticalAlignment="Center"/>
+                  <Image Source="{x:Static local:Brand.Logo}" Width="{StaticResource Size.Icon}" Height="{StaticResource Size.Icon}" VerticalAlignment="Center"/>
                   <TextBlock Text="{TemplateBinding Title}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="{StaticResource Spacing.AfterIcon}"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" shell:WindowChrome.IsHitTestVisibleInChrome="True">
@@ -241,6 +241,18 @@
       </Setter.Value>
     </Setter>
   </Style>
+  <Style x:Key="ListItem.Chat" TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Border x:Name="Item" Background="Transparent" Padding="{TemplateBinding Padding}">
+            <ContentPresenter/>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
   <Style TargetType="ToolTip">
     <Setter Property="local:Motion.PopupTransition" Value="True"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
@@ -328,6 +340,7 @@
   </Style>
   <Style TargetType="ScrollViewer">
     <Setter Property="local:ScrollChrome.AutoHide" Value="True"/>
+    <Setter Property="local:SmoothScroll.Enabled" Value="True"/>
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ScrollViewer">

@@ -5,7 +5,7 @@ using NAudio.Wave;
 
 namespace Wisp.Desktop.Media;
 
-/// <summary>Shared event-driven WASAPI capture, Communications category, Windows conversion to 48k/16-bit/mono.</summary>
+/// <summary>Shared event-driven WASAPI capture, GameChat category (no system ducking), Windows conversion to 48k/16-bit/mono.</summary>
 internal sealed class CommunicationsCapture(string endpointId, Action<string> status) : IWaveIn
 {
     private readonly CancellationTokenSource stop = new();
@@ -83,14 +83,14 @@ internal sealed class CommunicationsCapture(string endpointId, Action<string> st
             var properties = new AudioClientProperties
             {
                 cbSize = (uint)Marshal.SizeOf<AudioClientProperties>(),
-                eCategory = AudioStreamCategory.Communications
+                eCategory = AudioStreamCategory.GameChat
             };
             var memory = Marshal.AllocHGlobal(Marshal.SizeOf<AudioClientProperties>());
             try
             {
                 Marshal.StructureToPtr(properties, memory, false);
                 try { ((IAudioClient2)audio).SetClientProperties(memory); }
-                catch (COMException) { status("Драйвер не принял категорию Communications; используется обычный WASAPI. Системная обработка голоса не гарантируется."); }
+                catch (COMException) { status("Драйвер не принял категорию GameChat; используется обычный WASAPI без изменения системной громкости."); }
             }
             finally { Marshal.FreeHGlobal(memory); }
             var result = new AudioClient((IAudioClient)audio);

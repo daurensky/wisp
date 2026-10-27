@@ -15,10 +15,16 @@ internal sealed class ResilientScreenCapture : IScreenCapture
     private readonly Action<string> status;
     private IScreenCapture capture;
     public string BackendName => capture.BackendName;
-    public ResilientScreenCapture(CaptureSource source, ScreenStreamInfo info, Action<string> status)
+    public ResilientScreenCapture(CaptureSource source, ScreenStreamInfo info, Action<string> status, bool borderless, bool borderlessGranted)
     {
         this.source = source; this.info = info; this.status = status;
-        try { capture = new WindowsGraphicsScreenCapture(source, info); }
+        if (borderless && !borderlessGranted)
+        {
+            capture = new GdiScreenCapture(source, info);
+            status("Демонстрация без рамки: совместимый захват. Windows не разрешила захват WGC без индикатора.");
+            return;
+        }
+        try { capture = new WindowsGraphicsScreenCapture(source, info, borderless); }
         catch (Exception ex) when (ex is not CaptureClosedException)
         {
             capture = new GdiScreenCapture(source, info);
