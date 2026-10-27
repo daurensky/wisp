@@ -124,6 +124,7 @@ func firebaseAuthWithClient(c config, client *http.Client) authenticate {
 }
 
 type link struct {
+	pending    []webrtc.ICECandidateInit
 	owner      *session
 	pc         *webrtc.PeerConnection
 	source     *session
@@ -132,21 +133,23 @@ type link struct {
 	answer     bool
 }
 type session struct {
-	hub         *hub
-	ident       identity
-	authMessage message
-	ctx         context.Context
-	cancel      context.CancelFunc
-	ws          *websocket.Conn
-	out         chan message
-	mu          sync.Mutex
-	links       map[string]*link
-	tracks      [3]*webrtc.TrackLocalStaticRTP
-	targets     map[*link]bool
-	once        sync.Once
-	ready       bool // guarded by hub.mu
-	dataStart   time.Time
-	dataBytes   int
+	retired      map[string]bool
+	retiredOrder []string
+	hub          *hub
+	ident        identity
+	authMessage  message
+	ctx          context.Context
+	cancel       context.CancelFunc
+	ws           *websocket.Conn
+	out          chan message
+	mu           sync.Mutex
+	links        map[string]*link
+	tracks       [3]*webrtc.TrackLocalStaticRTP
+	targets      map[*link]bool
+	once         sync.Once
+	ready        bool // guarded by hub.mu
+	dataStart    time.Time
+	dataBytes    int
 }
 type hub struct {
 	api        *webrtc.API
@@ -181,6 +184,12 @@ func (s *session) stop() {
 			for id, l := range other.links {
 				if l.source == s {
 					delete(other.links, id)
+					other.retired[id] = true
+					other.retiredOrder = append(other.retiredOrder, id)
+					if len(other.retiredOrder) > 64 {
+						delete(other.retired, other.retiredOrder[0])
+						other.retiredOrder = other.retiredOrder[1:]
+					}
 					closing = append(closing, l.pc)
 					other.send(message{Type: "remove", ID: id, Peer: s.ident.UID})
 				}
@@ -490,7 +499,7 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 		_ = ws.Close(websocket.StatusPolicyViolation, "Firebase access denied")
 		return
 	}
-	s := &session{hub: h, ident: ident, authMessage: m, ctx: ctx, cancel: cancel, ws: ws, out: make(chan message, 32), links: map[string]*link{}, targets: map[*link]bool{}}
+	s := &session{hub: h, ident: ident, authMessage: m, ctx: ctx, cancel: cancel, ws: ws, out: make(chan message, 32), links: map[string]*link{}, retired: map[string]bool{}, targets: map[*link]bool{}}
 	codecs := trackCodecs()
 	for i := range s.tracks {
 		t, e := webrtc.NewTrackLocalStaticRTP(codecs[i].RTPCodecCapability, fmt.Sprintf("t%d", i), ident.UID)
@@ -596,22 +605,41 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 		case "answer":
 			s.mu.Lock()
 			l := s.links[in.ID]
+			retired := s.retired[in.ID]
 			valid := l != nil && l.source != nil && !l.answer
 			if valid {
 				l.answer = true
 			}
 			s.mu.Unlock()
+			if l == nil && retired {
+				continue
+			}
 			if !valid || len(in.SDP) > 64000 || l.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: in.SDP}) != nil {
 				return
 			}
+			for _, candidate := range l.pending {
+				if l.pc.AddICECandidate(candidate) != nil {
+					return
+				}
+			}
+			l.pending = nil
 		case "candidate":
 			s.mu.Lock()
 			l := s.links[in.ID]
+			retired := s.retired[in.ID]
 			if l != nil {
 				l.candidates++
 			}
 			s.mu.Unlock()
-			if l == nil || l.candidates > 64 || in.Candidate == nil || len(in.Candidate.Candidate) > 2048 || l.pc.AddICECandidate(*in.Candidate) != nil {
+			if l == nil && retired {
+				continue
+			}
+			if l == nil || l.candidates > 64 || in.Candidate == nil || len(in.Candidate.Candidate) > 2048 {
+				return
+			}
+			if l.source != nil && !l.answer {
+				l.pending = append(l.pending, *in.Candidate)
+			} else if l.pc.AddICECandidate(*in.Candidate) != nil {
 				return
 			}
 		case "auth":
@@ -638,7 +666,7 @@ func mediaAPI(publicIP string, port int) (*webrtc.API, func(), error) {
 	settings.SetSCTPMaxReceiveBufferSize(1024 * 1024)
 	settings.SetSCTPMaxMessageSize(65536)
 	var closeFn = func() {}
-	if port != 0 {
+	if port != 0 || publicIP != "" {
 		conn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: port})
 		if err != nil {
 			return nil, closeFn, err

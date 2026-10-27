@@ -7,7 +7,7 @@ using SIPSorcery.Net;
 namespace Wisp.Core;
 
 /// <summary>One SRTP uplink and up to four source-bound downlinks. The SFU never transcodes.</summary>
-public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings, IIceServerProvider ice) : IVoiceRoom
+public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings, IIceServerProvider ice, RtcPeerFactory? peerFactory = null) : IVoiceRoom
 {
     private readonly ConcurrentDictionary<string, Link> links = new();
     private readonly SemaphoreSlim lifecycle = new(1);
@@ -39,6 +39,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
         public string Remote { get; } = remote;
         public HashSet<string> Sent { get; } = new();
         public bool Answered;
+        public volatile bool LocalPublished;
     }
     private static TaskCompletionSource Completion() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private void Queue(object value)
@@ -86,6 +87,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
                 var pub = CreateLink("pub", uid);
                 var sdp = await pub.Peer.OfferAsync(token);
                 Queue(new { type = "offer", id = "pub", sdp });
+                pub.LocalPublished = true;
                 maintenance = Task.Run(() => MaintainAsync(stop.Token));
                 await published.Task.WaitAsync(token);
                 joined = true; Changed?.Invoke();
@@ -100,7 +102,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
     }
     private Link CreateLink(string id, string remote)
     {
-        var peer = new RtcPeer(remote, channel!, servers);
+        var peer = peerFactory?.Invoke(remote, channel!, servers) ?? new RtcPeer(remote, channel!, servers);
         var link = new Link(peer, remote);
         if (!links.TryAdd(id, link)) { peer.Dispose(); throw new InvalidDataException("Повторное соединение SFU."); }
         peer.MessageReceived += m => { if (Joined && remote != uid && links.TryGetValue(id, out var active) && ReferenceEquals(active, link)) MessageReceived?.Invoke(m); };
@@ -158,7 +160,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
                         if (id.Length > 180 || remote.Length is 0 or > 128 || remote == uid || links.Count >= 5 || !id.StartsWith("s_", StringComparison.Ordinal) || links.Values.Any(l => l.Remote == remote)) throw new InvalidDataException();
                         var sub = CreateLink(id, remote);
                         var answer = await sub.Peer.AnswerAsync(m.GetProperty("sdp").GetString()!, token);
-                        Queue(new { type = "answer", id, sdp = answer }); break;
+                        Queue(new { type = "answer", id, sdp = answer }); sub.LocalPublished = true; break;
                     case "remove":
                         if (links.TryRemove(m.GetProperty("id").GetString()!, out var removed)) removed.Peer.Dispose();
                         Changed?.Invoke(); break;
@@ -183,7 +185,7 @@ public sealed class SfuRoom(FirebaseBackend cloud, VoiceServerSettings settings,
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
             while (await timer.WaitForNextTickAsync(token))
             {
-                foreach (var (id, link) in links)
+                foreach (var (id, link) in links.Where(pair => pair.Value.LocalPublished))
                     foreach (var c in link.Peer.LocalCandidates)
                         if (link.Sent.Add(c.Candidate)) Queue(new { type = "candidate", id, candidate = new { candidate = c.Candidate, sdpMid = c.SdpMid, sdpMLineIndex = c.SdpMLineIndex } });
                 if (links.TryGetValue("pub", out var pub) && pub.Peer.Connected) published?.TrySetResult();

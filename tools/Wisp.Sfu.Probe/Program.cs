@@ -6,6 +6,7 @@ using Wisp.Core;
 
 var settings = new VoiceServerSettings(true, args[0], args[1]);
 var db = new FixtureDatabase();
+TaskCompletionSource? delayedSource = null;
 var clients = new List<SfuRoom>(); var backends = new List<FirebaseBackend>();
 try
 {
@@ -13,7 +14,7 @@ try
     {
         var cloud = new FirebaseBackend(new("fixture", "fixture", "https://fixture.firebaseio.com"), new FixtureHttp(db, "user" + i));
         backends.Add(cloud); await cloud.SignInAsync("fixture@example.com", "fixture", false, "fixture");
-        var room = new SfuRoom(cloud, settings, new StaticIceServerProvider(Array.Empty<string>()));
+        var room = new SfuRoom(cloud, settings, new StaticIceServerProvider(Array.Empty<string>()), i == 4 ? (remote, channel, servers) => new SlowAnswerPeer(new RtcPeer(remote, channel, servers), () => { if (remote == "user0") delayedSource?.TrySetResult(); }) : null);
         clients.Add(room); room.Error += error => Console.WriteLine("ROOM " + i + ": " + error);
         await room.EnterAsync("community", "voice", false, false);
         Console.WriteLine("Joined " + i);
@@ -50,9 +51,14 @@ try
     await Until(() => b.Participants.Any(s => s.UserId == "user0" && s.Muted && s.Deafened), "mute/deafen presence");
     await clients[4].LeaveAsync();
     await Until(() => clients.Take(4).All(c => c.ConnectedCount==3), "leave removes source without disconnecting others");
+    delayedSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
     await clients[4].EnterAsync("community","voice",false,false);
+    await delayedSource.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await clients[0].LeaveAsync();
+    await Until(() => clients.Skip(1).All(c => c.Joined && c.ConnectedCount == 3), "departure during delayed SDP does not disconnect remaining users");
+    await clients[0].EnterAsync("community", "voice", false, false);
     await Until(() => clients.All(c=>c.ConnectedCount==4), "fresh rejoin recreates source links");
-    Console.WriteLine("PASS: mute/deafen presence, clean departure and rejoin");
+    Console.WriteLine("PASS: mute/deafen presence, delayed SDP/ICE, source departure during answer and fresh rejoin");
 }
 finally { foreach (var room in clients) await room.DisposeAsync(); foreach (var cloud in backends) cloud.Dispose(); }
 static async Task Until(Func<bool> check,string stage) {using var end=new CancellationTokenSource(TimeSpan.FromSeconds(25));try{while(!check())await Task.Delay(25,end.Token);}catch(OperationCanceledException){throw new Exception("Timed out: "+stage);}}
@@ -81,4 +87,23 @@ sealed class FixtureHttp(FixtureDatabase db,string uid):HttpMessageHandler
  }
  private HttpResponseMessage Reply(object value)=>ReplyRaw(JsonSerializer.Serialize(value));
  private HttpResponseMessage ReplyRaw(string value){var response=new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent(value)};response.Headers.Date=DateTimeOffset.UtcNow;response.Headers.TryAddWithoutValidation("ETag","\"v"+db.Version+"\"");return response;}
+}
+
+// Force at least one maintenance tick after local SDP exists but before its
+// answer is published. Candidates must not overtake SDP on the websocket.
+sealed class SlowAnswerPeer(IRtcPeer inner, Action prepared) : IRtcPeer
+{
+    public bool Connected => inner.Connected;
+    public string? SelectedCandidateTypes => inner.SelectedCandidateTypes;
+    public IReadOnlyList<IceCandidateData> LocalCandidates => inner.LocalCandidates;
+    public event Action<string>? StateChanged { add => inner.StateChanged += value; remove => inner.StateChanged -= value; }
+    public event Action<WireMessage>? MessageReceived { add => inner.MessageReceived += value; remove => inner.MessageReceived -= value; }
+    public event Action? CandidateReady { add => inner.CandidateReady += value; remove => inner.CandidateReady -= value; }
+    public Task<string> OfferAsync(CancellationToken token = default) => inner.OfferAsync(token);
+    public async Task<string> AnswerAsync(string offer, CancellationToken token = default) { var answer = await inner.AnswerAsync(offer, token); prepared(); await Task.Delay(1300, token); return answer; }
+    public void AcceptAnswer(string answer) => inner.AcceptAnswer(answer);
+    public void AddIceCandidate(IceCandidateData candidate) => inner.AddIceCandidate(candidate);
+    public void RestartIce() => inner.RestartIce();
+    public Task SendAsync(WireMessage m) => inner.SendAsync(m);
+    public void Dispose() => inner.Dispose();
 }

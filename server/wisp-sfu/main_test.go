@@ -82,7 +82,7 @@ func TestNativeInterop(t *testing.T) {
 	if probe == "" {
 		t.Skip("build tools/Wisp.Sfu.Probe, set WISP_SFU_PROBE to its DLL and DOTNET to dotnet")
 	}
-	api, closeFn, err := mediaAPI("", 0)
+	api, closeFn, err := mediaAPI("127.0.0.1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
