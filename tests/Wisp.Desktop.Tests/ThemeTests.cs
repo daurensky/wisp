@@ -165,6 +165,12 @@ public sealed class ThemeTests
             var toggle = new ToggleIconButton { IconOff = "mic", IconOn = "mic-off", ToolTipOff = "Выключить микрофон", ToolTipOn = "Включить микрофон" };
             toggle.IsChecked = true;
             Assert.Equal("Включить микрофон", System.Windows.Automation.AutomationProperties.GetName(toggle));
+            var peer = System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(toggle);
+            var provider = Assert.IsAssignableFrom<System.Windows.Automation.Provider.IToggleProvider>(peer.GetPattern(System.Windows.Automation.Peers.PatternInterface.Toggle));
+            Assert.Equal(System.Windows.Automation.ToggleState.On, provider.ToggleState);
+            toggle.Click += (_, _) => toggle.IsChecked = !toggle.IsChecked;
+            provider.Toggle();
+            Assert.Equal(System.Windows.Automation.ToggleState.Off, provider.ToggleState);
             Assert.Equal(TimeSpan.Zero, Motion.Duration(main).TimeSpan);
             var windowCount = Application.Current.Windows.Count;
             var notices = new NotificationArea(); Assert.True(notices.Add("Тест", true));

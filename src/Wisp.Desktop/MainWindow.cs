@@ -383,7 +383,7 @@ public sealed class MainWindow : ThemedWindow
                 var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center }; info.Children.Add(Ui.Label(p.Username));
                 var status = Ui.Label(game is null ? online ? "В сети" : "Не в сети" : $"Играет в {game}", Ui.Caption, true);
                 if (online && game is null) status.SetResourceReference(TextBlock.ForegroundProperty, "Success"); info.Children.Add(status); row.Children.Add(info);
-                var button = Btn(p.Username, () => ViewProfile(p), p.Username); Ui.Style(button, "Button.Row"); button.Height = Ui.Metric("Size.SectionHeader"); button.Content = row;
+                var button = Btn(p.Username, () => ViewProfile(p), p.Username); Ui.Style(button, "Button.Row"); button.Height = Ui.RowHeight; button.Padding = Ui.Insets(Ui.M, Ui.Xs); button.Content = row;
                 if (!online) button.Opacity = .6; return button;
             }, oldKeys.Count > 0 && !oldKeys.Contains(p.Id));
         }

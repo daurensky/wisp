@@ -1,3 +1,4 @@
+<?xml version="1.0" ?>
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options">
   <Geometry x:Key="Icon.arrow-down-right" po:Freeze="True">M7,7 l10 10 M17 7v10H7</Geometry>
   <Geometry x:Key="Icon.arrow-left" po:Freeze="True">M12,19 l-7-7 7-7 M19 12H5</Geometry>
