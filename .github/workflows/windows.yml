@@ -30,6 +30,8 @@ jobs:
           Get-FileHash artifacts/native/rnnoise.dll -Algorithm SHA256
       - name: Restore
         run: dotnet restore Wisp.sln
+      - name: Validate WPF design resources
+        run: python tools/check_ui_resources.py
       - name: Test core
         run: dotnet test tests/Wisp.Core.Tests/Wisp.Core.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=core.trx" --results-directory artifacts/test-results
       - name: Test Windows UI, codecs and microphone processing

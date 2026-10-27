@@ -1,6 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
 
 namespace Wisp.Desktop;
 
@@ -32,6 +35,17 @@ public sealed class ToggleIconButton : Button
         Update(false);
     }
     private static void StateChanged(DependencyObject element, DependencyPropertyChangedEventArgs args) => ((ToggleIconButton)element).Update(args.Property == IsCheckedProperty);
+    protected override AutomationPeer OnCreateAutomationPeer() => new TogglePeer(this);
+    private sealed class TogglePeer(ToggleIconButton owner) : ButtonAutomationPeer(owner), IToggleProvider
+    {
+        public override object? GetPattern(PatternInterface patternInterface) => patternInterface == PatternInterface.Toggle ? this : base.GetPattern(patternInterface);
+        public ToggleState ToggleState => owner.IsChecked ? ToggleState.On : ToggleState.Off;
+        public void Toggle()
+        {
+            if (!owner.IsEnabled) throw new ElementNotEnabledException();
+            owner.RaiseEvent(new RoutedEventArgs(ClickEvent));
+        }
+    }
     private void Update(bool animate)
     {
         on.Kind = IconOn; off.Kind = IconOff;

@@ -485,8 +485,8 @@ public sealed class MainWindow : ThemedWindow
     }
     private void StopVoice() { StopSharing(); voice.Stop(); sharePlayback.Stop(); foreach (var id in remoteStreams.Keys.ToList()) StopVideoPeer(id); videoFrames.Clear(); voiceChannelId = null; foreach (var v in viewers.Values.ToList()) v.Close(); viewers.Clear(); remoteScreens.Clear(); dismissedScreens.Clear(); UpdateStatus(); }
     private async Task Disconnect() { if (rtc is not null) await rtc.LeaveAsync(); cloudChannelId = null; cloudPresence = Array.Empty<PeerPresence>(); if (cloud is not null && community is not null) await cloud.PresenceAsync(community.Id, profile, null); Interlocked.Increment(ref sessionEpoch); latestFrames.Clear(); StopVoice(); await node.DisconnectAsync(); presence = Array.Empty<PeerPresence>(); sessionCommunityId = null; currentInvite = null; RenderMembers(); RenderChannels(); UpdateStatus(); sounds.Play("disconnect"); }
-    private async Task ToggleMic() { muted = !muted; voice.Muted = muted; if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(muted ? "mute" : "unmute"); UpdateStatus(); }
-    private async Task ToggleDeafen() { deafened = !deafened; voice.Deafened = deafened; sharePlayback.Deafened = deafened; if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (deafened) { sounds.StopFile(); VoiceMessagePlayer.PauseActive(); } if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(deafened ? "deafen" : "undeafen"); UpdateStatus(); }
+    private async Task ToggleMic() { muted = !muted; voice.Muted = muted; UpdateStatus(); if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(muted ? "mute" : "unmute"); UpdateStatus(); }
+    private async Task ToggleDeafen() { deafened = !deafened; voice.Deafened = deafened; sharePlayback.Deafened = deafened; UpdateStatus(); if (rtc is not null) await rtc.SetMutedAsync(muted, deafened); if (deafened) { sounds.StopFile(); VoiceMessagePlayer.PauseActive(); } if (node.IsConnected) await node.SetVoiceChannelAsync(voiceChannelId, muted, deafened); sounds.Play(deafened ? "deafen" : "undeafen"); UpdateStatus(); }
     private async Task UpdateGame()
     {
         var game = GamePresenceService.DetectGame(); if (game == profile.Game) return; profile = profile with { Game = game }; store.SaveProfile(profile); await node.UpdateProfileAsync(profile); RenderMembers();
@@ -778,32 +778,59 @@ public sealed class MainWindow : ThemedWindow
         var d = new FormDialog(this, "Демонстрации участников"); var ids = remoteStreams.Keys.Concat(remoteScreens.Keys).Distinct().ToList();
         if (ids.Count == 0) d.Note("Сейчас никто не демонстрирует экран.");
         foreach (var id in ids) d.Action(DisplayPresence.FirstOrDefault(p => p.Profile.Id == id)?.Profile.Username ?? "Участник", () => { d.Close(); dismissedScreens.Remove(id); if (remoteStreams.ContainsKey(id)) { if (viewers.TryGetValue(id, out var viewer)) { foreach (var other in viewers.Values.Where(v => v != viewer && v.IsFullscreen).ToList()) other.ToggleFullscreen(); if (viewer.IsMini) viewer.ToggleMini(); viewer.Show(); } else OpenVideoPeer(id); } else ShowFrame(id, remoteScreens[id]); });
-        d.ShowDialog();
+        d.Accept("Закрыть"); d.ShowDialog();
     }
     private void EmojiPanel()
     {
-        if (community is null) return; var d = new FormDialog(this, "Эмодзи сообщества"); d.Note("Эмодзи добавится в текст сообщения на месте курсора.");
-        foreach (var a in store.GetAssets(community.Id, "emoji"))
+        if (community is null) return;
+        var d = new FormDialog(this, "Эмодзи сообщества"); d.Note("Выбери эмодзи — он добавится в сообщение на месте курсора.");
+        var catalog = store.GetAssets(community.Id, "emoji");
+        var list = new VirtualRows { Height = Math.Min(Ui.Metric("Height.SourceList"), Ui.RowHeight * catalog.Count) };
+        foreach (var a in catalog) list.Add(a.Id, () =>
         {
-            var button = d.Action(EmojiToken(a), () =>
+            var button = Btn(EmojiToken(a), () =>
             {
                 var token = EmojiToken(a);
                 if (draftEmojis.TryGetValue(token, out var previous) && previous.Id != a.Id) token = token[..^1] + "_" + a.Id[..6] + ":";
                 draftEmojis[token] = a; d.Close(); var caret = composer.CaretIndex; composer.Text = composer.Text.Insert(caret, token); composer.CaretIndex = caret + token.Length; composer.Focus();
             });
-            var label = new StackPanel { Orientation = Orientation.Horizontal };
-            try { label.Children.Add(AvatarCatalog.Image(a.LocalPath, Ui.Metric("Size.InlineIcon"))); } catch { }
-            label.Children.Add(new TextBlock { Text = "  " + EmojiToken(a) }); button.Content = label;
-        }
-        d.Action("+ Загрузить эмодзи", () => { var f = new Microsoft.Win32.OpenFileDialog { Filter = "Изображения|*.png;*.jpg;*.jpeg;*.gif", Title = "Эмодзи · до 256 КБ" }; if (f.ShowDialog(this) != true) return; if (new FileInfo(f.FileName).Length > 256 * 1024) throw new InvalidOperationException("Эмодзи должен быть меньше 256 КБ."); d.Close(); Run(async () => { await ImportAndSend(f.FileName, "emoji"); sounds.Play("message"); }); }); d.ShowDialog();
+            Ui.Style(button, "Button.Row");
+            var label = new DockPanel();
+            try { var image = AvatarCatalog.Image(a.LocalPath, Ui.Metric("Size.InlineIcon")); image.Margin = Ui.Insets(0, 0, Ui.S, 0); label.Children.Add(image); } catch { }
+            label.Children.Add(Ui.Label(EmojiToken(a))); button.Content = label; return button;
+        });
+        if (catalog.Count > 0) d.Add(list); else d.Note("В сообществе пока нет своих эмодзи.");
+        d.FooterAction("Загрузить эмодзи", () =>
+        {
+            var f = new Microsoft.Win32.OpenFileDialog { Filter = "Изображения|*.png;*.jpg;*.jpeg;*.gif", Title = "Эмодзи · до 256 КБ" };
+            if (f.ShowDialog(this) != true) return;
+            if (new FileInfo(f.FileName).Length > 256 * 1024) throw new InvalidOperationException("Эмодзи должен быть меньше 256 КБ.");
+            d.Close(); Run(async () => { await ImportAndSend(f.FileName, "emoji"); sounds.Play("message"); });
+        });
+        d.Accept("Закрыть"); d.ShowDialog();
     }
     private Task SendPacket(WireMessage message) => rtc?.Joined == true ? rtc.SendAsync(message) : node.IsConnected ? node.SendAsync(message) : Task.CompletedTask;
     private async Task BroadcastAsset(MediaAsset a) { if (node.IsConnected || rtc?.Joined == true) await SendPacket(new WireMessage("asset", profile.Id, null, JsonSerializer.SerializeToUtf8Bytes(new AssetTransfer(a.Id, a.Name, a.Kind, await File.ReadAllBytesAsync(a.LocalPath))))); }
     private void SoundPanel()
     {
-        if (community is null) return; var d = new FormDialog(this, "Звуковая панель"); d.Note("Звуки слышат участники твоего голосового канала. WAV или MP3, максимум 2 МБ. Вне звонка доступно локальное прослушивание.");
-        foreach (var a in store.GetAssets(community.Id, "sound")) d.Action($"▶ {a.Name}", () => Run(async () => { if (deafened) return; await BroadcastAsset(a); sounds.PlayFile(a.LocalPath); if (voiceChannelId is not null) await SendPacket(new WireMessage("sound", profile.Id, voiceChannelId, Encoding.UTF8.GetBytes(a.Id))); }));
-        d.Action("+ Загрузить звук", () => { var f = new Microsoft.Win32.OpenFileDialog { Filter = "Аудио|*.wav;*.mp3", Title = "Звук · до 2 МБ" }; if (f.ShowDialog(this) != true) return; if (new FileInfo(f.FileName).Length > 2 * 1024 * 1024) throw new InvalidOperationException("Звук должен быть меньше 2 МБ."); d.Close(); Run(async () => { await ImportAndSend(f.FileName, "sound"); sounds.Play("message"); }); }); d.ShowDialog();
+        if (community is null) return;
+        var d = new FormDialog(this, "Звуковая панель"); d.Note("Звуки слышат участники голосового канала. WAV или MP3, до 2 МБ. Вне звонка доступно локальное прослушивание.");
+        var catalog = store.GetAssets(community.Id, "sound");
+        var list = new VirtualRows { Height = Math.Min(Ui.Metric("Height.SourceList"), Ui.RowHeight * catalog.Count) };
+        foreach (var a in catalog) list.Add(a.Id, () =>
+        {
+            var button = Btn(a.Name, () => Run(async () => { if (deafened) return; await BroadcastAsset(a); sounds.PlayFile(a.LocalPath); if (voiceChannelId is not null) await SendPacket(new WireMessage("sound", profile.Id, voiceChannelId, Encoding.UTF8.GetBytes(a.Id))); }));
+            Buttons.Label(button, a.Name, "play"); Ui.Style(button, "Button.Row"); return button;
+        });
+        if (catalog.Count > 0) d.Add(list); else d.Note("В сообществе пока нет загруженных звуков.");
+        d.FooterAction("Загрузить звук", () =>
+        {
+            var f = new Microsoft.Win32.OpenFileDialog { Filter = "Аудио|*.wav;*.mp3", Title = "Звук · до 2 МБ" };
+            if (f.ShowDialog(this) != true) return;
+            if (new FileInfo(f.FileName).Length > 2 * 1024 * 1024) throw new InvalidOperationException("Звук должен быть меньше 2 МБ.");
+            d.Close(); Run(async () => { await ImportAndSend(f.FileName, "sound"); sounds.Play("message"); });
+        });
+        d.Accept("Закрыть"); d.ShowDialog();
     }
     private void EditProfile()
     {

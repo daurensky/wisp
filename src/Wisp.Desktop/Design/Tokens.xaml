@@ -84,12 +84,11 @@
 <SolidColorBrush x:Key="Card" Color="#1C1D23" po:Freeze="True"/>
 <SolidColorBrush x:Key="Fg" Color="#EDEDF2" po:Freeze="True"/>
 <SolidColorBrush x:Key="Muted" Color="#9899AA" po:Freeze="True"/>
-<Thickness x:Key="Insets.12_0_0_0">12,0,0,0</Thickness>
-<Thickness x:Key="Insets.0_0_12_0">0,0,12,0</Thickness>
-<Thickness x:Key="Insets.16_0">16,0</Thickness>
-<Thickness x:Key="Insets.0">0</Thickness>
-<Thickness x:Key="Insets.0">0</Thickness>
-<Thickness x:Key="Insets.8">8</Thickness>
-<Thickness x:Key="Insets.4">4</Thickness>
+<Thickness x:Key="Spacing.AfterIcon">12,0,0,0</Thickness>
+<Thickness x:Key="Spacing.BeforeField">0,0,12,0</Thickness>
+<Thickness x:Key="Padding.TitleLeading">16,0</Thickness>
+<Thickness x:Key="Padding.None">0</Thickness>
+<Thickness x:Key="Padding.Small">8</Thickness>
+<Thickness x:Key="Padding.Popup">4</Thickness>
 <sys:Double x:Key="Height.SourceList">280</sys:Double>
 </ResourceDictionary>

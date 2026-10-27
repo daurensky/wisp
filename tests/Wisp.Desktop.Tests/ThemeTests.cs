@@ -59,7 +59,7 @@ public sealed class ThemeTests
                 AssertWindowColors(derived, Colors.White, Color.FromRgb(24, 25, 35));
                 AssertWindowColors(auth, Colors.White, Color.FromRgb(24, 25, 35));
                 Assert.Equal(Color.FromRgb(24, 25, 35), BrushColor(password.Foreground));
-                SaveSnapshot(auth, "auth-light");
+                auth.Show(); PumpLayout(auth); SaveSnapshot(auth, "auth-light"); auth.Hide();
 
                 var fresh = Path.Combine(root, "fresh");
                 Directory.CreateDirectory(fresh);

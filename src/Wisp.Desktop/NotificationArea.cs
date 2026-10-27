@@ -14,7 +14,18 @@ public sealed class NotificationArea : UserControl
     public NotificationArea()
     {
         var dock = new DockPanel { MaxHeight = Ui.Metric("Height.Notifications"), Margin = Ui.Insets(Ui.Xl, 0, Ui.Xl, Ui.L) };
-        clear = Buttons.Create("Очистить уведомления", () => { entries.Children.Clear(); repeats.Clear(); Changed?.Invoke(0); }, icon: "trash", style: "Button.Ghost");
+        clear = Buttons.Create("Очистить уведомления", () =>
+        {
+            if (Count == 0) return;
+            if (Window.GetWindow(this) is { } owner)
+            {
+                var confirmation = new FormDialog(owner, "Очистить уведомления?");
+                confirmation.Note("Список уведомлений будет очищен на этом компьютере.");
+                confirmation.Accept("Очистить");
+                if (confirmation.ShowDialog() != true) return;
+            }
+            entries.Children.Clear(); repeats.Clear(); Changed?.Invoke(0);
+        }, icon: "trash", style: "Button.Danger");
         clear.Margin = Ui.Insets(0, Ui.L, 0, 0);
         DockPanel.SetDock(clear, Dock.Bottom); dock.Children.Add(clear);
         dock.Children.Add(new ScrollViewer { Content = entries, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }); Content = dock;
