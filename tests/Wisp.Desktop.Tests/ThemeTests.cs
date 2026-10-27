@@ -245,6 +245,18 @@ public sealed class ThemeTests
             Assert.Contains(Descendants(mutedParticipant).OfType<Icon>(), icon => icon.Kind == "mic-off");
             Assert.Contains(Descendants(mutedParticipant).OfType<Icon>(), icon => icon.Kind == "headphone-off");
             localVoice.Dispose();
+            phase("optimistic voice entry and cancellation");
+            var voiceChannel = store.GetChannels(community.Id).First(c => c.IsVoice);
+            var joinTask = (Task)typeof(MainWindow).GetMethod("JoinVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, new object[] { voiceChannel })!;
+            Assert.False(joinTask.IsCompleted);
+            Assert.Contains(Descendants(main).OfType<TextBlock>(), text => text.Text == "Соединение");
+            main.UpdateLayout();
+            Assert.Contains(Descendants(main).OfType<VoiceParticipantRow>(), row => System.Windows.Automation.AutomationProperties.GetName(row).StartsWith(profile.Username));
+            SaveSnapshot(main, "voice-connecting");
+            var leaveTask = (Task)typeof(MainWindow).GetMethod("LeaveVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, null)!;
+            PumpLayout(main);
+            Assert.True(joinTask.IsCompletedSuccessfully); Assert.True(leaveTask.IsCompletedSuccessfully);
+            Assert.DoesNotContain(Descendants(main).OfType<TextBlock>(), text => text.Text == "Соединение");
             using (var exclusive = new FileStream(emoji.LocalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) Assert.True(exclusive.Length > 0);
             Assert.Equal(Visibility.Collapsed, Descendants(main).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetName(button) == "Отменить запись").Visibility);
             phase("responsive layout"); main.Width = Ui.Metric("Width.WindowMinimum"); PumpLayout(main); SaveSnapshot(main, "main-compact-dark");

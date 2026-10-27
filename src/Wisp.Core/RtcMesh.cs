@@ -45,10 +45,14 @@ public sealed class RtcMesh : IAsyncDisposable
             lock (roomGate)
             {
                 var snapshot = room.Root is null ? JsonSerializer.SerializeToElement<object?>(null) : JsonSerializer.SerializeToElement(room.Root);
-                long now = ServerMilliseconds;
-                return ReadSeats(snapshot).Values.Where(seat => now - seat.SeenAt < 45000 && seat.SeenAt <= now + 10000).ToArray();
+                return ActiveParticipants(snapshot, cloud.ServerNow());
             }
         }
+    }
+    public static IReadOnlyList<RtcSeat> ActiveParticipants(JsonElement snapshot, DateTimeOffset now)
+    {
+        long timestamp = now.ToUnixTimeMilliseconds();
+        return ReadSeats(snapshot).Values.Where(seat => timestamp - seat.SeenAt < 45000 && seat.SeenAt <= timestamp + 10000).ToArray();
     }
     public int ConnectedCount => links.Values.Count(link => !link.Failed && link.Peer.Connected);
     public IReadOnlyList<string> ConnectedPeerIds => links.Where(pair => !pair.Value.Failed && pair.Value.Peer.Connected).Select(pair => pair.Key).ToArray();

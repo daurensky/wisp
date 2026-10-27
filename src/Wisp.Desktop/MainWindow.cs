@@ -38,6 +38,8 @@ public sealed class MainWindow : ThemedWindow
     private string lastConnectionPaths = "";
     private readonly DispatcherTimer cloudTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private IReadOnlyList<PeerPresence> cloudPresence = Array.Empty<PeerPresence>();
+    private Dictionary<string, JsonElement> cloudVoiceRooms = new();
+    private string? voiceRoomsCommunityId;
     private string? cloudChannelId;
     private bool cloudPolling;
     private string? savedRefreshToken;
@@ -50,13 +52,25 @@ public sealed class MainWindow : ThemedWindow
         get
         {
             var online = presence.Concat(cloudPresence).GroupBy(p => p.Profile.Id).Select(group => group.First()).Where(p => p.Profile.Id != profile.Id).ToDictionary(p => p.Profile.Id);
-            if (rtc?.ChannelId is { } rtcChannel && rtcChannel == voiceChannelId)
-                foreach (var seat in rtc.Participants)
+            var latestSeat = new Dictionary<string, long>();
+            void ApplySeats(string channelId, IReadOnlyList<RtcSeat> seats, bool preferLatest = false)
+            {
+                var ids = seats.Select(seat => seat.UserId).ToHashSet();
+                foreach (var person in online.Values.Where(p => p.VoiceChannelId == channelId && !ids.Contains(p.Profile.Id)).ToArray())
+                    online[person.Profile.Id] = person with { VoiceChannelId = null, Muted = false, Deafened = false };
+                foreach (var seat in seats)
                 {
                     if (seat.UserId == profile.Id) continue;
+                    if (preferLatest && latestSeat.TryGetValue(seat.UserId, out var seenAt) && seenAt > seat.SeenAt) continue;
+                    latestSeat[seat.UserId] = seat.SeenAt;
                     var person = online.GetValueOrDefault(seat.UserId)?.Profile ?? (community is null ? null : store.GetMembers(community.Id).FirstOrDefault(p => p.Id == seat.UserId));
-                    if (person is not null) online[seat.UserId] = new PeerPresence(person, rtcChannel, seat.Muted || seat.Deafened, seat.Deafened);
+                    if (person is not null) online[seat.UserId] = new PeerPresence(person, channelId, seat.Muted || seat.Deafened, seat.Deafened);
                 }
+            }
+            if (cloud is not null && community is not null && voiceRoomsCommunityId == community.Id)
+                foreach (var channel in store.GetChannels(community.Id).Where(channel => channel.IsVoice))
+                    ApplySeats(channel.Id, cloudVoiceRooms.TryGetValue(channel.Id, out var data) ? RtcMesh.ActiveParticipants(data, cloud.ServerNow()) : Array.Empty<RtcSeat>(), true);
+            if (rtc?.ChannelId is { } rtcChannel && rtcChannel == voiceChannelId) ApplySeats(rtcChannel, rtc.Participants);
             online[profile.Id] = new PeerPresence(profile, voiceChannelId ?? cloudChannelId, muted || deafened, deafened);
             return online.Values.ToArray();
         }
@@ -337,7 +351,7 @@ public sealed class MainWindow : ThemedWindow
         var visiblePresence = DisplayPresence;
         var nextKey = (community?.Id ?? "") + ":" + selectedChannel?.Id + ":" + voiceChannelId + ":" + voiceIntent.Connecting + ":" +
             string.Join("|", community is null ? Array.Empty<string>() : store.GetChannels(community.Id).Select(c => $"{c.Id}:{c.Name}:{c.IsVoice}")) + ":" +
-            string.Join("|", visiblePresence.OrderBy(p => p.Profile.Id).Select(p => $"{p.Profile.Id}:{p.Profile.Username}:{p.Profile.AvatarRevision}:{p.VoiceChannelId}:{p.Muted}:{p.Deafened}"));
+            string.Join("|", visiblePresence.OrderBy(p => p.Profile.Id).Select(p => $"{p.Profile.Id}:{p.Profile.Username}:{p.Profile.AvatarRevision}:{avatars.Resolve(p.Profile, store)}:{p.VoiceChannelId}:{p.Muted}:{p.Deafened}"));
         if (nextKey == channelRenderKey) return;
         channelRenderKey = nextKey; channels.Clear(); if (community is null) return;
         foreach (bool voiceKind in new[] { false, true })
@@ -417,6 +431,7 @@ public sealed class MainWindow : ThemedWindow
         ((ToggleIconButton)micButton).IsChecked = muted || deafened;
         ((ToggleIconButton)deafenButton).IsChecked = deafened;
         ((ToggleIconButton)shareButton).IsChecked = sharing;
+        shareButton.IsEnabled = inVoice && !voiceIntent.Connecting;
     }
     private void CreateCommunity()
     {
@@ -470,6 +485,7 @@ public sealed class MainWindow : ThemedWindow
         long request = voiceIntent.Begin(c.Id);
         voiceChannelId = c.Id; cloudChannelId = rtc is null ? null : c.Id;
         RenderChannels(); UpdateStatus(); // Optimistic membership before any network await.
+        await System.Windows.Threading.Dispatcher.Yield(DispatcherPriority.Render);
         await voiceTransitions.WaitAsync();
         try
         {
@@ -500,6 +516,7 @@ public sealed class MainWindow : ThemedWindow
                 voiceIntent.Complete(request); RenderChannels(); RenderMembers(); UpdateStatus(); sounds.Play("connect");
             }
         }
+        catch when (!voiceIntent.IsCurrent(request)) { }
         catch
         {
             if (voiceIntent.IsCurrent(request))
@@ -626,7 +643,7 @@ public sealed class MainWindow : ThemedWindow
     }
     private FrameworkElement MessageRow(ChatMessage m, bool grouped)
     {
-        var layout = new Grid { Margin = Ui.Insets(0, grouped ? Ui.Xs : Ui.L, Ui.S, 0) };
+        var layout = new Grid { Margin = Ui.Insets(0, grouped ? Ui.Xs : Ui.L, Ui.S, 0), Background = Brushes.Transparent };
         layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Ui.Metric("Size.Avatar") + Ui.M) });
         layout.ColumnDefinitions.Add(new ColumnDefinition());
         if (!grouped)
@@ -1005,15 +1022,18 @@ public sealed class MainWindow : ThemedWindow
         cloudPolling = true; var id = community.Id; var channelId = selectedChannel?.Id;
         try
         {
-            await cloud.PresenceAsync(id, profile, voiceChannelId ?? cloudChannelId);
+            await cloud.PresenceAsync(id, profile, voiceIntent.Connecting ? null : voiceChannelId ?? cloudChannelId);
             if (savedRefreshToken != cloud.RefreshToken) { SessionVault.Save(store.RootDirectory, "firebase:" + cloud.RefreshToken); savedRefreshToken = cloud.RefreshToken; }
             var snapshot = await cloud.GetAsync<CommunitySnapshot>($"communities/{id}/snapshot");
             if (snapshot is not null) store.SaveSnapshot(snapshot);
             var online = await cloud.GetAsync<Dictionary<string, FirebasePresence>>($"communities/{id}/presence") ?? new();
+            var roomMetadata = await cloud.GetAsync<Dictionary<string, JsonElement>>($"communities/{id}/rtcRooms") ?? new();
             var now = cloud.ServerNow().ToUnixTimeMilliseconds();
             if (community?.Id != id || closing) return;
+            cloudVoiceRooms = roomMetadata; voiceRoomsCommunityId = id;
             cloudPresence = online.Values.Where(p => now - p.SeenAt < 45000 && now >= p.SeenAt - 10000).Select(p => new PeerPresence(p.Profile, p.ChannelId, false, false)).ToList();
             foreach (var user in cloudPresence.Select(p => p.Profile)) { await avatars.FetchAsync(cloud, user); store.UpsertMember(id, user.Id == profile.Id ? profile : user); }
+            if (community?.Id != id || closing) return;
             RenderMembers(); RenderChannels(); UpdateStatus();
             if (channelId is not null)
             {
