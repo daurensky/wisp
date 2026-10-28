@@ -44,7 +44,7 @@ public sealed class DesignSystemTests
                 var template=Assert.IsType<ControlTemplate>(style.Setters.OfType<Setter>().Single(s=>s.Property==Control.TemplateProperty).Value);
                 var border=Assert.IsType<Border>(template.LoadContent());
                 Assert.Equal(new CornerRadius(0),border.CornerRadius);
-                Assert.Equal(72d,(double)theme["Width.Rail"]);Assert.Equal(252d,(double)theme["Width.Channels"]);Assert.Equal(220d,(double)theme["Width.Members"]);
+                Assert.Equal(72d,(double)theme["Width.Rail"]);Assert.Equal(288d,(double)theme["Width.Channels"]);Assert.Equal(220d,(double)theme["Width.Members"]);
                 Assert.Equal(1050d,(double)theme["Width.CompactBreakpoint"]);
                 Assert.False(theme.Contains("Width.CallBreakpoint"));Assert.False(theme.Contains("Width.CallPanel"));
             }

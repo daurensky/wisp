@@ -82,7 +82,9 @@ public sealed class AvatarCatalog(string root, string localId)
             {
                 bool reset=failed||GifPlayback.GetMode(image)!=GifPlaybackMode.Always||!animate||Motion.Reduce;
                 AnimationBehavior.SetAutoStart(image,false);AnimationBehavior.GetAnimator(image)?.Pause();playing=false;
-                if(reset)Reset();else if(image.Source is null)image.Source=cover;
+                // Always-playing GIFs retain the animator position across focus
+                // changes, while every paused presentation uses the chosen cover.
+                if(reset)Reset();else image.Source=cover;
                 return;
             }
             AnimationBehavior.SetAutoStart(image,true);

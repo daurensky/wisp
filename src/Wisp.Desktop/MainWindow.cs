@@ -428,7 +428,7 @@ public sealed partial class MainWindow : ThemedWindow
             }
         }
     }
-    private void ClearMessages() { messages.Clear(); renderedMessages.Clear(); lastRenderedMessage = null; }
+    private void ClearMessages() { messages.Clear();messageAvatarViews.Clear(); renderedMessages.Clear(); lastRenderedMessage = null; }
     private void LoadHistory(IEnumerable<ChatMessage> history)
     {
         ClearMessages(); loadingHistory = true;
@@ -446,6 +446,7 @@ public sealed partial class MainWindow : ThemedWindow
         var saved = store.GetMembers(community.Id).ToDictionary(x => x.Id); saved[profile.Id] = profile;
         foreach (var p in DisplayPresence) saved[p.Profile.Id] = p.Profile;
         saved[profile.Id] = profile;
+        RefreshMessageAvatars(saved);
         var ordered = saved.Values.OrderByDescending(x => x.Id == profile.Id || DisplayPresence.Any(p => p.Profile.Id == x.Id)).ThenBy(x => x.Username).ToList();
         var key = string.Join("|", ordered.Select(p => $"{p.Id}:{p.Username}:{p.Game}:{p.About}:{p.BannerAssetId}:{p.BannerPath}:{p.BannerCoverFrame}:{p.AvatarRevision}:{p.AvatarCoverFrame}:{avatars.Resolve(p,store)}:{DisplayPresence.Any(s => s.Profile.Id == p.Id)}"));
         if (key == memberRenderKey) return;
@@ -714,7 +715,7 @@ public sealed partial class MainWindow : ThemedWindow
         if (!grouped)
         {
             var author = m.AuthorId == profile.Id ? profile : community is null ? null : store.GetMembers(community.Id).FirstOrDefault(member => member.Id == m.AuthorId);
-            var picture=AvatarCatalog.Circle(author is null?null:avatars.Resolve(author,store),Ui.Metric("Size.Avatar"),GifPlaybackMode.Always,layout,author?.AvatarCoverFrame??0);
+            var picture=CreateMessageAvatar(m.AuthorId,author,layout);
             picture.VerticalAlignment = VerticalAlignment.Top; picture.HorizontalAlignment = HorizontalAlignment.Left; layout.Children.Add(picture);
         }
         var row = new StackPanel(); Grid.SetColumn(row, 1); layout.Children.Add(row);

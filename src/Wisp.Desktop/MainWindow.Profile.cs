@@ -32,7 +32,7 @@ public sealed partial class MainWindow
             store.SaveProfile(profile);
             await PublishProfile();
             if (community is not null) store.UpsertMember(community.Id, profile);
-            RenderMembers(); UpdateStatus();
+            RenderMembers();RenderChannels(); UpdateStatus();
             return profile;
         }
         catch

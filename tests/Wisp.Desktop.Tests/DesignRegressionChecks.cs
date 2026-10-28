@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using Wisp.Core;
 using Wisp.Desktop;
 using Wisp.Desktop.Media;
+using XamlAnimatedGif;
 using Xunit;
 
 namespace Wisp.Desktop.Tests;
@@ -36,7 +37,8 @@ internal static class DesignRegressionChecks
         Ui.Style(input, "Input.Composer");
         var rich = new RichTextBox();
         var button = new Button { Content = "Профиль" };
-        var content = new StackPanel { Children = { text, input, rich, button, rail, participant } };
+        var always = AvatarCatalog.Image(gif, 32, mode: GifPlaybackMode.Always, coverFrame: 1);
+        var content = new StackPanel { Children = { text, input, rich, button, rail, participant, always } };
         var probe = new ThemedWindow { Title = "Design regression", Width = 440, Height = 560, Content = content };
         ContextMenu? menu = null;
         ToolTip? tip = null;
@@ -70,6 +72,7 @@ internal static class DesignRegressionChecks
             GifPlayback.Reset(avatar);
             Assert.Equal(Colors.Blue, Pixel(Assert.IsAssignableFrom<BitmapSource>(avatar.Source)));
             Assert.Equal(Ui.L, participant.Margin.Left);
+            CheckInactiveCover(probe, always, gif);
 
             // The new no-gutter template must still present interactive headers.
             menu = Assert.IsType<ContextMenu>(participant.ContextMenu);
@@ -92,6 +95,47 @@ internal static class DesignRegressionChecks
             if (menu is not null) menu.IsOpen = false;
             if (tip is not null) tip.IsOpen = false;
             probe.Close();
+        }
+    }
+
+    private static void CheckInactiveCover(Window probe, Image image, string gif)
+    {
+        bool reduced = Motion.Reduce;
+        var focus = new ThemedWindow { Title = "Focus transfer", Width = 180, Height = 100 };
+        try
+        {
+            PumpUntil(probe, () => image.Source is BitmapSource bitmap && Pixel(bitmap) == Colors.Blue);
+            Motion.SetReduced(false); Pump(probe);
+            if (Motion.Allowed(image))
+                PumpUntil(probe, () => AnimationBehavior.GetAnimator(image) is not null);
+            var animator = AnimationBehavior.GetAnimator(image);
+            if (animator is not null && Motion.Allowed(image))
+                PumpUntil(probe, () => animator.CurrentFrameIndex == 1);
+            var animatedSource = image.Source;
+            animator?.Pause(); Pump(probe);
+            int? position = animator?.CurrentFrameIndex;
+            // Deliberately leave a different displayed frame: losing focus must
+            // restore the selected blue cover without rewinding its animator.
+            image.Source = new ImageEditingDocument(gif).GetFrame(0, 32);
+            Assert.Equal(Colors.Red, Pixel(Assert.IsAssignableFrom<BitmapSource>(image.Source)));
+            focus.Show(); focus.Activate(); Pump(probe);
+            Assert.False(probe.IsActive);
+            Assert.Equal(Colors.Blue, Pixel(Assert.IsAssignableFrom<BitmapSource>(image.Source)));
+            if (animator is not null)
+            {
+                Assert.True(animator.IsPaused);
+                Assert.Equal(position, animator.CurrentFrameIndex);
+            }
+            focus.Close(); probe.Activate(); Pump(probe);
+            if (animator is not null && Motion.Allowed(image))
+            {
+                Assert.False(animator.IsPaused);
+                Assert.Same(animatedSource, image.Source);
+            }
+        }
+        finally
+        {
+            focus.Close(); Motion.SetReduced(reduced); Pump(probe);
         }
     }
 

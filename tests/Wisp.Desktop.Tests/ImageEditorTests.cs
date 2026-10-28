@@ -62,7 +62,7 @@ public sealed class ImageEditorTests
         var gif = new ImageEditingGifDocument(fixture);
         uint[] colors = [0xff000000, 0xffff0000, 0xff00ff00, 0xff0000ff];
         Assert.Equal(Enumerable.Range(0, 256).Select(i => colors[(i % 16 / 4 + i / 16) % 4]).ToArray(), gif.RenderFrame(0));
-        Assert.ThrowsAny<IOException>(() => new ImageEditingGifDocument(fixture[..^6]));
+        Assert.Throws<InvalidDataException>(() => new ImageEditingGifDocument(fixture[..^6]));
     }
 
     [Fact]

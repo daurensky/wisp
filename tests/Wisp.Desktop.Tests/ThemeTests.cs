@@ -295,6 +295,7 @@ public sealed class ThemeTests
 
             Assert.Equal(GifPlaybackMode.Hover, GifPlayback.GetMode(chatEmoji));
             Assert.NotNull(GifPlayback.GetScope(chatEmoji));
+            phase("existing chat avatar refresh");CheckChatAvatarRefresh(main,body,gif);
             phase("connection status, brand and smooth scrolling"); CheckDesktopPolish(main, community.Id, store.GetChannels(community.Id).First(c => c.IsVoice).Id);
             phase("navigation during call and redesigned screens");CheckNavigationAndScreens(main,store,profile,community,gif);
             var inputButton = Descendants(main).OfType<Button>().First(button => Equals(System.Windows.Automation.AutomationProperties.GetName(button), "Настройки Wisp"));
@@ -341,6 +342,49 @@ public sealed class ThemeTests
             timer.Tick += (_, _) => { if (!main.IsVisible || DateTime.UtcNow >= deadline) { timer.Stop(); frame.Continue = false; } };
             timer.Start(); Dispatcher.PushFrame(frame);
             Assert.False(main.IsVisible, "Quit must finish after the initial Closing callback returns.");
+        }
+    }
+
+    private static void CheckChatAvatarRefresh(MainWindow main,SelectableChatText body,string gif)
+    {
+        const System.Reflection.BindingFlags flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+        var profileField=typeof(MainWindow).GetField("profile",flags)!;
+        var original=Assert.IsType<UserProfile>(profileField.GetValue(main));
+        var messages=Assert.IsType<VirtualRows>(typeof(MainWindow).GetField("messages",flags)!.GetValue(main));
+        var rows=messages.Items.Cast<UiRow>().ToArray();
+        var host=Assert.Single(Descendants(messages).OfType<ContentControl>(),control=>control.Name=="ChatAvatar");
+        var originalImage=host.Content;
+        var scroll=Assert.Single(Descendants(messages).OfType<ScrollViewer>(),viewer=>ReferenceEquals(viewer.TemplatedParent,messages));
+        double offset=scroll.VerticalOffset;string selected=body.SelectedPlainText();
+        var position=body.TranslatePoint(new Point(),main);
+        bool reduced=Motion.Reduce;
+        try
+        {
+            Motion.SetReduced(true);
+            profileField.SetValue(main,original with{AvatarPath=gif,AvatarRevision=AvatarCatalog.Revision(gif),AvatarCoverFrame=1});
+            typeof(MainWindow).GetMethod("RenderMembers",flags)!.Invoke(main,null);PumpLayout(main);
+            Assert.Same(host,Assert.Single(Descendants(messages).OfType<ContentControl>(),control=>control.Name=="ChatAvatar"));
+            var image=Assert.IsType<Image>(host.Content);Assert.NotSame(originalImage,image);
+            Assert.Equal(GifPlaybackMode.Always,GifPlayback.GetMode(image));
+            var expected=Wisp.Desktop.Media.ImageEditingService.LoadCover(gif,1,80);
+            byte[] Pixels(System.Windows.Media.Imaging.BitmapSource source)
+            {
+                var bitmap=new System.Windows.Media.Imaging.FormatConvertedBitmap(source,PixelFormats.Bgra32,null,0);
+                var bytes=new byte[bitmap.PixelWidth*bitmap.PixelHeight*4];bitmap.CopyPixels(bytes,bitmap.PixelWidth*4,0);return bytes;
+            }
+            var expectedPixels=Pixels(expected);
+            PumpUntil(main,()=>image.Source is System.Windows.Media.Imaging.BitmapSource bitmap&&Pixels(bitmap).SequenceEqual(expectedPixels),"updated chat avatar chosen GIF cover");
+            Assert.Equal(rows.Length,messages.Items.Count);
+            for(int index=0;index<rows.Length;index++)Assert.Same(rows[index],messages.Items[index]);
+            Assert.Same(body,Assert.Single(Descendants(messages).OfType<SelectableChatText>()));
+            Assert.Equal(selected,body.SelectedPlainText());Assert.Equal(offset,scroll.VerticalOffset);
+            Assert.Equal(position,body.TranslatePoint(new Point(),main));
+            SaveSnapshot(main,"chat-avatar-updated-dark");
+        }
+        finally
+        {
+            profileField.SetValue(main,original);typeof(MainWindow).GetMethod("RenderMembers",flags)!.Invoke(main,null);
+            Motion.SetReduced(reduced);PumpLayout(main);
         }
     }
 
@@ -843,7 +887,7 @@ public sealed class ThemeTests
         try
         {
             PumpUntil(main,()=>Descendants(dialog).OfType<Image>().Count(image=>image.Source is not null)==3,"full share source previews");
-            var launch=Assert.Single(Descendants(dialog).OfType<Button>(),button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Запустить демонстрацию");
+            var launch=Assert.Single(Descendants(dialog).OfType<Button>(),button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Запустить");
             Assert.False(launch.IsEnabled);Assert.Equal(3,Descendants(dialog).OfType<ComboBox>().Count());
             Assert.DoesNotContain(Descendants(dialog).OfType<Button>(),button=>Equals(button.Content,"Отмена"));
             var source=Assert.Single(Descendants(dialog).OfType<Button>(),button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Источник · Game");
