@@ -33,7 +33,7 @@ public sealed partial class MainWindow
     private void UpdateTray()=>trayIndicator?.Update(voiceChannelId is not null&&rtc?.Joined==true,activeVoiceFailed,muted,deafened,voice.IsSpeaking(VoiceService.LocalSpeakerId));
     private void ShowHome()
     {
-        EnsureNoRecording();community=null;selectedChannel=null;channelRenderKey="";memberRenderKey="";cloudPresence=Array.Empty<PeerPresence>();presence=Array.Empty<PeerPresence>();channels.Clear();members.Clear();ClearMessages();
+        EnsureNoRecording();soundboardPopup?.Close();emojiPicker?.Close();community=null;selectedChannel=null;channelRenderKey="";memberRenderKey="";cloudPresence=Array.Empty<PeerPresence>();presence=Array.Empty<PeerPresence>();channels.Clear();members.Clear();ClearMessages();
         serverTitle.Text="Wisp";channelTitle.Text="Главная";chatWorkspace.Visibility=Visibility.Collapsed;homeWorkspace.Visibility=Visibility.Visible;
         var body=new StackPanel{Margin=Ui.Insets(Ui.Xl),HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Center};
         var brand=new StackPanel{HorizontalAlignment=HorizontalAlignment.Center,Margin=Ui.Insets(0,0,0,Ui.Xl)};
@@ -53,11 +53,11 @@ public sealed partial class MainWindow
         ModalHandle? handle=null;
         var context=new SettingsContext
         {
-            Profile=profile,ProfileSurface=()=>CreateProfileEditor(),CurrentProfile=()=>profile,ResolveAvatar=p=>avatars.Resolve(p,store),ServerSettings=EditVoiceServer,AvatarPath=avatars.Resolve(profile,store),BannerPath=profile.BannerPath,Audio=voice.Devices,NoiseSuppressionAvailable=voice.NoiseSuppressionAvailable,ApplyAudio=ApplyAudio,
-            EditProfile=()=>{handle?.Close();EditProfile();},ShowNotifications=()=>{handle?.Close();ShowNotifications();},ConnectionDetails=()=>{handle?.Close();ConnectionDetails();},
-            ShareScreen=()=>{handle?.Close();Run(ShareScreen);},CanShareScreen=rtc?.Joined==true,SignOut=()=>{handle?.Close();Run(SignOut);},ServerAddress=cloud?.Config.Url??"",ConnectionStatus=()=>connection.Text,
+            Profile=profile,ProfileSurface=()=>CreateProfileEditor(),CurrentProfile=()=>profile,ResolveAvatar=p=>avatars.Resolve(p,store),AvatarPath=avatars.Resolve(profile,store),BannerPath=profile.BannerPath,Audio=voice.Devices,NoiseSuppressionAvailable=voice.NoiseSuppressionAvailable,ApplyAudio=ApplyAudio,
+            EditProfile=()=>{handle?.Close();EditProfile();},ShowNotifications=()=>{handle?.Close();ShowNotifications();},ReportError=error=>Notify(error,true),
+            SignOut=()=>{handle?.Close();Run(SignOut);},
             NotificationsEnabled=sounds.NotificationsEnabled,NotificationVolume=sounds.NotificationVolume,ApplyNotifications=(enabled,volume)=>{sounds.NotificationsEnabled=enabled;sounds.NotificationVolume=volume;new SoundNotificationPreferences(enabled,volume).Save(store.RootDirectory);}
         };
-        handle=ModalHost.Open(this,"Настройки",new SettingsView(context),880);
+        handle=ModalHost.Open(this,"Настройки",new SettingsView(context), options:new ModalOptions(FullWindow:true));
     }
 }

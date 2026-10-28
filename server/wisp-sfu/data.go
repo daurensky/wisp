@@ -12,6 +12,7 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"math"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -150,56 +151,24 @@ func (s *store) data(w http.ResponseWriter, r *http.Request) {
 			case "icon":
 				raw, v, e := s.getDocument(ctx, "communities/"+cid+"/icon")
 				result, version, err = raw, v, e
+			case "management":
+				if len(parts) != 3 || !s.manager(ctx, cid, uid) {
+					apiError(w, 403, "Community management permission required")
+					return
+				}
+				result, err = s.communitySnapshot(ctx, cid)
 			case "snapshot":
-				raw, _, e := s.getDocument(ctx, strings.Join(parts[:3], "/"))
-				if e != nil {
-					err = e
-					break
-				}
 				if len(parts) > 3 {
-					result = jsonChild(raw, parts[3:])
-					break
+					raw, _, e := s.getDocument(ctx, strings.Join(parts[:3], "/"))
+					result, err = jsonChild(raw, parts[3:]), e
+				} else {
+					result, err = s.communitySnapshot(ctx, cid)
 				}
-				var doc map[string]json.RawMessage
-				if json.Unmarshal(raw, &doc) != nil {
-					result = nil
-					break
-				}
-				rows, e := s.db.Query(ctx, `SELECT u.profile FROM wisp_users u JOIN wisp_members m ON m.user_id=u.id WHERE m.community_id=$1 ORDER BY u.id`, cid)
-				if e != nil {
-					err = e
-					break
-				}
-				defer rows.Close()
-				members := []json.RawMessage{}
-				for rows.Next() {
-					var p json.RawMessage
-					if rows.Scan(&p) != nil {
-						err = denied
-						break
-					}
-					members = append(members, p)
-				}
-				b, _ := json.Marshal(members)
-				doc["Members"] = b
-				roles := map[string]string{}
-				roleRows, e := s.db.Query(ctx, `SELECT m.user_id,CASE WHEN c.owner_id=m.user_id THEN 'owner' ELSE m.role END FROM wisp_members m JOIN wisp_communities c ON c.id=m.community_id WHERE m.community_id=$1`, cid)
-				if e != nil {
-					err = e
-					break
-				}
-				for roleRows.Next() {
-					var id, role string
-					if roleRows.Scan(&id, &role) != nil {
-						err = denied
-						break
-					}
-					roles[id] = role
-				}
-				roleRows.Close()
-				doc["Roles"], _ = json.Marshal(roles)
-				result = doc
 			case "messages", "files", "emojis", "sounds":
+				if parts[2] == "messages" && len(parts) >= 4 && !s.channelExists(ctx, cid, parts[3]) {
+					apiError(w, 404, "Channel unavailable")
+					return
+				}
 				rootLen := documentRoot(parts)
 				if len(parts) < rootLen || len(parts) == 3 || parts[2] == "messages" && len(parts) == 4 {
 					result, err = s.listDocuments(ctx, path, 100)
@@ -315,6 +284,18 @@ func (s *store) data(w http.ResponseWriter, r *http.Request) {
 			}
 			clean["Game"] = game
 		}
+		for _, key := range []string{"AvatarCoverFrame", "BannerCoverFrame"} {
+			frame := float64(0)
+			if value, exists := p[key]; exists {
+				var valid bool
+				frame, valid = value.(float64)
+				if !valid || frame < 0 || frame > 499 || math.Trunc(frame) != frame {
+					apiError(w, 400, "Invalid GIF cover frame")
+					return
+				}
+			}
+			clean[key] = int(frame)
+		}
 		for _, key := range []string{"AvatarRevision", "AvatarAssetId", "BannerAssetId"} {
 			if value, ok := p[key].(string); ok {
 				if !hashPattern.MatchString(value) {
@@ -399,14 +380,17 @@ func (s *store) data(w http.ResponseWriter, r *http.Request) {
 }
 func (s *store) saveSnapshot(ctx context.Context, uid, cid string, data json.RawMessage) error {
 	var snap struct {
-		Community struct{ ID, Name, OwnerID, IconAssetID string }
-		Channels  []struct {
+		Community struct {
+			ID, Name, OwnerID, IconAssetID string
+			IconCoverFrame                 int
+		}
+		Channels []struct {
 			ID, CommunityID, Name string
 			IsVoice               bool
 		}
 	}
 	// Existing .NET property casing includes Id/OwnerId, handled case-insensitively by encoding/json.
-	if json.Unmarshal(data, &snap) != nil || snap.Community.ID != cid || !keyPattern.MatchString(snap.Community.OwnerID) || len(snap.Community.Name) < 1 || len(snap.Community.Name) > 100 || len(snap.Channels) > 500 {
+	if json.Unmarshal(data, &snap) != nil || snap.Community.ID != cid || !keyPattern.MatchString(snap.Community.OwnerID) || len(snap.Community.Name) < 1 || len(snap.Community.Name) > 100 || len(snap.Channels) > 500 || snap.Community.IconCoverFrame < 0 || snap.Community.IconCoverFrame > 499 {
 		return denied
 	}
 	ids := map[string]bool{}
@@ -420,7 +404,7 @@ func (s *store) saveSnapshot(ctx context.Context, uid, cid string, data json.Raw
 	for _, ch := range snap.Channels {
 		channels = append(channels, map[string]any{"Id": ch.ID, "CommunityId": cid, "Name": ch.Name, "IsVoice": ch.IsVoice})
 	}
-	data, _ = json.Marshal(map[string]any{"Community": map[string]any{"Id": cid, "OwnerId": snap.Community.OwnerID, "Name": snap.Community.Name, "IconAssetId": snap.Community.IconAssetID}, "Channels": channels, "Members": []any{}})
+	data, _ = json.Marshal(map[string]any{"Community": map[string]any{"Id": cid, "OwnerId": snap.Community.OwnerID, "Name": snap.Community.Name, "IconAssetId": snap.Community.IconAssetID, "IconCoverFrame": snap.Community.IconCoverFrame}, "Channels": channels, "Members": []any{}})
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -527,8 +511,12 @@ func validateTransfer(raw json.RawMessage, cid, kind string, max int, id string)
 	var a struct {
 		ID, Name, Kind string
 		Data           []byte
+		Volume         *float64
 	}
 	if json.Unmarshal(raw, &a) != nil || a.Kind != kind || len(a.Name) == 0 || len(a.Name) > 200 || filepath.Base(a.Name) != a.Name || strings.ContainsAny(a.Name, `\/`) || len(a.Data) == 0 || len(a.Data) > max || !hashPattern.MatchString(a.ID) {
+		return false
+	}
+	if a.Volume != nil && (kind != "sound" && *a.Volume != 1 || math.IsNaN(*a.Volume) || math.IsInf(*a.Volume, 0) || *a.Volume < 0 || *a.Volume > 1) {
 		return false
 	}
 	if id != "" && a.ID != id {

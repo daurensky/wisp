@@ -38,6 +38,20 @@ try
                 var asset=senderStore.ImportAsset("community",file,"attachment");await CloudFiles.UploadAsync(backends[0],asset);
                 var downloadedFile=await CloudFiles.DownloadAsync(cloud,receiverStore,"community",sourceId,asset.Id);
                 if(downloadedFile is null||await File.ReadAllTextAsync(downloadedFile.LocalPath)!=await File.ReadAllTextAsync(file))throw new Exception("Persistent attachment DTO/hash round trip failed");
+                var emojiFile=Path.Combine(mediaRoot,"existing.gif");
+                await File.WriteAllBytesAsync(emojiFile,Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"));
+                var emojiAsset=senderStore.ImportAsset("community",emojiFile,"emoji");
+                await CommunityAssets.UploadEmojiAsync(backends[0],emojiAsset);
+                await CommunityAssets.UploadEmojiAsync(cloud,emojiAsset);
+                var emojiMessage=new ChatMessage("member-emoji","text",cloud.Profile!.Id,cloud.Profile.Username,"hello :fixture:",DateTimeOffset.UtcNow,Emojis:new(){[":fixture:"]=emojiAsset.Id});
+                await cloud.SendMessageAsync("community",emojiMessage);
+                if(!(await backends[0].MessagesAsync("community","text")).Any(message=>message.Id==emojiMessage.Id&&message.Emojis?.GetValueOrDefault(":fixture:")==emojiAsset.Id))throw new Exception("Ordinary member cannot send existing server emoji");
+                var otherEmojiFile=Path.Combine(mediaRoot,"new.gif");await File.WriteAllBytesAsync(otherEmojiFile,(await File.ReadAllBytesAsync(emojiFile)).Concat(new byte[]{0}).ToArray());
+                var another=senderStore.ImportAsset("community",otherEmojiFile,"emoji");
+                try{await CommunityAssets.UploadEmojiAsync(cloud,another);throw new Exception("Member created a new server emoji without management rights");}
+                catch(ServerRequestException denied)when(denied.Status==System.Net.HttpStatusCode.Forbidden){}
+                Console.WriteLine("PASS: owner uploads emoji; ordinary member reuses helper and sends it; new uploads stay manager-only");
+
             }
             finally{Directory.Delete(mediaRoot,true);}
             Console.WriteLine("PASS: real account/profile/chat/attachment API DTOs and PostgreSQL persistence");

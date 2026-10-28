@@ -27,7 +27,7 @@ public sealed partial class MainWindow : ThemedWindow
     private readonly HashSet<string> publishedFiles = new(), unavailableFiles = new();
     private readonly HashSet<string> dismissedScreens = new();
     private readonly Dictionary<string,byte[]> remoteScreens = new();
-    private readonly Button notificationButton, cancelRecordButton,inviteButton,createChannelButton;
+    private readonly Button notificationButton, cancelRecordButton,inviteButton,serverSettingsButton;
     private readonly Button sendButton;
     private ModalHandle? notificationPopup;
     private string memberRenderKey = "";
@@ -132,6 +132,9 @@ public sealed partial class MainWindow : ThemedWindow
     private long shareGeneration;
     private string? recordedPath;
     private bool sendingRecording;
+    private MessageComposerView messageComposer=null!;
+    private RecordingWaveformView recordingWaveform=null!;
+    private SoundboardPopup? soundboardPopup;
     private IReadOnlyList<PeerPresence> presence = Array.Empty<PeerPresence>();
 
     public MainWindow(LocalStore store, UserProfile profile, ServerBackend? cloud = null)
@@ -161,15 +164,13 @@ public sealed partial class MainWindow : ThemedWindow
         var railActions = new StackPanel(); DockPanel.SetDock(railActions, Dock.Bottom); rail.Children.Add(railActions);
         railActions.Children.Add(Tool("plus", "Создать сообщество", CreateCommunity));
         railActions.Children.Add(Tool("arrow-up-right", "Присоединиться по приглашению", JoinCommunity));
-        var themeToggle = new ToggleIconButton { IconOn = "sun", IconOff = "moon", ToolTipOn = "Включить тёмную тему", ToolTipOff = "Включить светлую тему", IsChecked = ThemeManager.IsLight };
-        themeToggle.Click += (_, _) => { ToggleTheme(); themeToggle.IsChecked = ThemeManager.IsLight; };
-        railActions.Children.Add(themeToggle); rail.Children.Add(servers); var railPanel=Ui.Panel(rail,"RailSurface");railPanel.BorderThickness=new Thickness(0,0,Ui.Metric("Size.Hairline"),0);railPanel.SetResourceReference(Border.BorderBrushProperty,"Border");root.Children.Add(railPanel);
+        rail.Children.Add(servers); var railPanel=Ui.Panel(rail,"RailSurface");railPanel.BorderThickness=new Thickness(0,0,Ui.Metric("Size.Hairline"),0);railPanel.SetResourceReference(Border.BorderBrushProperty,"Border");root.Children.Add(railPanel);
 
         var side = new DockPanel();
         var heading = new DockPanel { Height = Ui.Metric("Size.SectionHeader"), Margin = Ui.Insets(Ui.M, 0) };
         var channelActions = new StackPanel { Orientation = Orientation.Horizontal };
-        channelActions.Children.Add(inviteButton=Tool("users", "Пригласить в сообщество", HostCommunity));
-        channelActions.Children.Add(createChannelButton=Tool("plus", "Создать канал", CreateChannel));
+        channelActions.Children.Add(inviteButton=Tool("users-plus", "Пригласить в сообщество", HostCommunity));
+        channelActions.Children.Add(serverSettingsButton=Tool("settings","Настройки сервера",()=>{if(community is{} target&&store.CanManageCommunity(target.Id,profile.Id))OpenCommunitySettings(target);}));
         DockPanel.SetDock(channelActions, Dock.Right); heading.Children.Add(channelActions);
         serverTitle.TextTrimming = TextTrimming.CharacterEllipsis; serverTitle.VerticalAlignment = VerticalAlignment.Center;
         heading.Children.Add(serverTitle); DockPanel.SetDock(heading, Dock.Top); side.Children.Add(heading);
@@ -183,7 +184,7 @@ public sealed partial class MainWindow : ThemedWindow
         messages.SetResourceReference(ItemsControl.ItemContainerStyleProperty, "ListItem.Chat");
         servers.SetResourceReference(ItemsControl.ItemContainerStyleProperty, "ListItem.Chat");
         channels.SetResourceReference(ItemsControl.ItemContainerStyleProperty, "ListItem.Chat");
-        self.Children.Add(connectionButton);
+        var voiceBlock=new StackPanel();voiceBlock.Children.Add(connectionButton);
         var identity = new DockPanel();
         var controls = new StackPanel { Orientation = Orientation.Horizontal };
         micButton = VoiceToggle("mic", "mic-off", "Выключить микрофон", "Включить микрофон", ToggleMic);
@@ -191,14 +192,17 @@ public sealed partial class MainWindow : ThemedWindow
         controls.Children.Add(micButton);controls.Children.Add(deafenButton);
         var settingsButton=Tool("settings", "Настройки Wisp", OpenSettings);settingsButton.Margin=Ui.Insets(Ui.Xs,0,0,0);controls.Children.Add(settingsButton);
         DockPanel.SetDock(controls,Dock.Right);identity.Children.Add(controls);
-        identityAvatar=Btn("Мой профиль",()=>ViewProfile(this.profile));identityAvatar.Padding=Ui.Insets(0);identityAvatar.Margin=Ui.Insets(0,0,Ui.S,0);identityAvatar.Width=identityAvatar.Height=32;Ui.Style(identityAvatar,"Button.Ghost");DockPanel.SetDock(identityAvatar,Dock.Left);identity.Children.Add(identityAvatar);
-        userName.VerticalAlignment=VerticalAlignment.Center;userName.TextTrimming=TextTrimming.CharacterEllipsis;identity.Children.Add(userName);self.Children.Add(identity);
+        identityAvatar=Btn("Мой профиль",()=>ViewProfile(this.profile));identityAvatar.Padding=Ui.Insets(0);identityAvatar.Margin=Ui.Insets(0);Ui.Style(identityAvatar,"Button.Ghost");identityAvatar.HorizontalContentAlignment=HorizontalAlignment.Left;
+        var identityContent=new DockPanel();var identityPicture=new ContentControl{Name="IdentityPicture",Width=32,Height=32,Margin=Ui.Insets(0,0,Ui.S,0)};DockPanel.SetDock(identityPicture,Dock.Left);identityContent.Children.Add(identityPicture);
+        userName.VerticalAlignment=VerticalAlignment.Center;userName.TextTrimming=TextTrimming.CharacterEllipsis;identityContent.Children.Add(userName);identityAvatar.Content=identityContent;identity.Children.Add(identityAvatar);
+
         var voiceTools=new StackPanel{Orientation=Orientation.Horizontal,Margin=Ui.Insets(0,Ui.Xs,0,0)};
         shareButton=VoiceToggle("screen-share","screen-share-off","Начать демонстрацию","Остановить демонстрацию",ShareScreen);
         ((ToggleIconButton)shareButton).SetResourceReference(ToggleIconButton.CheckedBrushProperty,"Danger");voiceTools.Children.Add(shareButton);
         watchButton=Tool("monitor","Смотреть демонстрации",WatchScreens);voiceTools.Children.Add(watchButton);
         soundboardButton=Tool("volume-2","Звуковая панель",SoundPanel);voiceTools.Children.Add(soundboardButton);
-        leaveButton=Tool("x","Выйти из голосового канала",LeaveVoice);Ui.Style(leaveButton,"Button.Danger");voiceTools.Children.Add(leaveButton);self.Children.Add(voiceTools);
+        leaveButton=Tool("phone-hangup","Выйти из голосового канала",LeaveVoice);voiceTools.Children.Add(leaveButton);voiceBlock.Children.Add(voiceTools);
+        var voiceSurface=new Border{Child=voiceBlock,Padding=Ui.Insets(0,0,0,Ui.S),BorderThickness=new Thickness(0,0,0,Ui.Metric("Size.Hairline")),Margin=Ui.Insets(0,0,0,Ui.S)};voiceSurface.SetResourceReference(Border.BorderBrushProperty,"Border");self.Children.Add(voiceSurface);self.Children.Add(identity);
         var selfPanel=Ui.Panel(self,"SurfaceElevated",false);selfPanel.BorderThickness=new Thickness(0,Ui.Metric("Size.Hairline"),0,0);selfPanel.SetResourceReference(Border.BorderBrushProperty,"Border");DockPanel.SetDock(selfPanel,Dock.Bottom);side.Children.Add(selfPanel);
         side.Children.Add(channels);var sidebar=Ui.Panel(side,"ChannelSurface");sidebar.BorderThickness=new Thickness(0,0,Ui.Metric("Size.Hairline"),0);sidebar.SetResourceReference(Border.BorderBrushProperty,"Border");Grid.SetColumn(sidebar,1);root.Children.Add(sidebar);
 
@@ -217,23 +221,23 @@ public sealed partial class MainWindow : ThemedWindow
         var topPanel = new Border { Child = top, BorderThickness = new Thickness(0, 0, 0, Ui.Metric("Size.Hairline")) }; topPanel.SetResourceReference(Border.BorderBrushProperty, "Border");
         DockPanel.SetDock(topPanel, Dock.Top); center.Children.Add(topPanel);
         notice.Visibility = Visibility.Collapsed; DockPanel.SetDock(notice, Dock.Top); center.Children.Add(notice);
-        var input = new StackPanel { Margin = Ui.Insets(Ui.L, Ui.S, Ui.L, Ui.L) }; input.Children.Add(attachmentPreview);
-        var compose = new Grid(); compose.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); compose.ColumnDefinitions.Add(new ColumnDefinition()); compose.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var inputTools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Bottom };
-        inputTools.Children.Add(Tool("paperclip", "Прикрепить файл", AttachFile)); inputTools.Children.Add(emojiButton=Tool("face-slightly-smiling", "Добавить эмодзи", EmojiPanel)); compose.Children.Add(inputTools);
-        composer.Margin = Ui.Insets(Ui.S, 0); composer.Padding = Ui.Insets(Ui.M, Ui.S); Ui.Name(composer, "Сообщение · Enter — отправить, Shift+Enter — новая строка"); Grid.SetColumn(composer, 1); compose.Children.Add(composer);
-        sendButton = Tool("send", "Отправить сообщение · Enter", SendMessage); Ui.Style(sendButton, "Button.Primary"); sendButton.Width = Ui.ControlHeight; sendButton.Padding = Ui.Insets(0); sendButton.VerticalAlignment = VerticalAlignment.Bottom; Grid.SetColumn(sendButton, 2); compose.Children.Add(sendButton); input.Children.Add(compose);
-        var attach = new DockPanel { Margin = Ui.Insets(0, Ui.S, 0, 0) };
-        recordButton = VoiceToggle("mic", "square", "Записать голосовое", "Завершить запись", RecordVoice); DockPanel.SetDock(recordButton, Dock.Left); attach.Children.Add(recordButton);
-        cancelRecordButton = Tool("x", "Отменить запись", CancelRecording); cancelRecordButton.Visibility = Visibility.Collapsed; DockPanel.SetDock(cancelRecordButton, Dock.Left); attach.Children.Add(cancelRecordButton);
-        attach.Children.Add(Ui.Label("Enter — отправить · Shift+Enter — новая строка", Ui.Caption, true)); input.Children.Add(attach);
-        DockPanel.SetDock(input, Dock.Bottom); center.Children.Add(input); messages.Margin = Ui.Insets(0); center.Children.Add(messages);
+        var inputTools=new StackPanel{Orientation=Orientation.Horizontal,VerticalAlignment=VerticalAlignment.Bottom};
+        inputTools.Children.Add(Tool("paperclip","Прикрепить файл",AttachFile));inputTools.Children.Add(emojiButton=Tool("face-slightly-smiling","Добавить эмодзи",EmojiPanel));
+        composer.Margin=Ui.Insets(0);composer.Padding=Ui.Insets(Ui.M,Ui.S);Ui.Name(composer,"Сообщение");Ui.Style(composer,"Input.Composer");
+        var composeActions=new StackPanel{Orientation=Orientation.Horizontal};
+        recordButton=VoiceToggle("mic","square","Записать голосовое","Завершить запись",RecordVoice);composeActions.Children.Add(recordButton);
+        cancelRecordButton=Tool("x","Отменить запись",CancelRecording);cancelRecordButton.Visibility=Visibility.Collapsed;composeActions.Children.Add(cancelRecordButton);
+        sendButton=Tool("send","Отправить сообщение",SendComposer);Ui.Style(sendButton,"Button.Primary");sendButton.Width=Ui.ControlHeight;sendButton.Padding=Ui.Insets(0);composeActions.Children.Add(sendButton);
+        recordingWaveform=new RecordingWaveformView();recordingWaveform.Bind(recorder);
+        messageComposer=new MessageComposerView(composer,inputTools,composeActions,attachmentPreview,recordingWaveform){Margin=Ui.Insets(Ui.L,Ui.S,Ui.L,Ui.L)};
+        composer.TextChanged+=(_,_)=>UpdateComposerState();DockPanel.SetDock(messageComposer,Dock.Bottom);center.Children.Add(messageComposer);
+        messages.Margin=Ui.Insets(0);center.Children.Add(messages);
 
         var right = new DockPanel();var memberHeader = Ui.Label("УЧАСТНИКИ", Ui.Caption, true); memberHeader.FontWeight = FontWeights.SemiBold;
-        memberHeader.Height = Ui.Metric("Size.SectionHeader"); memberHeader.Margin = Ui.Insets(Ui.L, 0); DockPanel.SetDock(memberHeader, Dock.Top); right.Children.Add(memberHeader); right.Children.Add(members);
+        memberHeader.Height=Ui.Metric("Size.Control");memberHeader.Margin=Ui.Insets(Ui.L,Ui.S,Ui.L,0); DockPanel.SetDock(memberHeader, Dock.Top); right.Children.Add(memberHeader); right.Children.Add(members);
         memberPanel = Ui.Panel(right,"AsideSurface");memberPanel.BorderThickness=new Thickness(Ui.Metric("Size.Hairline"),0,0,0);memberPanel.SetResourceReference(Border.BorderBrushProperty,"Border");Grid.SetColumn(memberPanel,3);root.Children.Add(memberPanel);
         SizeChanged += (_, _) => UpdateResponsivePanels();
-        composer.PreviewKeyDown += (_, e) => { if (ComposerInput.ShouldSend(e.Key, Keyboard.Modifiers)) { e.Handled = true; Run(SendMessage); } };
+        composer.PreviewKeyDown += (_, e) => { if (ComposerInput.ShouldSend(e.Key, Keyboard.Modifiers)) { e.Handled = true; Run(SendComposer); } };
         _ = Task.Run(ProcessIncoming);
         if (rtc is not null)
         {
@@ -249,7 +253,7 @@ public sealed partial class MainWindow : ThemedWindow
                     cloudChannelId=null;soundEvents.ConnectionLost();StopVoice();
                     if(target is not null)BeginReconnect(current.Id,target);
                 }
-                var active = rtc.ConnectedPeerIds; voice.SynchronizePeers(active);streamViewers.Retain(active);
+                var active = rtc.ConnectedPeerIds; voice.SynchronizePeers(active);ReconcileStreamViewers();
                 if(rtc.Joined&&!voiceIntent.Connecting)soundEvents.ObserveVoiceRoster(VoiceRoomKey,rtc.Participants);
                 var paths = string.Join(", ", rtc.ConnectionPaths.Values.OrderBy(path => path));
                 if (paths.Length > 0 && paths != lastConnectionPaths) Notify("Путь соединения: " + paths);
@@ -276,6 +280,7 @@ public sealed partial class MainWindow : ThemedWindow
         shareAudio.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true));
         sharePlayback.Error += e => Dispatcher.BeginInvoke(() => Notify(e, true)); screen.Error += e => Dispatcher.BeginInvoke(() => { StopSharing(); Notify(e, true); });
         recorder.Completed += path => Dispatcher.BeginInvoke(() => { if (closing || sendingRecording || !File.Exists(path)) return; Run(() => { recordedPath = path; StageRecording(path); Notify("Запись завершена. Можно прослушать и отправить."); return Task.CompletedTask; }); });
+        recorder.Error += message => Dispatcher.BeginInvoke(() => { if(!closing){Notify(message,true);UpdateComposerState();} });
         activityTimer.Tick += (_, _) => Run(UpdateGame); activityTimer.Start();
         tray = new System.Windows.Forms.NotifyIcon { Text = "Wisp", Visible = true };
         trayIndicator=new TrayIndicator(tray);
@@ -291,7 +296,7 @@ public sealed partial class MainWindow : ThemedWindow
         Loaded += (_, _) => { if (cloud is not null && this.profile.AvatarPath is not null) Run(PublishProfile); };
         UpdateConnectionStatus();
         userName.Text = profile.Username; RenderServers();
-        var first = MyCommunities().FirstOrDefault(); if (first is not null) SetCommunity(first); else ShowHome();
+        ShowHome();
         UpdateStatus(); ModalHost.Prepare(this);
     }
 
@@ -356,34 +361,37 @@ public sealed partial class MainWindow : ThemedWindow
         notificationPopup = ModalHost.Open(this, "Уведомления", notifications, 560);
         notificationPopup.Closed += () => notificationPopup = null;
     }
-    private void UpdateRecordingControls() => cancelRecordButton.Visibility = recorder.IsRecording || recordedPath is not null || (pendingAttachment is not null && store.GetAsset(pendingAttachment)?.Kind == "voice") ? Visibility.Visible : Visibility.Collapsed;
+    private void UpdateRecordingControls() => UpdateComposerState();
     private List<Community> MyCommunities() => cloud is null ? store.GetCommunities() : store.GetCommunities().Where(c => store.GetMembers(c.Id).Any(m => m.Id == profile.Id)).ToList();
     private void RenderServers()
     {
         servers.Clear();
         foreach (var c in MyCommunities()) servers.Add(c.Id, () =>
         {
-            var button = Btn(c.Name, () => SetCommunity(c), c.Name);
-            button.Content=CommunityIcon(c,button);button.ContextMenu=CommunityContextMenu(c);
-            button.BorderThickness=new Thickness(community?.Id==c.Id?2:0);button.SetResourceReference(Control.BorderBrushProperty,"Accent");
-            button.Width = button.Height = Ui.Metric("Size.RailItem"); button.Margin = Ui.Insets(0, 0, 0, Ui.S); Ui.Style(button, "Button.Ghost");
-            if (community?.Id == c.Id) button.SetResourceReference(Control.BackgroundProperty, "Selected");
-            return button;
+            var asset=c.IconAssetId is null?null:store.GetAsset(c.IconAssetId);
+            return new ServerRailItem(c.Name,asset?.LocalPath,community?.Id==c.Id,()=>{try{SetCommunity(c);}catch(Exception error){Notify(error.Message,true);}},store.CanManageCommunity(c.Id,profile.Id)?CommunityContextMenu(c):null,c.IconCoverFrame);
+
         });
     }
-    private void SetCommunity(Community c) { if(community?.Id==c.Id)return;EnsureNoRecording();emojiPicker?.Close();if(community?.Id!=c.Id){cloudPresence=Array.Empty<PeerPresence>();presence=Array.Empty<PeerPresence>();cloudVoiceRooms=new();voiceRoomsCommunityId=null;memberRenderKey="";channelRenderKey="";} community = c;chatWorkspace.Visibility=Visibility.Visible;homeWorkspace.Visibility=Visibility.Collapsed;serverTitle.Text = c.Name; RenderServers(); RenderChannels(); var first = store.GetChannels(c.Id).FirstOrDefault(); if (first is not null) SelectChannel(first); RenderMembers(); UpdateStatus(); }
+    private void SetCommunity(Community c) { if(community?.Id==c.Id)return;EnsureNoRecording();soundboardPopup?.Close();emojiPicker?.Close();if(community?.Id!=c.Id){cloudPresence=Array.Empty<PeerPresence>();presence=Array.Empty<PeerPresence>();cloudVoiceRooms=new();voiceRoomsCommunityId=null;memberRenderKey="";channelRenderKey="";} community = c;chatWorkspace.Visibility=Visibility.Visible;homeWorkspace.Visibility=Visibility.Collapsed;serverTitle.Text = c.Name; RenderServers(); RenderChannels(); var first = store.GetChannels(c.Id).FirstOrDefault(); if (first is not null) SelectChannel(first); RenderMembers(); UpdateStatus(); }
     private void EnsureNoRecording() { if (recorder.IsRecording || recordedPath is not null) throw new InvalidOperationException("Сначала отправь голосовую запись."); }
     private void RenderChannels()
     {
         var visiblePresence = DisplayPresence;
-        var nextKey = (community?.Id ?? "") + ":" + selectedChannel?.Id + ":" + voiceChannelId + ":" + voiceIntent.Connecting + ":" +
+        bool canManage=community is not null&&store.CanManageCommunity(community.Id,profile.Id);
+        var nextKey = (community?.Id ?? "") + ":" + canManage + ":" + selectedChannel?.Id + ":" + voiceChannelId + ":" + voiceIntent.Connecting + ":" +
             string.Join("|", community is null ? Array.Empty<string>() : store.GetChannels(community.Id).Select(c => $"{c.Id}:{c.Name}:{c.IsVoice}")) + ":" +
-            sharing+":"+string.Join("|",remoteStreams.Select(p=>p.Key+":"+p.Value.SessionId))+":"+string.Join("|", visiblePresence.OrderBy(p => p.Profile.Id).Select(p => $"{p.Profile.Id}:{p.Profile.Username}:{p.Profile.AvatarRevision}:{avatars.Resolve(p.Profile, store)}:{p.VoiceChannelId}:{p.Muted}:{p.Deafened}"));
+            sharing+":"+string.Join("|",remoteStreams.Select(p=>p.Key+":"+p.Value.SessionId))+":"+string.Join("|", visiblePresence.OrderBy(p => p.Profile.Id).Select(p => $"{p.Profile.Id}:{p.Profile.Username}:{p.Profile.AvatarRevision}:{p.Profile.AvatarCoverFrame}:{avatars.Resolve(p.Profile, store)}:{p.VoiceChannelId}:{p.Muted}:{p.Deafened}"));
         if (nextKey == channelRenderKey) return;
         channelRenderKey = nextKey; channels.Clear(); if (community is null) return;
         foreach (bool voiceKind in new[] { false, true })
         {
-            channels.Add(voiceKind ? "voice-heading" : "text-heading", () => { var heading = Ui.Label(voiceKind ? "ГОЛОСОВЫЕ КАНАЛЫ" : "ТЕКСТОВЫЕ КАНАЛЫ"); Ui.Style(heading, "Text.Section"); return heading; });
+            channels.Add(voiceKind ? "voice-heading" : "text-heading", () =>
+            {
+                var row=new DockPanel{Margin=Ui.Insets(Ui.S,Ui.S,Ui.Xs,0)};
+                if(canManage){var add=Tool("plus",voiceKind?"Создать голосовой канал":"Создать текстовый канал",()=>CreateChannel(voiceKind));DockPanel.SetDock(add,Dock.Right);row.Children.Add(add);}
+                var heading=Ui.Label(voiceKind?"ГОЛОСОВЫЕ КАНАЛЫ":"ТЕКСТОВЫЕ КАНАЛЫ");Ui.Style(heading,"Text.Section");heading.VerticalAlignment=VerticalAlignment.Center;row.Children.Add(heading);return row;
+            });
             foreach (var c in store.GetChannels(community.Id).Where(x => x.IsVoice == voiceKind))
             {
                 int count = DisplayPresence.Count(p => p.VoiceChannelId == c.Id);
@@ -392,13 +400,15 @@ public sealed partial class MainWindow : ThemedWindow
                     var button = Btn(c.Name, async () => { if (c.IsVoice) await JoinVoice(c); else SelectChannel(c); });
                     Ui.Style(button, "Button.Row");
                     var row = new DockPanel();
+                    if(canManage&&(voiceKind||selectedChannel?.Id==c.Id))
+                    {var gear=ChannelSettingsButton(c,row);DockPanel.SetDock(gear,Dock.Right);row.Children.Add(gear);}
                     if (voiceKind)
                     {
                         var chat = Tool("message-square", "Открыть текстовый чат голосового канала", () => SelectChannel(c)); DockPanel.SetDock(chat, Dock.Right); row.Children.Add(chat);
                     }
                     var label = new Grid(); label.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); label.ColumnDefinitions.Add(new ColumnDefinition()); label.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                     label.Children.Add(new Icon { Kind = voiceKind ? "volume-2" : "hash", Margin = Ui.Insets(0, 0, Ui.S, 0), VerticalAlignment = VerticalAlignment.Center });
-                    var name = Ui.Label(c.Name); Grid.SetColumn(name, 1); label.Children.Add(name);
+                    var name = Ui.Label(c.Name);name.TextTrimming=TextTrimming.CharacterEllipsis; Grid.SetColumn(name, 1); label.Children.Add(name);
                     if (voiceKind) { var capacity = Ui.Label($"{count}", Ui.Caption, true); capacity.Margin = Ui.Insets(Ui.S, 0, 0, 0); Grid.SetColumn(capacity, 2); label.Children.Add(capacity); }
                     button.Content = label;
                     if (!voiceKind && selectedChannel?.Id == c.Id) button.SetResourceReference(Control.BackgroundProperty, "Selected");
@@ -428,7 +438,7 @@ public sealed partial class MainWindow : ThemedWindow
     {
         if (recorder.IsRecording || recordedPath is not null) throw new InvalidOperationException("Сначала отправь голосовую запись.");
         selectedChannel = c; channelTitle.Text = c.Name; channelTitle.ToolTip = c.Name;
-        pendingAttachment = null; draftEmojis.Clear(); UpdateAttachmentPreview(); LoadHistory(store.GetMessages(c.Id)); RenderChannels();
+        pendingAttachment=null;draftEmojis.Clear();UpdateAttachmentPreview();LoadHistory(store.GetMessages(c.Id));RenderChannels();UpdateComposerState();
     }
     private void RenderMembers()
     {
@@ -437,7 +447,7 @@ public sealed partial class MainWindow : ThemedWindow
         foreach (var p in DisplayPresence) saved[p.Profile.Id] = p.Profile;
         saved[profile.Id] = profile;
         var ordered = saved.Values.OrderByDescending(x => x.Id == profile.Id || DisplayPresence.Any(p => p.Profile.Id == x.Id)).ThenBy(x => x.Username).ToList();
-        var key = string.Join("|", ordered.Select(p => $"{p.Id}:{p.Username}:{p.Game}:{p.About}:{p.BannerAssetId}:{p.BannerPath}:{p.AvatarRevision}:{avatars.Resolve(p,store)}:{DisplayPresence.Any(s => s.Profile.Id == p.Id)}"));
+        var key = string.Join("|", ordered.Select(p => $"{p.Id}:{p.Username}:{p.Game}:{p.About}:{p.BannerAssetId}:{p.BannerPath}:{p.BannerCoverFrame}:{p.AvatarRevision}:{p.AvatarCoverFrame}:{avatars.Resolve(p,store)}:{DisplayPresence.Any(s => s.Profile.Id == p.Id)}"));
         if (key == memberRenderKey) return;
         var oldKeys = members.Keys.ToHashSet(); memberRenderKey = key; members.Clear();
         foreach (var p in ordered)
@@ -447,7 +457,7 @@ public sealed partial class MainWindow : ThemedWindow
             members.Add(p.Id, () =>
             {
                 var row = new DockPanel();
-                var picture = AvatarCatalog.Circle(avatars.Resolve(p, store), Ui.Metric("Size.Avatar"), GifPlaybackMode.Hover); picture.Margin = Ui.Insets(0, 0, Ui.S, 0); DockPanel.SetDock(picture, Dock.Left); row.Children.Add(picture);
+                var picture = AvatarCatalog.Circle(avatars.Resolve(p, store), Ui.Metric("Size.Avatar"), GifPlaybackMode.Hover,coverFrame:p.AvatarCoverFrame); picture.Margin = Ui.Insets(0, 0, Ui.S, 0); DockPanel.SetDock(picture, Dock.Left); row.Children.Add(picture);
                 var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center }; info.Children.Add(Ui.Label(p.Username));
                 var status = Ui.Label(game is null ? online ? "В сети" : "Не в сети" : $"Играет в {game}", Ui.Caption, true);
                 if (online && game is null) status.SetResourceReference(TextBlock.ForegroundProperty, "Success"); info.Children.Add(status); row.Children.Add(info);
@@ -459,18 +469,18 @@ public sealed partial class MainWindow : ThemedWindow
     private void UpdateStatus()
     {
         bool inVoice = voiceChannelId is not null;
-        inviteButton.IsEnabled=community is not null&&cloud is not null;createChannelButton.IsEnabled=community is not null&&store.CanManageCommunity(community.Id,profile.Id);
-        leaveButton.Visibility = inVoice || cloudChannelId is not null || activeVoiceFailed&&voiceCommunity is not null ? Visibility.Visible : Visibility.Collapsed;
+        inviteButton.IsEnabled=community is not null&&cloud is not null;serverSettingsButton.Visibility=community is not null&&store.CanManageCommunity(community.Id,profile.Id)?Visibility.Visible:Visibility.Collapsed;
+        leaveButton.Visibility=inVoice||cloudChannelId is not null?Visibility.Visible:Visibility.Collapsed;
         micButton.Visibility=deafenButton.Visibility=shareButton.Visibility=Visibility.Visible;
         soundboardButton.IsEnabled=inVoice&&rtc?.Joined==true;watchButton.IsEnabled=inVoice&&(remoteStreams.Count>0||remoteScreens.Count>0);
         connection.Text = voiceIntent.Connecting ? "Соединение" : voiceChannelId is not null ? "В канале: " + (community is null ? "" : store.GetChannels((voiceCommunity??community).Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name) + (rtc is null ? "" : $" · {rtc.TransportName}: {rtc.ConnectedCount} соединений") : cloudChannelId is not null ? "В канале · голос ещё не подключён" : cloud is not null ? "Сервер подключён" : "Локальный режим";
         UpdateConnectionStatus();
-        userName.Text = profile.Username;var avatarPath=avatars.Resolve(profile,store);var avatarKey=profile.AvatarRevision+":"+avatarPath;if(identityAvatar is not null&&avatarKey!=identityAvatarKey){identityAvatarKey=avatarKey;identityAvatar.Content=AvatarCatalog.Circle(avatarPath,32,GifPlaybackMode.Hover);}
+        userName.Text = profile.Username;var avatarPath=avatars.Resolve(profile,store);var avatarKey=profile.AvatarRevision+":"+profile.AvatarCoverFrame+":"+avatarPath;if(identityAvatar is not null&&avatarKey!=identityAvatarKey){identityAvatarKey=avatarKey;if(identityAvatar.Content is DockPanel identityBody&&identityBody.Children.OfType<ContentControl>().FirstOrDefault() is{} picture)picture.Content=AvatarCatalog.Circle(avatarPath,32,GifPlaybackMode.Hover,identityAvatar,profile.AvatarCoverFrame);}
         ((ToggleIconButton)micButton).IsChecked = muted || deafened;
         ((ToggleIconButton)deafenButton).IsChecked = deafened;
         ((ToggleIconButton)shareButton).IsChecked = sharing;
         shareButton.IsEnabled = inVoice && !voiceIntent.Connecting;
-        UpdateTray();UpdateResponsivePanels();
+        UpdateComposerState();RefreshViewerAvatars();UpdateTray();UpdateResponsivePanels();
     }
     private void UpdateConnectionStatus()
     {
@@ -536,11 +546,6 @@ public sealed partial class MainWindow : ThemedWindow
         string id=await cloud.JoinCommunityAsync(invite.Text.Trim());
         var snapshot=await cloud.GetAsync<CommunitySnapshot>($"communities/{id}/snapshot")??throw new InvalidOperationException("Сообщество не найдено.");
         store.SaveSnapshot(snapshot);store.UpsertMember(id,profile);SetCommunity(snapshot.Community);await RefreshCloud();
-    }
-    private void CreateChannel()
-    {
-        if (community is null) return; if (!store.CanManageCommunity(community.Id,profile.Id)) throw new InvalidOperationException("Недостаточно прав для создания канала.");
-        var d = new FormDialog(this, "Новый канал"); var name = d.Field("Название"); var isVoice = d.Check("Голосовой канал"); d.Accept("Создать"); if (d.ShowDialog() == true) { var c = store.CreateChannel(community.Id, name.Text, isVoice.IsChecked == true); SelectChannel(c); if (cloud is not null) Run(() => cloud.CreateCommunityAsync(new CommunitySnapshot(community, store.GetChannels(community.Id), store.GetMembers(community.Id))));  }
     }
     private async Task JoinVoice(Channel c,bool automatic=false,CancellationToken cancellation=default)
     {
@@ -613,7 +618,7 @@ public sealed partial class MainWindow : ThemedWindow
         SessionVault.Clear(store.RootDirectory);
         try{await Disconnect();if(cloud is not null)await cloud.LogoutAsync();}finally{exitRequested=true;Close();}
     }
-    private void StopVoice() { voiceIntent.Leave(); StopSharing(); voice.Stop(); sharePlayback.Stop(); foreach (var id in remoteStreams.Keys.ToList()) StopVideoPeer(id); videoFrames.Clear(); voiceChannelId = null; foreach (var v in viewers.Values.ToList()) v.Close(); viewers.Clear(); remoteScreens.Clear(); dismissedScreens.Clear(); UpdateStatus(); }
+    private void StopVoice() { if(recorder.IsRecording&&recorder.UsesSharedSource)Run(RecordVoice);soundboardPopup?.Close();voiceIntent.Leave(); StopSharing(); voice.Stop(); sharePlayback.Stop(); foreach (var id in remoteStreams.Keys.ToList()) StopVideoPeer(id); videoFrames.Clear(); voiceChannelId = null; foreach (var v in viewers.Values.ToList()) v.Close(); viewers.Clear(); remoteScreens.Clear(); dismissedScreens.Clear(); UpdateStatus(); }
     private async Task Disconnect()
     {
         await LeaveVoice();cloudPresence=Array.Empty<PeerPresence>();Interlocked.Increment(ref sessionEpoch);latestFrames.Clear();presence=Array.Empty<PeerPresence>();RenderMembers();RenderChannels();UpdateStatus();
@@ -644,21 +649,19 @@ public sealed partial class MainWindow : ThemedWindow
                     await CommunityAssets.UploadEmojiAsync(cloud, asset);
                     publishedEmojis.Add(asset.Id);
                 }
-                await BroadcastAsset(asset);
             }
             if (attachment is not null && store.GetAsset(attachment) is { } attached)
             {
                 if (cloud is not null && !publishedFiles.Contains(attached.Id)) { await CloudFiles.UploadAsync(cloud, attached); publishedFiles.Add(attached.Id); }
-                await BroadcastAsset(attached);
             }
-            var message = new ChatMessage(Guid.NewGuid().ToString("N"), channel.Id, profile.Id, profile.Username, text.Trim(), DateTimeOffset.UtcNow, attachment, used.Count == 0 ? null : used);
+            var message = new ChatMessage(Guid.NewGuid().ToString("N"), channel.Id, profile.Id, profile.Username, text, DateTimeOffset.UtcNow, attachment, used.Count == 0 ? null : used);
             if (cloud is not null && communityId is not null) await cloud.SendMessageAsync(communityId, message);
             store.SaveMessage(message); if (selectedChannel?.Id == channel.Id) AddMessage(message);
             if (composer.Text == text) composer.Clear();
             if (pendingAttachment == attachment) pendingAttachment = null;
             draftEmojis.Clear(); UpdateAttachmentPreview();  Buttons.Flash(sendButton, "check");
         }
-        finally { sendingMessage = false; sendButton.ToolTip = "Отправить сообщение · Enter"; sendButton.IsEnabled = true; if (Keyboard.FocusedElement == sendButton) composer.Focus(); }
+        finally { sendingMessage = false; sendButton.ToolTip="Отправить сообщение";UpdateComposerState(); if (Keyboard.FocusedElement == sendButton) composer.Focus(); }
     }
     private static string EmojiToken(MediaAsset a)
     {
@@ -689,9 +692,9 @@ public sealed partial class MainWindow : ThemedWindow
         var row = new DockPanel { Margin = Ui.Insets(0, Ui.Xs, 0, Ui.S) };
         var remove = Tool("x", "Убрать вложение", () => { pendingAttachment = null; UpdateAttachmentPreview(); }); DockPanel.SetDock(remove, Dock.Right); row.Children.Add(remove);
         row.Children.Add(new TextBlock { Text = $"{asset.Name} · {asset.Size / 1024} КБ", VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }); attachmentPreview.Children.Add(row);
-        if (new[] { ".png", ".jpg", ".jpeg", ".gif", ".bmp" }.Contains(Path.GetExtension(asset.Name).ToLowerInvariant()))
-        { try { attachmentPreview.Children.Add(new Image { Source = LoadImage(asset.LocalPath, 320), Height = Ui.Metric("Height.MediaPreview"), MaxWidth = Ui.Metric("Width.MediaPreview"), Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left }); } catch { } }
-        else if (asset.Kind == "voice" || new[] { ".wav", ".mp3" }.Contains(Path.GetExtension(asset.Name).ToLowerInvariant())) attachmentPreview.Children.Add(new VoiceMessagePlayer(asset.LocalPath, e => Notify(e, true), () => !deafened));
+        if(asset.Kind=="voice"||new[]{".wav",".mp3"}.Contains(Path.GetExtension(asset.Name).ToLowerInvariant()))attachmentPreview.Children.Add(new VoiceMessagePlayer(asset.LocalPath,e=>Notify(e,true),()=>!deafened));
+        else if(AttachmentCard.IsImage(asset.Name)||AttachmentCard.IsVideo(asset.Name))
+            attachmentPreview.Children.Add(new AttachmentCard(this,asset,()=>AttachmentCard.Save(this,asset),()=>OpenAsset(asset),error=>Notify(error,true)){MaxHeight=Ui.Metric("Height.MediaPreview"),MaxWidth=Ui.Metric("Width.MediaPreview")});
     }
     private void AddMessage(ChatMessage m)
     {
@@ -711,7 +714,7 @@ public sealed partial class MainWindow : ThemedWindow
         if (!grouped)
         {
             var author = m.AuthorId == profile.Id ? profile : community is null ? null : store.GetMembers(community.Id).FirstOrDefault(member => member.Id == m.AuthorId);
-            var picture = AvatarCatalog.Circle(author is null ? null : avatars.Resolve(author, store), Ui.Metric("Size.Avatar"), GifPlaybackMode.Hover, layout);
+            var picture=AvatarCatalog.Circle(author is null?null:avatars.Resolve(author,store),Ui.Metric("Size.Avatar"),GifPlaybackMode.Always,layout,author?.AvatarCoverFrame??0);
             picture.VerticalAlignment = VerticalAlignment.Top; picture.HorizontalAlignment = HorizontalAlignment.Left; layout.Children.Add(picture);
         }
         var row = new StackPanel(); Grid.SetColumn(row, 1); layout.Children.Add(row);
@@ -729,29 +732,18 @@ public sealed partial class MainWindow : ThemedWindow
             {
                 if (asset.Kind == "emoji")
                 { try { row.Children.Add(AvatarCatalog.Image(asset.LocalPath, Ui.Body, mode: GifPlaybackMode.Hover, hoverScope: layout)); } catch { } }
-                else if (new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp" }.Contains(Path.GetExtension(asset.Name).ToLowerInvariant()))
-                {
-                    try { row.Children.Add(MessageImage(asset.LocalPath, layout)); } catch { }
-                }
-                if (asset.Kind == "voice") row.Children.Add(new VoiceMessagePlayer(asset.LocalPath, e => Notify(e, true), () => !deafened));
-                else if (asset.Kind != "emoji") row.Children.Add(Btn($"{asset.Name} · {asset.Size / 1024} КБ", () => OpenAsset(asset)));
+                else if (asset.Kind == "voice") row.Children.Add(new VoiceMessagePlayer(asset.LocalPath, e => Notify(e, true), () => !deafened));
+                else row.Children.Add(new AttachmentCard(this,asset,()=>AttachmentCard.Save(this,asset),()=>OpenAsset(asset),error=>Notify(error,true)));
             }
             else row.Children.Add(Ui.Label("Вложение недоступно на этом компьютере", Ui.Caption, true));
         }
         return layout;
     }
-    private static Image MessageImage(string path, FrameworkElement scope)
-    {
-        var image = AvatarCatalog.Image(path, Ui.Metric("Width.Media"), mode: GifPlaybackMode.Hover, hoverScope: scope);
-        image.Width = double.NaN; image.Height = double.NaN; image.Stretch = Stretch.Uniform;
-        image.MaxHeight = Ui.Metric("Height.Media"); image.MaxWidth = Ui.Metric("Width.Media");
-        image.HorizontalAlignment = HorizontalAlignment.Left; image.Margin = Ui.Insets(0, Ui.S, 0, 0); return image;
-    }
     private void OpenAsset(MediaAsset asset)
     {
-        if (asset.CommunityId != community?.Id) throw new InvalidOperationException("Вложение принадлежит другому сообществу.");
-        if (asset.Kind == "voice" || asset.Kind == "sound") { if (deafened) return; sounds.PlayFile(asset.LocalPath); return; }
-        var save = new Microsoft.Win32.SaveFileDialog { FileName = asset.Name, Title = "Сохранить вложение" }; if (save.ShowDialog(this) == true && Path.GetFullPath(save.FileName) != Path.GetFullPath(asset.LocalPath)) File.Copy(asset.LocalPath, save.FileName, true);
+        if(asset.CommunityId!=community?.Id)throw new InvalidOperationException("Вложение принадлежит другому сообществу.");
+        if(AttachmentCard.IsImage(asset.Name)||AttachmentCard.IsVideo(asset.Name))MediaViewer.Show(this,asset,error=>Notify(error,true),()=>!deafened);
+        else AttachmentCard.Save(this,asset);
     }
     private async Task<MediaAsset?> ImportAndSend(string path, string kind)
     {
@@ -769,8 +761,7 @@ public sealed partial class MainWindow : ThemedWindow
         if (selectedChannel is null) return;
         if (!recorder.IsRecording && recordedPath is null)
         {
-            if (voiceChannelId is not null) throw new InvalidOperationException("Для голосового сообщения сначала отключись от звонка.");
-            var path = Path.Combine(store.RootDirectory, $"recording-{Guid.NewGuid():N}.wav"); recorder.Start(path); ((ToggleIconButton)recordButton).IsChecked = true; UpdateRecordingControls(); Notify("Запись микрофона · максимум 60 секунд. Нажми ещё раз, чтобы прослушать перед отправкой.");
+            var path = Path.Combine(store.RootDirectory, $"recording-{Guid.NewGuid():N}.wav"); recorder.Start(path,rtc?.Joined==true?voice:null,voice.Devices.InputId); ((ToggleIconButton)recordButton).IsChecked = true; UpdateRecordingControls();
         }
         else
         {
@@ -823,13 +814,7 @@ public sealed partial class MainWindow : ThemedWindow
                 var request = JsonSerializer.Deserialize<ScreenCommand>(m.Payload);
                 if (request?.TargetId == profile.Id && request.SessionId == screen.CurrentInfo?.SessionId && screenKeyRequests.TryEnter()) screen.RequestKeyFrame();
                 break;
-            case "screen-state":
-                if (voiceChannelId != m.ChannelId || m.Payload.Length > 512) return;
-                var state = JsonSerializer.Deserialize<ScreenCommand>(m.Payload);
-                if(state is {Viewing:{} viewing}&&state.TargetId==profile.Id&&sharing&&state.SessionId==screen.CurrentInfo?.SessionId&&rtc?.ConnectedPeerIds.Contains(m.SenderId)==true)
-                {var cue=streamViewers.Observe(state.SessionId,m.SenderId,viewing,state.Restoring);if(cue is{} effect&&!deafened)sounds.Play(effect);}
-                else if(state?.Viewing is null&&state?.TargetId==m.SenderId&&remoteStreams.TryGetValue(m.SenderId,out var sourceInfo)&&state.SessionId==sourceInfo.SessionId&&viewers.TryGetValue(m.SenderId,out var sourceView))sourceView.SetPaused(state.Paused);
-                break;
+            case "screen-state": HandleStreamState(m); break;
             case "screen-stop": StopVideoPeer(m.SenderId,true);remoteScreens.Remove(m.SenderId);dismissedScreens.Remove(m.SenderId);RenderChannels();UpdateStatus();break;
             case "asset":
                 if (voiceCommunity is null || voiceChannelId != m.ChannelId) return; var communityId = voiceCommunity.Id; var incoming = JsonSerializer.Deserialize<AssetTransfer>(m.Payload); if (incoming is null || incoming.Data.Length > 16 * 1024 * 1024 || incoming.Name.Length > 200 || incoming.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || incoming.Name != Path.GetFileName(incoming.Name) || incoming.Name is "." or "..") return;
@@ -843,87 +828,11 @@ public sealed partial class MainWindow : ThemedWindow
                     else if (selectedChannel is not null && store.GetMessages(selectedChannel.Id).Any(msg => msg.AttachmentId == a.Id || msg.Emojis?.ContainsValue(a.Id) == true))
                     { var history = store.GetMessages(selectedChannel.Id); LoadHistory(history); } } finally { Directory.Delete(dir, true); } break;
             case "sound":
-                if (deafened || voiceChannelId != m.ChannelId) return; var sound = voiceCommunity is null ? null : await EnsureSoundAsync(voiceCommunity.Id,Encoding.UTF8.GetString(m.Payload)); if (sound?.Kind == "sound" && sound.CommunityId == voiceCommunity?.Id) sounds.PlayFile(sound.LocalPath); break;
+                if (deafened || voiceChannelId != m.ChannelId) return; var sound = voiceCommunity is null ? null : await EnsureSoundAsync(voiceCommunity.Id,Encoding.UTF8.GetString(m.Payload)); if (sound?.Kind == "sound" && sound.CommunityId == voiceCommunity?.Id) sounds.PlayFile(sound.LocalPath,sound.Volume); break;
         }
     }
     private void SendRealtime(string type, byte[] payload) { if (voiceChannelId is null || rtc?.Joined != true) return; _ = SendRealtimeSafe(type, voiceChannelId, payload); }
     private async Task SendRealtimeSafe(string type, string channel, byte[] data) { try { await SendPacket(new WireMessage(type, profile.Id, channel, data)); } catch { /* Disconnect/presence events surface connection failure. */ } }
-    private async Task ShareScreen()
-    {
-        if(rtc?.Joined!=true||voiceIntent.Connecting)throw new InvalidOperationException("Для демонстрации сначала дождись подключения к голосовому каналу.");
-        if (sharing) { StopSharing(); return; } if (voiceChannelId is null) throw new InvalidOperationException("Сначала подключись к голосовому каналу.");
-        long shareRequest = Interlocked.Increment(ref shareGeneration);
-        var d = new FormDialog(this, "Демонстрация экрана", 800);
-        d.Note("Выбери окно приложения или монитор. 1080p/60 FPS требует больше ресурсов и скорости сети; при перегрузке кадры пропускаются, чтобы не накапливать задержку.");
-        ComboBox Choice(string label, string[] values, int selected) { d.Note(label); var box = new ComboBox { ItemsSource = values, SelectedIndex = selected, Margin = Ui.Insets(0, Ui.Xs, 0, Ui.S) }; d.Add(box); return box; }
-        var resolution = Choice("Разрешение", new[] { "720p", "1080p" }, 1);
-        var framerate = Choice("Частота кадров", new[] { "15 FPS", "30 FPS", "60 FPS" }, 1);
-        var bitrate = Choice("Битрейт потока", new[] { "2 Мбит/с", "4 Мбит/с", "6 Мбит/с", "8 Мбит/с" }, 1);
-
-        d.Note("При выборе приложения передаётся его звук. Для монитора передаётся системный звук с исключением Wisp, чтобы разговор не возвращался эхом.");
-        using var sourcePicker=new ScreenSourcePicker();d.Add(sourcePicker);
-        d.Accept("Начать демонстрацию");
-        if (d.ShowDialog() != true || sourcePicker.SelectedSource is not CaptureSource selected) return;
-        string? sharingChannel = voiceChannelId;
-        bool withoutBorder = true;
-        bool borderlessGranted = withoutBorder && await BorderlessCaptureAccess.RequestAsync();
-        if (closing || sharingChannel is null || voiceChannelId != sharingChannel || shareRequest != Volatile.Read(ref shareGeneration)) return;
-        var info = ScreenShareService.Describe(selected, resolution.SelectedIndex == 0 ? 720 : 1080, new[] { 15, 30, 60 }[framerate.SelectedIndex], new[] { 2000000, 4000000, 6000000, 8000000 }[bitrate.SelectedIndex]) with { SessionId = Guid.NewGuid().ToString("N"), StartedAtUnixMs=(cloud?.ServerNow()??DateTimeOffset.UtcNow).ToUnixTimeMilliseconds() };
-        await SendPacket(new WireMessage("screen-start", profile.Id, voiceChannelId, JsonSerializer.SerializeToUtf8Bytes(info)));
-        if (closing || voiceChannelId != sharingChannel || shareRequest != Volatile.Read(ref shareGeneration)) return;
-        streamViewers.Start(info.SessionId);sharing=true;
-        try{screen.Start(selected,info,withoutBorder,borderlessGranted);}catch{StopSharing();throw;}
-        soundEvents.ObserveStreamStarted(VoiceRoomKey,profile.Id,info.SessionId);sharedPeers="";
-        ((ToggleIconButton)shareButton).IsChecked = true;
-        if (ShareAudioCapture.Supported) { try { await shareAudio.StartAsync(selected); } catch (Exception ex) { Notify(ex.Message, true); } }
-        Notify($"Демонстрация начата: {selected.Name} · H.264 · {info.FramesPerSecond} FPS");UpdateStatus();
-    }
-    private void StopSharing()
-    {
-        Interlocked.Increment(ref shareGeneration);
-        notice.Text="";notice.Visibility=Visibility.Collapsed;streamViewers.Stop();shareAudio.Stop();screen.Stop();sharedPeers="";if(viewers.Remove(profile.Id,out var localView))localView.Close();
-        if (!sharing) return; sharing = false; ((ToggleIconButton)shareButton).IsChecked = false; SendRealtime("screen-stop", Array.Empty<byte>());  Notify("Демонстрация остановлена.");RenderChannels();
-    }
-    private ScreenViewer CreateViewer(string peerId)
-    {
-        if (viewers.TryGetValue(peerId, out var existing)) return existing;
-        foreach (var other in viewers.Values.Where(v => v.IsFullscreen).ToList()) other.ToggleFullscreen();
-        var name = VoicePresence.FirstOrDefault(x => x.Profile.Id == peerId)?.Profile.Username ?? "Участник";
-        foreach(var other in viewers.Where(pair=>pair.Key!=peerId).Select(pair=>pair.Value).ToList())other.Close();
-        var viewer = new ScreenViewer(this, $"{name} · Демонстрация",streamWorkspace); viewers[peerId] = viewer; sharePlayback.SetMuted(peerId, false);
-        viewer.MuteChanged += value => sharePlayback.SetMuted(peerId, value);
-        viewer.Closed += () => { if(peerId==profile.Id)screen.PreviewEnabled=false;AnnounceView(peerId,false);viewers.Remove(peerId); dismissedScreens.Add(peerId); if (videoReceivers.TryRemove(peerId, out var receiver)) receiver.Dispose(); videoFrames.TryRemove(peerId, out _); sharePlayback.SetMuted(peerId, true); };
-        return viewer;
-    }
-    private void OpenVideoPeer(string peerId)
-    {
-        if (dismissedScreens.Contains(peerId) || !remoteStreams.TryGetValue(peerId, out var info) || videoReceivers.ContainsKey(peerId)) return;
-        CreateViewer(peerId);
-        var receiver = new ScreenVideoReceiver(info, pixels =>
-        {
-            if (closing || !videoReceivers.TryGetValue(peerId, out var current) || current.Info != info) return;
-            QueueVideoFrame(peerId,info,pixels);
-        }, error => Dispatcher.BeginInvoke(() => { if (!closing) Notify(error, true); }),
-            () => SendRealtime("screen-keyframe", JsonSerializer.SerializeToUtf8Bytes(new ScreenCommand(peerId, info.SessionId))));
-        if (!videoReceivers.TryAdd(peerId, receiver)) receiver.Dispose();else AnnounceView(peerId,true);
-    }
-    private void StopVideoPeer(string peerId,bool ended=false)
-    {
-        if (videoReceivers.TryRemove(peerId, out var receiver)) receiver.Dispose(); videoFrames.TryRemove(peerId, out _);
-        if(viewers.TryGetValue(peerId,out var viewer)){if(ended)viewer.SetUnavailable("Трансляция завершена");else{viewers.Remove(peerId);viewer.Close();}} sharePlayback.Remove(peerId); remoteStreams.Remove(peerId); dismissedScreens.Remove(peerId);
-    }
-    private void ShowFrame(string peerId, byte[] jpeg)
-    {
-        if (jpeg.Length > 2 * 1024 * 1024) return; remoteScreens[peerId] = jpeg; if (dismissedScreens.Contains(peerId)) return;
-        try { using var stream = new MemoryStream(jpeg); var image = new BitmapImage(); image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad; image.DecodePixelWidth = 1920; image.StreamSource = stream; image.EndInit(); image.Freeze(); CreateViewer(peerId).PresentImage(image); } catch { }
-    }
-    private void WatchScreens()
-    {
-        var d = new FormDialog(this, "Демонстрации участников"); var ids = remoteStreams.Keys.Concat(remoteScreens.Keys).Concat(sharing?new[]{profile.Id}:Array.Empty<string>()).Distinct().ToList();
-        if (ids.Count == 0) d.Note("Сейчас никто не демонстрирует экран.");
-        foreach(var id in ids)d.Action(id==profile.Id?"Моя демонстрация":VoicePresence.FirstOrDefault(p=>p.Profile.Id==id)?.Profile.Username??"Участник",()=>{d.Close();WatchStream(id);});
-        d.Accept("Закрыть"); d.ShowDialog();
-    }
     private async Task EmojiPanel()
     {
         if(community is not{} target)return;
@@ -952,31 +861,6 @@ public sealed partial class MainWindow : ThemedWindow
         else if(asset.Kind=="sound")await cloud.TryCreateAsync($"communities/{asset.CommunityId}/sounds/{asset.Id}",new AssetTransfer(asset.Id,asset.Name,asset.Kind,await File.ReadAllBytesAsync(asset.LocalPath)));
     }
 
-    private async Task SoundPanel()
-    {
-        if(voiceCommunity is null&&community is null)return;string cid=(voiceCommunity??community)!.Id;
-        var remote=cloud is null?new Dictionary<string,AssetTransfer>():await cloud.GetAsync<Dictionary<string,AssetTransfer>>($"communities/{cid}/sounds")??new();
-        var catalog=cloud is null?store.GetAssets(cid,"sound").ToDictionary(a=>a.Id,a=>a.Name):new Dictionary<string,string>();
-        foreach(var pair in remote)catalog[pair.Key]=pair.Value.Name;
-        var dialog=new FormDialog(this,"Звуковая панель");dialog.Note("Звуки хранятся на сервере сообщества. WAV/MP3 до 2 МБ.");
-        foreach(var pair in catalog)
-        {
-            string assetId=pair.Key;
-            dialog.Action(pair.Value,()=>Run(async()=>{if(deafened)return;var asset=await EnsureSoundAsync(cid,assetId);if(asset is null)return;sounds.PlayFile(asset.LocalPath);if(voiceChannelId is not null)await SendPacket(new WireMessage("sound",profile.Id,voiceChannelId,Encoding.UTF8.GetBytes(asset.Id)));}));
-        }
-        if(catalog.Count==0)dialog.Note("В сообществе пока нет звуков.");
-        if(store.CanManageCommunity(cid,profile.Id))dialog.FooterAction("Управление звуками",()=>{dialog.Close();CommunityMediaSettings(voiceCommunity??community!,"sound");});
-        dialog.Accept("Закрыть");dialog.ShowDialog();
-    }
-    private async Task<MediaAsset?> EnsureSoundAsync(string cid,string id)
-    {
-        var existing=store.GetAsset(id);if(existing is not null)return existing;
-        if(cloud is null||!Regex.IsMatch(id,"^[a-f0-9]{64}$"))return null;
-        var asset=await cloud.GetAsync<AssetTransfer>($"communities/{cid}/sounds/{id}");
-        if(asset?.Data is null||asset.Kind!="sound"||asset.Data.Length>2*1024*1024||asset.Name!=Path.GetFileName(asset.Name))return null;
-        var directory=Path.Combine(store.RootDirectory,"incoming",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);var path=Path.Combine(directory,"sound.tmp");
-        try{await File.WriteAllBytesAsync(path,asset.Data);var imported=store.ImportAsset(cid,path,"sound",asset.Name);return imported.Id==id?imported:null;}finally{Directory.Delete(directory,true);}
-    }
     private void EditAudioDevices()
     {
         var dialog = new FormDialog(this, "Устройства связи", 600);
@@ -1052,7 +936,7 @@ public sealed partial class MainWindow : ThemedWindow
     private void ViewProfile(UserProfile p)
     {
         var body=new ProfileView(p,avatars.Resolve(p.Id==profile.Id?profile:p,store),p.BannerPath,p.Id==profile.Id?EditProfile:null);
-        ModalHost.Open(this,p.Username,body,480);
+        ModalHost.Open(this,p.Username,new ScrollViewer{Content=body,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled},600,new ModalOptions(Headerless:true));
     }
     private static BitmapImage LoadImage(string path, int width) { using var stream = File.OpenRead(path); var b = new BitmapImage(); b.BeginInit(); b.CacheOption = BitmapCacheOption.OnLoad; b.DecodePixelWidth = width; b.StreamSource = stream; b.EndInit(); b.Freeze(); return b; }
     private async Task RefreshCloud()
@@ -1074,12 +958,24 @@ public sealed partial class MainWindow : ThemedWindow
             if(voiceCommunity is{} activeVoice)
             {
                 await cloud.PresenceAsync(activeVoice.Id,profile,rtc?.Joined==true?voiceChannelId:null);
-                if(activeVoice.Id!=id){var activeSnapshot=await cloud.GetAsync<CommunitySnapshot>($"communities/{activeVoice.Id}/snapshot");if(activeSnapshot is not null){voiceCommunity=activeSnapshot.Community;store.SaveSnapshot(activeSnapshot);foreach(var member in activeSnapshot.Members)await avatars.FetchAsync(cloud,member);}}
+                if(activeVoice.Id!=id){var activeSnapshot=await cloud.GetAsync<CommunitySnapshot>($"communities/{activeVoice.Id}/snapshot");if(activeSnapshot is not null){voiceCommunity=activeSnapshot.Community;store.SaveSnapshot(activeSnapshot);foreach(var member in activeSnapshot.Members)await avatars.FetchAsync(cloud,member);await LeaveRemovedVoiceChannel(activeSnapshot);}}
             }
             if(id is null)return;
             if(id!=voiceCommunity?.Id)await cloud.PresenceAsync(id,profile,null);
             var snapshot = await cloud.GetAsync<CommunitySnapshot>($"communities/{id}/snapshot");
-            if(snapshot is not null){store.SaveSnapshot(snapshot);if(community?.Id==id){bool changed=community!=snapshot.Community;community=snapshot.Community;serverTitle.Text=community.Name;await RefreshCommunityIcon(community);if(changed)RenderServers();}if(voiceCommunity?.Id==id)voiceCommunity=snapshot.Community;}
+            if(snapshot is not null)
+            {
+                store.SaveSnapshot(snapshot);
+                if(community?.Id==id)
+                {
+                    bool changed=community!=snapshot.Community;community=snapshot.Community;serverTitle.Text=community.Name;
+                    if(selectedChannel is{} selected&&!snapshot.Channels.Any(c=>c.Id==selected.Id))await CancelRecording();
+                    RefreshSelectedChannel();channelId=selectedChannel?.Id;
+                    await RefreshCommunityIcon(community);if(changed)RenderServers();
+                }
+                if(voiceCommunity?.Id==id)voiceCommunity=snapshot.Community;
+                await LeaveRemovedVoiceChannel(snapshot);
+            }
             var online = await cloud.GetAsync<Dictionary<string, ServerPresence>>($"communities/{id}/presence") ?? new();
             var roomMetadata = await cloud.GetAsync<Dictionary<string, JsonElement>>($"communities/{id}/rtcRooms") ?? new();
             var now = cloud.ServerNow().ToUnixTimeMilliseconds();
@@ -1125,17 +1021,12 @@ public sealed partial class MainWindow : ThemedWindow
             finally { Directory.Delete(directory, true); }
         }
     }
-    private void ToggleTheme()
-    {
-        ThemeManager.Toggle();
-
-    }
     private async void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         if (closing) return;
         if (!exitRequested) { e.Cancel = true; foreach (var v in viewers.Values) v.Hide(); Hide(); return; }
         e.Cancel = true; closing = true; CancelReconnect();activityTimer.Stop(); cloudTimer.Stop(); receiveLifetime.Cancel(); incoming.Writer.TryComplete(); latestFrames.Clear();
-        try { if (recorder.IsRecording) { var path = await recorder.StopAsync(); File.Delete(path); } if (recordedPath is not null) File.Delete(recordedPath); recorder.Dispose(); if(cloud is not null)foreach(var id in new[]{community?.Id,voiceCommunity?.Id}.OfType<string>().Distinct()){try{await cloud.DeleteAsync($"communities/{id}/presence/{profile.Id}");}catch{}} StopVoice(); if (rtc is not null) await rtc.DisposeAsync(); tray.Visible = false; trayIndicator?.Dispose();tray.Dispose();VoiceMessagePlayer.StopAll(); voice.Dispose(); screen.Dispose(); sounds.Dispose(); shareAudio.Dispose(); sharePlayback.Dispose(); }
+        try { if (recorder.IsRecording) { var path = await recorder.StopAsync(); File.Delete(path); } if (recordedPath is not null) File.Delete(recordedPath); recorder.Dispose(); if(cloud is not null)foreach(var id in new[]{community?.Id,voiceCommunity?.Id}.OfType<string>().Distinct()){try{await cloud.DeleteAsync($"communities/{id}/presence/{profile.Id}");}catch{}} recordingWaveform.Dispose();soundboardPopup?.Close();StopVoice(); if (rtc is not null) await rtc.DisposeAsync(); tray.Visible = false; trayIndicator?.Dispose();tray.Dispose();VoiceMessagePlayer.StopAll(); voice.Dispose(); screen.Dispose(); sounds.Dispose(); shareAudio.Dispose(); sharePlayback.Dispose(); }
         catch { } finally { _ = Dispatcher.BeginInvoke(new Action(Close)); }
     }
 }

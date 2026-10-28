@@ -1,0 +1,15 @@
+<UserControl x:Class="Wisp.Desktop.SoundboardPopupView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Border Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Border}" BorderThickness="1"
+          CornerRadius="{DynamicResource Radius.Dialog}" Padding="12" Width="340">
+    <DockPanel>
+      <TextBlock Text="Звуковая панель" FontWeight="SemiBold" Margin="0,0,0,10" DockPanel.Dock="Top"/>
+      <TextBlock x:Name="Status" Visibility="Collapsed" TextWrapping="Wrap" Margin="0,0,0,8" DockPanel.Dock="Top" Foreground="{DynamicResource TextSecondary}"/>
+      <StackPanel x:Name="Footer" DockPanel.Dock="Bottom"/>
+      <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <WrapPanel x:Name="Sounds"/>
+      </ScrollViewer>
+    </DockPanel>
+  </Border>
+</UserControl>

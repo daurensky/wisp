@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using Wisp.Core;
@@ -7,188 +6,122 @@ namespace Wisp.Desktop;
 
 public sealed partial class MainWindow
 {
-    private ContextMenu CommunityContextMenu(Community target)
+    private ContextMenu? CommunityContextMenu(Community target)
     {
-        var menu = new ContextMenu();
-        var settings = new MenuItem { Header = "Настройки сервера" };
-        settings.Click += (_, _) => OpenCommunitySettings(target);
-        menu.Items.Add(settings);
-        return menu;
+        if(!store.CanManageCommunity(target.Id,profile.Id))return null;
+        var menu=new ContextMenu();var item=new MenuItem{Header="Настройки сервера"};item.Click+=(_,_)=>OpenCommunitySettings(target);menu.Items.Add(item);return menu;
     }
-
-    private FrameworkElement CommunityIcon(Community target, FrameworkElement hoverScope)
+    private FrameworkElement CommunityIcon(Community target,FrameworkElement hoverScope)
     {
-        var asset = target.IconAssetId is null ? null : store.GetAsset(target.IconAssetId);
-        return asset is not null && File.Exists(asset.LocalPath)
-            ? AvatarCatalog.Circle(asset.LocalPath, Ui.Metric("Size.RailItem") - 8, GifPlaybackMode.Hover, hoverScope)
-            : Ui.Label(target.Name[..Math.Min(2, target.Name.Length)].ToUpperInvariant(), Ui.Subtitle);
+        var asset=target.IconAssetId is null?null:store.GetAsset(target.IconAssetId);
+        return ServerRailItem.CreateAvatar(target.Name,asset?.LocalPath,Ui.Metric("Size.RailItem")-8,hoverScope,target.IconCoverFrame);
     }
-
     private async Task RefreshCommunityIcon(Community target)
     {
-        if (cloud is null || target.IconAssetId is null || store.GetAsset(target.IconAssetId) is not null) return;
-        var transfer = await cloud.GetAsync<AssetTransfer>($"communities/{target.Id}/icon");
-        if (transfer is null || transfer.Kind != "icon" || transfer.Id != target.IconAssetId || transfer.Data.Length > 4 * 1024 * 1024) return;
-        var temporary = Path.Combine(store.RootDirectory, Guid.NewGuid().ToString("N") + ".tmp");
+        if(cloud is null||target.IconAssetId is null||store.GetAsset(target.IconAssetId)is not null)return;
+        var transfer=await cloud.GetAsync<AssetTransfer>($"communities/{target.Id}/icon");
+        if(transfer is null||transfer.Kind!="icon"||transfer.Id!=target.IconAssetId||transfer.Data.Length>4*1024*1024)return;
+        string temporary=Path.Combine(store.RootDirectory,Guid.NewGuid().ToString("N")+".tmp");
         try
         {
-            await File.WriteAllBytesAsync(temporary, transfer.Data);
-            AvatarCatalog.Validate(temporary);
-            var imported = store.ImportAsset(target.Id, temporary, "icon", transfer.Name);
-            if (imported.Id != target.IconAssetId) { store.RemoveAsset(imported.Id); throw new InvalidDataException("Значок сервера повреждён."); }
+            await File.WriteAllBytesAsync(temporary,transfer.Data);AvatarCatalog.Validate(temporary);var imported=store.ImportAsset(target.Id,temporary,"icon",transfer.Name);
+            if(imported.Id!=target.IconAssetId){store.RemoveAsset(imported.Id);throw new InvalidDataException("Значок сервера повреждён.");}
         }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        finally{if(File.Exists(temporary))File.Delete(temporary);}
     }
-
-    private void OpenCommunitySettings(Community target) => Run(async () =>
+    private CommunitySnapshot LocalCommunitySnapshot(string id)
     {
-        var snapshot = cloud is null ? null : await cloud.GetAsync<CommunitySnapshot>($"communities/{target.Id}/snapshot");
-        if (snapshot is not null) { store.SaveSnapshot(snapshot); target = snapshot.Community; }
-        await RefreshCommunityIcon(target);
-        bool manager = store.CanManageCommunity(target.Id, profile.Id);
-        var dialog = new FormDialog(this, "Настройки сервера", 600);
-        dialog.Note($"{target.Name} · {store.GetMembers(target.Id).Count} участников");
-        var name = dialog.Field("Название сервера", target.Name); name.IsReadOnly = !manager;
-        var preview = new ContentControl { Content = CommunityIcon(target, dialog), HorizontalAlignment = HorizontalAlignment.Left, Margin = Ui.Insets(0, Ui.M) };
-        dialog.Add(preview); string? selectedIcon = null;
-        if (manager)
+        var target=store.GetCommunities().FirstOrDefault(c=>c.Id==id)??throw new InvalidOperationException("Сервер не найден.");
+        var people=store.GetMembers(id);return new(target,store.GetChannels(id),people,people.ToDictionary(p=>p.Id,p=>store.GetMemberRole(id,p.Id)));
+    }
+    private void RequireCommunityManagement(string id)
+    {
+        if(!store.CanManageCommunity(id,profile.Id))throw new UnauthorizedAccessException("Нет права управлять этим сервером.");
+    }
+    private void OpenCommunitySettings(Community target)=>OpenCommunitySettingsSection(target,"overview");
+    private void CommunityMediaSettings(Community target,string kind)=>OpenCommunitySettingsSection(target,kind=="sound"?"sound":"emoji");
+    private void OpenCommunitySettingsSection(Community target,string section)=>Run(async()=>
+    {
+        RequireCommunityManagement(target.Id);
+        var snapshot=await ManagedCommunitySnapshot(target.Id);
+        var context=new CommunitySettingsContext
         {
-            dialog.Action("Изменить значок", () =>
+            UserId=profile.Id,Online=cloud is not null,Snapshot=snapshot,
+            Reload=()=>ManagedCommunitySnapshot(target.Id),
+            Apply=command=>ApplyCommunityManagement(target.Id,command),
+            Icon=current=>ServerRailItem.CreateAvatar(current.Name,current.IconAssetId is{} id?store.GetAsset(id)?.LocalPath:null,96,coverFrame:current.IconCoverFrame),
+            SaveIcon=async edited=>
             {
-                var pick = new Microsoft.Win32.OpenFileDialog { Filter = "Изображения|*.png;*.jpg;*.jpeg;*.gif" };
-                if (pick.ShowDialog(this) != true) return;
-                ProfileEditor.ValidateImage(pick.FileName); selectedIcon = pick.FileName;
-                preview.Content = AvatarCatalog.Circle(selectedIcon, 72, GifPlaybackMode.Hover, preview);
-            });
-            dialog.Action("Сохранить изменения", () => Run(async () =>
+                RequireCommunityManagement(target.Id);ProfileEditor.ValidateImage(edited.Path);
+                var icon=store.ImportAsset(target.Id,edited.Path,"icon");
+                if(cloud is not null)await cloud.ManageCommunityAsync(target.Id,new("icon",Asset:new(icon.Id,icon.Name,"icon",await File.ReadAllBytesAsync(icon.LocalPath)),CoverFrame:edited.CoverFrame));
+                else{var local=LocalCommunitySnapshot(target.Id);store.SaveSnapshot(local with{Community=local.Community with{IconAssetId=icon.Id,IconCoverFrame=edited.CoverFrame}});}
+                await ReloadCommunityMetadata(target.Id);
+            },
+            Assets=kind=>ManagedCommunityAssets(target.Id,kind),
+            Upload=async(kind,path,name,gain)=>
             {
-                if (string.IsNullOrWhiteSpace(name.Text) || name.Text.Trim().Length > 80) throw new InvalidOperationException("Название сервера: от 1 до 80 символов.");
-                if (cloud is null)
+                RequireCommunityManagement(target.Id);if(string.IsNullOrWhiteSpace(name))throw new ArgumentException("Укажите название.");
+                var asset=store.ImportAsset(target.Id,path,kind,name);store.SetAssetVolume(asset.Id,gain);asset=asset with{Volume=gain};
+                if(cloud is not null)
                 {
-                    target = target with { Name = name.Text.Trim() };
-                    if (selectedIcon is not null) target = target with { IconAssetId = store.ImportAsset(target.Id, selectedIcon, "icon").Id };
-                    store.SaveSnapshot(new(target, store.GetChannels(target.Id), store.GetMembers(target.Id), store.GetMembers(target.Id).ToDictionary(m => m.Id, m => store.GetMemberRole(target.Id, m.Id))));
-                }
-                else
-                {
-                    await cloud.ManageCommunityAsync(target.Id, new("rename", Name: name.Text.Trim()));
-                    if (selectedIcon is not null)
+                    if(kind=="emoji")
                     {
-                        var icon = store.ImportAsset(target.Id, selectedIcon, "icon");
-                        await cloud.ManageCommunityAsync(target.Id, new("icon", Asset: new(icon.Id, icon.Name, "icon", await File.ReadAllBytesAsync(icon.LocalPath))));
+                        await CommunityAssets.UploadEmojiAsync(cloud,asset);
+                        await cloud.ManageCommunityAsync(target.Id,new("renameAsset",Name:asset.Name,Kind:kind,AssetId:asset.Id));
                     }
-                    await ReloadCommunityMetadata(target.Id);
+                    else if(!await cloud.TryCreateAsync($"communities/{target.Id}/sounds/{asset.Id}",new AssetTransfer(asset.Id,asset.Name,kind,await File.ReadAllBytesAsync(asset.LocalPath),gain)))
+                        await cloud.ManageCommunityAsync(target.Id,new("renameAsset",Name:asset.Name,Kind:kind,AssetId:asset.Id,Volume:gain));
                 }
-                dialog.Close(); Notify("Настройки сервера сохранены.");
-            }));
-        }
-        dialog.Action("Участники и права", () => { dialog.Close(); CommunityMembers(target); });
-        dialog.Action("Эмодзи сервера", () => { dialog.Close(); CommunityMediaSettings(target, "emoji"); });
-        dialog.Action("Звуковая панель сервера", () => { dialog.Close(); CommunityMediaSettings(target, "sound"); });
-        if (!manager) dialog.Note("Изменять сервер могут владелец и администраторы.");
-        dialog.Accept("Закрыть"); dialog.ShowDialog();
+            },
+            Preview=(path,gain)=>{if(!deafened)sounds.PlayFile(path,gain);},PreviewVolume=(path,gain)=>sounds.SetFileVolume(path,gain),Confirm=ConfirmCommunityAction,ReportError=message=>Notify(message,true)
+        };
+        ModalHost.Open(this,"Настройки сервера",new CommunitySettingsView(context,section),options:new ModalOptions(FullWindow:true));
     });
-
-    private async Task ReloadCommunityMetadata(string id)
+    private async Task<CommunitySnapshot> ManagedCommunitySnapshot(string id)
     {
-        if (cloud is null) { RenderServers(); return; }
-        var snapshot = await cloud.GetAsync<CommunitySnapshot>($"communities/{id}/snapshot");
-        if (snapshot is null) return;
-        store.SaveSnapshot(snapshot); await RefreshCommunityIcon(snapshot.Community);
-        if (community?.Id == id) { community = snapshot.Community; serverTitle.Text = community.Name; memberRenderKey = ""; channelRenderKey = ""; RenderChannels(); RenderMembers(); }
-        if (voiceCommunity?.Id == id) voiceCommunity = snapshot.Community;
-        RenderServers(); UpdateStatus();
+        RequireCommunityManagement(id);
+        var snapshot=cloud is null?LocalCommunitySnapshot(id):await cloud.GetCommunityManagementAsync(id)??throw new InvalidOperationException("Сервер не найден.");
+        store.SaveSnapshot(snapshot);await RefreshCommunityIcon(snapshot.Community);
+        if(community?.Id==id){community=snapshot.Community;serverTitle.Text=community.Name;RefreshSelectedChannel();memberRenderKey="";channelRenderKey="";RenderChannels();RenderMembers();}
+        if(voiceCommunity?.Id==id)voiceCommunity=snapshot.Community;RenderServers();UpdateStatus();return snapshot;
     }
-
-    private void CommunityMembers(Community target) => Run(async () =>
+    private async Task ReloadCommunityMetadata(string id)=>_ = await ManagedCommunitySnapshot(id);
+    private async Task ApplyCommunityManagement(string id,CommunityManagement command)
     {
-        await ReloadCommunityMetadata(target.Id);
-        var dialog = new FormDialog(this, "Участники и права", 620);
-        string currentRole = store.GetMemberRole(target.Id, profile.Id);
-        foreach (var member in store.GetMembers(target.Id))
+        RequireCommunityManagement(id);
+        if(cloud is not null)await cloud.ManageCommunityAsync(id,command);
+        else
         {
-            string role = store.GetMemberRole(target.Id, member.Id);
-            var row = new DockPanel { Margin = Ui.Insets(0, Ui.S) };
-            var actions = new StackPanel { Orientation = Orientation.Horizontal }; DockPanel.SetDock(actions, Dock.Right); row.Children.Add(actions);
-            if (cloud is not null && currentRole == "owner" && member.Id != target.OwnerId)
-                actions.Children.Add(Btn(role == "admin" ? "Снять администратора" : "Назначить администратора", () => Run(async () =>
-                {
-                    if (!ConfirmCommunityAction(role == "admin" ? $"Снять роль администратора у {member.Username}?" : $"Назначить {member.Username} администратором?")) return;
-                    await cloud.ManageCommunityAsync(target.Id, new("role", UserId: member.Id, Role: role == "admin" ? "member" : "admin"));
-                    await ReloadCommunityMetadata(target.Id); dialog.Close(); CommunityMembers(target);
-                })));
-            if (cloud is not null && currentRole is "owner" or "admin" && member.Id != profile.Id && member.Id != target.OwnerId && (currentRole == "owner" || role != "admin"))
+            switch(command.Action)
             {
-                var remove = Btn("Исключить", () => Run(async () =>
-                {
-                    if (!ConfirmCommunityAction($"Исключить {member.Username} из сервера?")) return;
-                    await cloud.ManageCommunityAsync(target.Id, new("kick", UserId: member.Id));
-                    await ReloadCommunityMetadata(target.Id); dialog.Close(); CommunityMembers(target);
-                })); Ui.Style(remove, "Button.Danger"); actions.Children.Add(remove);
+                case "rename":var snapshot=LocalCommunitySnapshot(id);store.SaveSnapshot(snapshot with{Community=snapshot.Community with{Name=command.Name!.Trim()}});break;
+                case "renameAsset":if(command.Name is not null)store.RenameAsset(command.AssetId!,command.Name);if(command.Volume is{} gain)store.SetAssetVolume(command.AssetId!,gain);break;
+                case "deleteAsset":store.RemoveAsset(command.AssetId!);break;
+                default:throw new InvalidOperationException("Для этого действия нужно подключение к серверу.");
             }
-            row.Children.Add(Ui.Label($"{member.Username}\n{RoleLabel(role)}", Ui.Body)); dialog.Add(row);
         }
-        dialog.Note("Владелец управляет администраторами. Администраторы управляют сервером, медиа и обычными участниками.");
-        dialog.Accept("Закрыть"); dialog.ShowDialog();
-    });
-
-    private static string RoleLabel(string role) => role switch { "owner" => "Владелец", "admin" => "Администратор", _ => "Участник" };
+        if(command.Action=="renameAsset"){if(command.Name is not null)store.RenameAsset(command.AssetId!,command.Name);if(command.Volume is{} gain)store.SetAssetVolume(command.AssetId!,gain);}
+        if(command.Action=="deleteAsset")store.RemoveAsset(command.AssetId!);
+        await ReloadCommunityMetadata(id);
+    }
+    private async Task<IReadOnlyList<MediaAsset>> ManagedCommunityAssets(string id,string kind)
+    {
+        RequireCommunityManagement(id);if(cloud is null)return store.GetAssets(id,kind);
+        string collection=kind=="emoji"?"emojis":"sounds";
+        var remote=await cloud.GetAsync<Dictionary<string,AssetTransfer>>($"communities/{id}/{collection}")??new();
+        if(kind=="emoji")await FetchEmojiAssets(remote.Keys,id);
+        var result=new List<MediaAsset>();
+        foreach(var entry in remote.Values)
+        {
+            var asset=kind=="sound"?await EnsureSoundAsync(id,entry.Id):store.GetAsset(entry.Id);
+            if(asset is null||asset.CommunityId!=id||asset.Kind!=kind)continue;
+            store.RenameAsset(asset.Id,entry.Name);store.SetAssetVolume(asset.Id,entry.Volume);result.Add(asset with{Name=entry.Name,Volume=entry.Volume});
+        }
+        return result;
+    }
     private bool ConfirmCommunityAction(string text)
     {
-        var confirm = new FormDialog(this, "Подтверждение"); confirm.Note(text); confirm.Accept("Подтвердить");
-        return confirm.ShowDialog() == true;
+        var confirm=new FormDialog(this,"Подтверждение");confirm.Note(text);confirm.Accept("Подтвердить");return confirm.ShowDialog()==true;
     }
-
-    private void CommunityMediaSettings(Community target, string kind) => Run(async () =>
-    {
-        string collection = kind == "emoji" ? "emojis" : "sounds";
-        bool manager = store.CanManageCommunity(target.Id, profile.Id);
-        var remote = cloud is null ? null : await cloud.GetAsync<Dictionary<string, AssetTransfer>>($"communities/{target.Id}/{collection}");
-        var assets = remote?.Values.ToDictionary(a => a.Id) ?? store.GetAssets(target.Id, kind).ToDictionary(a => a.Id, a => new AssetTransfer(a.Id, a.Name, a.Kind, Array.Empty<byte>()));
-        var dialog = new FormDialog(this, kind == "emoji" ? "Эмодзи сервера" : "Звуковая панель сервера", 620);
-        foreach (var asset in assets.Values.OrderBy(a => a.Name))
-        {
-            var row = new DockPanel { Margin = Ui.Insets(0, Ui.S) };
-            var actions = new StackPanel { Orientation = Orientation.Horizontal }; DockPanel.SetDock(actions, Dock.Right); row.Children.Add(actions);
-            if (kind == "sound") actions.Children.Add(Btn("Прослушать", () => Run(async () => { var local = await EnsureSoundAsync(target.Id, asset.Id); if (local is not null&&!deafened) sounds.PlayFile(local.LocalPath); })));
-            if (manager)
-            {
-                actions.Children.Add(Btn("Переименовать", () =>
-                {
-                    var edit = new FormDialog(this, "Название"); var field = edit.Field("Название", asset.Name); edit.Accept();
-                    if (edit.ShowDialog() != true) return;
-                    Run(async () => { if (cloud is not null) await cloud.ManageCommunityAsync(target.Id, new("renameAsset", Name: field.Text.Trim(), Kind: kind, AssetId: asset.Id)); store.RenameAsset(asset.Id, field.Text); dialog.Close(); CommunityMediaSettings(target, kind); });
-                }));
-                actions.Children.Add(Btn("Удалить", () => Run(async () =>
-                {
-                    if (!ConfirmCommunityAction($"Удалить «{asset.Name}»?")) return;
-                    if (cloud is not null) await cloud.ManageCommunityAsync(target.Id, new("deleteAsset", Kind: kind, AssetId: asset.Id));
-                    store.RemoveAsset(asset.Id); dialog.Close(); CommunityMediaSettings(target, kind);
-                })));
-            }
-            row.Children.Add(Ui.Label(asset.Name, Ui.Body)); dialog.Add(row);
-        }
-        if (assets.Count == 0) dialog.Note("Нет файлов.");
-        if (manager) dialog.FooterAction(kind == "emoji" ? "Загрузить эмодзи" : "Загрузить звук", () =>
-        {
-            var pick = new Microsoft.Win32.OpenFileDialog { Filter = kind == "emoji" ? "Изображения|*.png;*.gif;*.jpg;*.jpeg" : "Аудио|*.wav;*.mp3" };
-            if (pick.ShowDialog(this) != true) return;
-            long maximum = kind == "emoji" ? 256 * 1024 : 2 * 1024 * 1024;
-            if (new FileInfo(pick.FileName).Length > maximum) throw new InvalidOperationException(kind == "emoji" ? "Эмодзи: до 256 КиБ." : "Звук: до 2 МиБ.");
-            if (kind == "emoji") AvatarCatalog.Validate(pick.FileName);
-            var preview = new FormDialog(this, "Предварительный просмотр");
-            var name = preview.Field("Название", Path.GetFileName(pick.FileName));
-            if (kind == "emoji") preview.Add(AvatarCatalog.Image(pick.FileName, 96));
-            else preview.Action("Прослушать", () => {if(!deafened)sounds.PlayFile(pick.FileName);});
-            preview.Accept("Загрузить");
-            if (preview.ShowDialog() != true) return;
-            Run(async () =>
-            {
-                var local = store.ImportAsset(target.Id, pick.FileName, kind, name.Text.Trim());
-                if (cloud is not null) { if (kind == "emoji") await CommunityAssets.UploadEmojiAsync(cloud, local); else await cloud.PutAsync($"communities/{target.Id}/sounds/{local.Id}", new AssetTransfer(local.Id, local.Name, kind, await File.ReadAllBytesAsync(local.LocalPath))); }
-                dialog.Close(); CommunityMediaSettings(target, kind);
-            });
-        });
-        dialog.Accept("Закрыть"); dialog.ShowDialog();
-    });
 }

@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 
 root = Path(__file__).resolve().parents[1]
 desktop = root / "src" / "Wisp.Desktop"
-files = [desktop / "Theme.xaml", *sorted((desktop / "Design").glob("*.xaml"))]
+files = sorted(desktop.glob("*.xaml")) + sorted((desktop / "Design").glob("*.xaml"))
 keys = set()
 documents = []
 for path in files:

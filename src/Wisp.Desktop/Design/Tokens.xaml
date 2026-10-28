@@ -28,7 +28,7 @@
   <sys:Double x:Key="Size.Hairline">1</sys:Double>
   <sys:Double x:Key="Size.Scrollbar">4</sys:Double>
   <sys:Double x:Key="Width.Rail">72</sys:Double>
-  <sys:Double x:Key="Width.Channels">252</sys:Double>
+  <sys:Double x:Key="Width.Channels">288</sys:Double>
   <sys:Double x:Key="Width.Members">220</sys:Double>
   <sys:Double x:Key="Width.CompactBreakpoint">1050</sys:Double>
   <sys:Double x:Key="Width.SettingsSidebar">192</sys:Double>
@@ -75,4 +75,9 @@
   <Thickness x:Key="Padding.Small">8</Thickness>
   <Thickness x:Key="Padding.Popup">4</Thickness>
   <sys:Double x:Key="Height.SourceList">280</sys:Double>
+  <sys:Double x:Key="Width.ShareDialog">1040</sys:Double>
+  <sys:Double x:Key="Width.SourceCardMinimum">240</sys:Double>
+  <sys:Double x:Key="Width.ServerPill">4</sys:Double>
+  <sys:Double x:Key="Height.ServerPillActive">36</sys:Double>
+  <sys:Double x:Key="Height.ServerPillHover">20</sys:Double>
 </ResourceDictionary>

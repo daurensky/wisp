@@ -6,6 +6,8 @@ using System.Windows.Media;
 
 namespace Wisp.Desktop;
 
+public sealed record ModalOptions(bool FullWindow = false, bool Headerless = false, bool CloseOnOutside = true);
+
 public static class ModalHost
 {
     private static readonly ConditionalWeakTable<Window, Grid> layers = new();
@@ -20,26 +22,48 @@ public static class ModalHost
             window.Content = grid; return grid;
         });
     }
-    public static ModalHandle Open(Window owner, string title, UIElement content, double width = 0)
+    public static ModalHandle Open(Window owner, string title, UIElement content, double width = 0, ModalOptions? options = null)
     {
         var layer = Layer(owner);
         var shade = new Grid { Focusable = true };
         shade.SetResourceReference(Panel.BackgroundProperty, "Overlay");
         var panel = new DockPanel();
-        var header = new DockPanel { Margin = Ui.Insets(Ui.Xl, Ui.L, Ui.L, Ui.L) };
-        var close = Buttons.Tool("x", "Закрыть · Esc", () => { });
-        DockPanel.SetDock(close, Dock.Right); header.Children.Add(close);
-        var logo = Brand.Image(Ui.Metric("Size.Icon")); logo.Margin = Ui.Insets(0, 0, Ui.S, 0); logo.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(logo, Dock.Left); header.Children.Add(logo);
-        header.Children.Add(new TextBlock { Text = title, FontSize = Ui.Heading, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = title });
-        DockPanel.SetDock(header, Dock.Top); panel.Children.Add(header); panel.Children.Add(content);
+        options ??= new ModalOptions();
+        Button? close = null;
+        if (!options.Headerless)
+        {
+            var header = new DockPanel { Margin = Ui.Insets(Ui.Xl, Ui.L, Ui.L, Ui.L) };
+            close = Buttons.Tool("x", "Закрыть · Esc", () => { });
+            DockPanel.SetDock(close, Dock.Right); header.Children.Add(close);
+            header.Children.Add(new TextBlock { Text = title, FontSize = Ui.Heading, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = title });
+            DockPanel.SetDock(header, Dock.Top); panel.Children.Add(header);
+        }
+        panel.Children.Add(content);
         double requested = width > 0 ? width : Ui.Metric("Width.DialogLarge");
-        var card = new Border { Child = panel, Width = Math.Min(requested, Math.Max(Ui.Metric("Width.DialogSmall"), owner.ActualWidth - Ui.Xl * 2)), MaxHeight = Math.Max(Ui.Metric("Height.PictureInPicture"), owner.ActualHeight - Ui.Xxl * 2), CornerRadius = Ui.Radius("Radius.Dialog"), BorderThickness = new Thickness(Ui.Metric("Size.Hairline")), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+        var card = new Border { Child = panel, CornerRadius = Ui.Radius("Radius.Dialog"), BorderThickness = new Thickness(Ui.Metric("Size.Hairline")) };
+        if (options.FullWindow)
+        {
+            card.Margin = Ui.Insets(Ui.L);
+            card.VerticalAlignment = VerticalAlignment.Stretch; card.HorizontalAlignment = HorizontalAlignment.Stretch;
+        }
+        else
+        {
+            card.VerticalAlignment = VerticalAlignment.Center; card.HorizontalAlignment = HorizontalAlignment.Center;
+            void Fit()
+            {
+                double availableWidth = shade.ActualWidth > 0 ? shade.ActualWidth : owner.ActualWidth;
+                double availableHeight = shade.ActualHeight > 0 ? shade.ActualHeight : owner.ActualHeight;
+                card.Width = Math.Max(0, Math.Min(requested, availableWidth - Ui.L * 2));
+                card.MaxHeight = Math.Max(0, availableHeight - Ui.L * 2);
+            }
+            shade.SizeChanged += (_, _) => Fit(); Fit();
+        }
         card.SetResourceReference(Border.BackgroundProperty, "Surface");
         card.SetResourceReference(Border.BorderBrushProperty, "Border"); shade.Children.Add(card);
         var oldFocus = Keyboard.FocusedElement;
         var handle = new ModalHandle(layer, shade, card, oldFocus, () => panel.Children.Remove(content));
-        close.Click += (_, _) => handle.Close();
-        shade.MouseDown += (_, e) => { if (ReferenceEquals(e.OriginalSource, shade)) handle.Close(); };
+        if (close is not null) close.Click += (_, _) => handle.Close();
+        shade.MouseDown += (_, e) => { if (options.CloseOnOutside && ReferenceEquals(e.OriginalSource, shade)) handle.Close(); };
         shade.PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { e.Handled = true; handle.Close(); } };
         System.Windows.Automation.AutomationProperties.SetName(shade, title.Length == 0 ? "Диалог" : title);
         layer.Children.Add(shade); KeyboardNavigation.SetTabNavigation(shade, KeyboardNavigationMode.Cycle);

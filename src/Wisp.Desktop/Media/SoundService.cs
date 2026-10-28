@@ -26,6 +26,11 @@ public sealed class SoundService : IDisposable
     private bool disposed;
     private volatile bool enabled = true;
     private float volume = .8f;
+    private float fileGain=1;
+    private string? playingFilePath;
+    public float FileGain { get { lock(gate)return fileGain; } set { lock(gate){fileGain=float.IsFinite(value)?Math.Clamp(value,0,1):1;if(file is not null)file.Volume=fileGain;} } }
+    public void SetFileVolume(float gain)=>FileGain=gain;
+    public void SetFileVolume(string path,float gain) { lock(gate)if(StringComparer.OrdinalIgnoreCase.Equals(playingFilePath,Path.GetFullPath(path)))FileGain=gain; }
     private int notificationGeneration;
     public event Action<string>? Error;
     public bool NotificationsEnabled { get => enabled; set {enabled = value;if(!value)StopNotifications();} }
@@ -123,13 +128,13 @@ public sealed class SoundService : IDisposable
         if (offset != result.Length) throw new InvalidDataException("Неполный WAV уведомления.");
         return result;
     }
-    public void PlayFile(string path)
+    public void PlayFile(string path, float gain = 1)
     {
         lock (gate)
         {
             if (disposed) return;
             StopFileCore();
-            try { file = new AudioFileReader(path); soundboard = CreateOutput(); soundboard.Init(file); soundboard.Play(); }
+            try { playingFilePath=Path.GetFullPath(path);FileGain=gain;file = new AudioFileReader(path) { Volume = fileGain }; soundboard = CreateOutput(); soundboard.Init(file); soundboard.Play(); }
             catch { StopFileCore(); throw; }
         }
     }
@@ -140,7 +145,7 @@ public sealed class SoundService : IDisposable
         output.PlaybackStopped+=(_,args)=>{if(!disposed&&args.Exception is{} error)Error?.Invoke("Воспроизведение звука остановлено: "+error.Message);};
         return output;
     }
-    private void StopFileCore() { soundboard?.Stop(); soundboard?.Dispose(); soundboard = null; file?.Dispose(); file = null; }
+    private void StopFileCore() { soundboard?.Stop(); soundboard?.Dispose(); soundboard = null; file?.Dispose(); file = null;playingFilePath=null; }
     public void Dispose()
     {
         lock (gate)

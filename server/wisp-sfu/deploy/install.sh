@@ -70,5 +70,5 @@ systemctl --no-pager --full status wisp-sfu.service
 curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 --cacert /etc/wisp-sfu/server.crt --resolve "$public_ip:8443:127.0.0.1" "https://$public_ip:8443/healthz"
 pin=$(openssl x509 -in /etc/wisp-sfu/server.crt -outform DER | sha256sum | cut -d ' ' -f 1)
 printf '\nWisp settings (PUBLIC; safe to share):\nURL: https://%s:8443\nSHA-256: %s\n' "$public_ip" "$pin"
-printf '\nBackend v2 uses PostgreSQL. Existing external accounts/data are not imported. All users must register again.\n'
+printf '\nBackend v2 uses PostgreSQL. Existing v2 accounts, communities and files are preserved on upgrade. External Firebase accounts are not imported.\n'
 printf '\nAllow 8443/tcp and 50000/udp in the VPS/provider firewall. SSH/firewall rules were not changed.\n'

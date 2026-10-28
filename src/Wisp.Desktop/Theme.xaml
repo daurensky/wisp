@@ -9,22 +9,29 @@
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="FontSize" Value="{StaticResource Font.Body}"/>
     <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
-    <Setter Property="TextOptions.TextRenderingMode" Value="Auto"/>
+    <Setter Property="TextOptions.TextRenderingMode" Value="Grayscale"/>
   </Style>
-  <Style x:Key="Text.Section" TargetType="TextBlock">
+  <Style x:Key="Text.Section" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
     <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
     <Setter Property="FontSize" Value="{StaticResource Font.Caption}"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="Margin" Value="{StaticResource Margin.Section}"/>
   </Style>
-  <Style TargetType="RichTextBox">
+  <Style TargetType="Control">
+    <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
+    <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+    <Setter Property="TextOptions.TextRenderingMode" Value="Grayscale"/>
+  </Style>
+  <Style TargetType="RichTextBox" BasedOn="{StaticResource {x:Type Control}}">
+    <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+    <Setter Property="TextOptions.TextRenderingMode" Value="Grayscale"/>
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
   </Style>
   <Style TargetType="FlowDocument">
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
   </Style>
-  <Style x:Key="Button.Base" TargetType="Button">
+  <Style x:Key="Button.Base" TargetType="Button" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="local:PointerFocus.Track" Value="True"/>
     <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
@@ -134,7 +141,7 @@
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="FontSize" Value="{StaticResource Font.Body}"/>
     <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
-    <Setter Property="TextOptions.TextRenderingMode" Value="Auto"/>
+    <Setter Property="TextOptions.TextRenderingMode" Value="Grayscale"/>
     <Setter Property="UseLayoutRounding" Value="True"/>
     <Setter Property="SnapsToDevicePixels" Value="True"/>
     <Setter Property="Template">
@@ -176,10 +183,11 @@
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="TextBox">
+  <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="Background" Value="{DynamicResource SurfaceElevated}"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+    <Setter Property="local:InputChrome.FocusBrush" Value="{DynamicResource FocusRing}"/>
     <Setter Property="CaretBrush" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="BorderBrush" Value="{DynamicResource Border}"/>
     <Setter Property="BorderThickness" Value="1"/>
@@ -195,7 +203,7 @@
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-              <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
+              <Setter TargetName="Field" Property="BorderBrush" Value="{Binding (local:InputChrome.FocusBrush), RelativeSource={RelativeSource TemplatedParent}}"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Field" Property="Opacity" Value=".4"/>
@@ -205,7 +213,10 @@
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="PasswordBox">
+  <Style x:Key="Input.Composer" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+    <Setter Property="local:InputChrome.FocusBrush" Value="{DynamicResource InputFocusSoft}"/>
+  </Style>
+  <Style TargetType="PasswordBox" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="Background" Value="{DynamicResource SurfaceElevated}"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
@@ -234,7 +245,7 @@
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="ListBox">
+  <Style TargetType="ListBox" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="Background" Value="Transparent"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="BorderThickness" Value="0"/>
@@ -252,7 +263,7 @@
     </Setter>
   </Style>
   <Style x:Key="List.Virtual" TargetType="ListBox" BasedOn="{StaticResource {x:Type ListBox}}"/>
-  <Style TargetType="ListBoxItem">
+  <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="Padding" Value="{StaticResource Padding.None}"/>
     <Setter Property="Margin" Value="{StaticResource Padding.None}"/>
     <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -286,8 +297,10 @@
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="ToolTip">
+  <Style TargetType="ToolTip" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
+    <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+    <Setter Property="TextOptions.TextRenderingMode" Value="Grayscale"/>
     <Setter Property="local:Motion.PopupTransition" Value="True"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="Background" Value="{DynamicResource SurfaceElevated}"/>
@@ -303,15 +316,29 @@
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="ContextMenu">
+  <Style TargetType="ContextMenu" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="local:Motion.PopupTransition" Value="True"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="Background" Value="{DynamicResource SurfaceElevated}"/>
     <Setter Property="BorderBrush" Value="{DynamicResource Border}"/>
     <Setter Property="Padding" Value="{StaticResource Padding.Small}"/>
+    <Setter Property="OverridesDefaultStyle" Value="True"/>
+    <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+    <Setter Property="TextOptions.TextRenderingMode" Value="Grayscale"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ContextMenu">
+          <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" Padding="{TemplateBinding Padding}" CornerRadius="{StaticResource Radius.Control}" SnapsToDevicePixels="True">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True">
+              <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+            </ScrollViewer>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
-  <Style TargetType="MenuItem">
+  <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="Padding" Value="{StaticResource Padding.Row}"/>
@@ -333,7 +360,7 @@
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="ScrollBar">
+  <Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="Width" Value="{StaticResource Size.Scrollbar}"/>
     <Setter Property="MinWidth" Value="0"/>
     <Setter Property="Background" Value="Transparent"/>
@@ -374,7 +401,7 @@
       </Trigger>
     </Style.Triggers>
   </Style>
-  <Style TargetType="ScrollViewer">
+  <Style TargetType="ScrollViewer" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="local:ScrollChrome.AutoHide" Value="True"/>
     <Setter Property="local:SmoothScroll.Enabled" Value="True"/>
     <Setter Property="Template">
@@ -397,7 +424,7 @@
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="ComboBoxItem">
+  <Style TargetType="ComboBoxItem" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="Padding" Value="{StaticResource Padding.Row}"/>
@@ -420,7 +447,7 @@
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="ComboBox">
+  <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="Background" Value="{DynamicResource SurfaceElevated}"/>
@@ -467,7 +494,7 @@
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="CheckBox">
+  <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="Margin" Value="{StaticResource Margin.Check}"/>
@@ -503,7 +530,7 @@
       </Setter.Value>
     </Setter>
   </Style>
-  <Style TargetType="Slider">
+  <Style TargetType="Slider" BasedOn="{StaticResource {x:Type Control}}">
     <Setter Property="Foreground" Value="{DynamicResource Accent}"/>
     <Setter Property="Template">
       <Setter.Value>

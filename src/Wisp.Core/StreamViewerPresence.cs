@@ -5,6 +5,7 @@ public sealed class StreamViewerPresence
 {
     private string? session;
     private readonly HashSet<string> viewers = new(StringComparer.Ordinal);
+    public IReadOnlyList<string> Viewers=>viewers.OrderBy(id=>id,StringComparer.Ordinal).ToArray();
     public void Start(string sessionId) { session = sessionId; viewers.Clear(); }
     public void Stop() { session = null; viewers.Clear(); }
     public void Retain(IEnumerable<string> connected) => viewers.IntersectWith(connected);

@@ -1,3 +1,19 @@
+# Wisp — комплексная доработка WPF, голоса и демонстрации (28.10.2026)
+
+Новое пользовательское [ТЗ](docs/NATIVE_EXPANSION_SPECIFICATION.md), дополнение к предыдущим требованиям. Исходный commit `4058b21`, ветка `codex/postgres-backend`, исходное дерево было чистым. Шрифт **Onest** сохраняется.
+
+## Актуальный этап — backend и независимые компоненты реализованы, интеграция/проверка (29.10.2026)
+
+- **Backend:** отправка существующих emoji участником больше не выполняет запрещённый повторный PUT; новые emoji по-прежнему доступны только owner/admin. Добавлены manager-only GET, создание/переименование/удаление каналов, громкость Soundboard и static coverFrame профиля/иконки. Миграции additive, v2-данные сохраняются.
+- **Пройдены:** Core **96 PASS**; реальный PostgreSQL/API/Go race **10 PASS**, включая native SFU шести клиентов/30 downlinks, голос+отдельное audio+H264+2MBфайл, token/takeover/rejoin, фактическое owner-upload → member-reuse/send и member-new-upload403. Полный лог `/workspace/v4-backend-native.log`. Реальные PCM/waveform/60s/подписки/gain: **6/6 PASS** Linux-smoke. GIFcodec независимо проверен Pillow на disposal1/2/3, transparency, timing/loop. Это не проверка физических Windows-устройств.
+- **UI/components:** Grayscale+Onest; native serverrail/pill; общая полнооконная SettingsShell; четыре секции настроек; server management; профиль с AlwaysGIF,16:9баннером и увеличенной аватаркой; reusable image/GIFeditor; realwaveforms; AttachmentCard/MediaViewer; anchored SoundboardPopup; source/share dialog и глобальный overlaymini. Ключевые новые файлы `SettingsShell*`, `CommunitySettingsView.cs`, `ServerRailItem*`, `ImageEditor*`, `Media/ImageEditing*`, `WaveformView*`, `RecordingWaveformView*`, `AttachmentCard*`, `MediaViewer.cs`, `SoundboardPopup*`, `ScreenShareDialog*`, `ScreenViewerSurface*`.
+- **Интеграция MainWindow:** startupHome/ASCIIлог, две нижние группы, нейтральный leave, managergear и sectionplus/channelgear; динамический composer/disabledsend; запись одновременно со звонком; медиа-карточки; popupзвуков/актуальная громкость; обработка удалённого канала. MainWindow разделён дополнительно на `Channels`, `Composer`, `Soundboard`, обновляется `Streams`.
+- **Исправлены при интеграции:** повторная загрузка emoji/файла перед отправкой; запрещённая запись во время звонка; stale cached Soundboardgain; draftstate send/stop/cancel; дубли перенесённых screenметодов и затенение WPF TextInput. Общая Windowsсборка/новыеUIтесты ещё **не подтверждены**.
+- **Интеграция завершена:** stream hooks/viewer snapshots/autoownmini/realvolume подключены. Solution cross-build **0warnings/errors**,96Core PASS;188ресурсов (включая все новые корневые XAML),diff-check и go vet PASS. Добавлены UIпроверки Grayscale/профилей/4секций/права/каналы/реальные gain/mini/snapshots и7imageeditorтестов. [Подробный отчёт](docs/NATIVE_EXPANSION.md).
+- **Следующее конкретное действие:** опубликовать checkpoint и выполнить WindowsCI. Реальные ImageEditor save/cancel/cover и recordingwave из PCM включены в UIharness; окончательная cross-build всех исходников/тестов прошла без предупреждений/ошибок. После PASS просмотреть снимки, проверить portable, обновить отчёт/этот журнал и сохранить git. Не повторять завершённые этапы предыдущих ТЗ.
+
+---
+
 # Wisp — выполнение нового ТЗ улучшений (28.10.2026)
 
 Источник: [полный новый текст пользователя](docs/IMPROVEMENT_SPECIFICATION.md). Начальная точка: `5f5ec8d`, ветка `codex/postgres-backend`, рабочее дерево было чистым. Новые требования заменяют противоречащие им решения предыдущего Master; Onest и существующие данные PostgreSQL сохраняются.

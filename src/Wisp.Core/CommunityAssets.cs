@@ -20,13 +20,18 @@ public static class CommunityAssets
         if (bytes.Length != asset.Size || !Convert.ToHexString(hash.GetHashAndReset()).Equals(asset.Id, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Локальный эмодзи повреждён.");
         var path = $"communities/{asset.CommunityId}/emojis/{asset.Id}";
-        var transfer = new AssetTransfer(asset.Id, asset.Name, "emoji", bytes);
-        if (!await cloud.TryCreateAsync(path, transfer))
+        bool Matches(AssetTransfer? value)=>value?.Kind=="emoji"&&value.Id==asset.Id&&value.Data is not null&&value.Data.AsSpan().SequenceEqual(bytes);
+        // Reading existing server emoji is available to every member; only a new
+        // immutable upload requires management rights. Do not issue a forbidden
+        // PUT when an ordinary participant inserts an already published emoji.
+        var published=await cloud.GetAsync<AssetTransfer>(path);
+        if(published is not null)
         {
-            var existing = await cloud.GetAsync<AssetTransfer>(path);
-            if (existing?.Kind != "emoji" || existing.Id != asset.Id || existing.Data is null ||
-                !existing.Data.AsSpan().SequenceEqual(bytes))
-                throw new InvalidDataException("Облачный эмодзи отличается от локального.");
+            if(!Matches(published))throw new InvalidDataException("Облачный эмодзи отличается от локального.");
+            return;
         }
+        var transfer = new AssetTransfer(asset.Id, asset.Name, "emoji", bytes);
+        if (!await cloud.TryCreateAsync(path, transfer)&&!Matches(await cloud.GetAsync<AssetTransfer>(path)))
+            throw new InvalidDataException("Облачный эмодзи отличается от локального.");
     }
 }

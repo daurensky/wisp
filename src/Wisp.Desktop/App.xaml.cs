@@ -7,7 +7,7 @@ public partial class App:System.Windows.Application
     private ServerBackend? cloud;
     protected override async void OnStartup(StartupEventArgs e)
     {
-        base.OnStartup(e);ShutdownMode=ShutdownMode.OnExplicitShutdown;
+        base.OnStartup(e);ShutdownMode=ShutdownMode.OnExplicitShutdown;DiagnosticLog.WriteStartup();
         DispatcherUnhandledException+=(_,args)=>DiagnosticLog.Write("dispatcher",args.Exception);
         AppDomain.CurrentDomain.UnhandledException+=(_,args)=>{if(args.ExceptionObject is Exception ex)DiagnosticLog.Write("unhandled",ex);};
         TaskScheduler.UnobservedTaskException+=(_,args)=>DiagnosticLog.Write("background-task",args.Exception);

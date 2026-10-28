@@ -11,7 +11,7 @@ namespace Wisp.Desktop;
 /// <summary>Real, bounded one-shot source previews. Enumeration is refreshed only while the picker is visible.</summary>
 public sealed class ScreenSourcePicker : UserControl, IDisposable
 {
-    private sealed record SourceCard(CaptureSource Source, Button Button, Image Image, TextBlock State);
+    private sealed record SourceCard(CaptureSource Source, Button Button, Image Image, TextBlock State, Grid Preview);
     private readonly WrapPanel cards = new();
     private readonly TextBlock state = new() { TextWrapping = TextWrapping.Wrap };
     private readonly Button applications, screens, refresh;
@@ -30,19 +30,20 @@ public sealed class ScreenSourcePicker : UserControl, IDisposable
     {
         this.sourceProvider = sourceProvider ?? ScreenShareService.GetSources;
         this.previewProvider = previewProvider ?? CapturePreview;
-        var root = new DockPanel();
-        var bar = new DockPanel { Margin = Ui.Insets(0, 0, 0, Ui.S) };
-        refresh = Buttons.Tool("refresh-cw", "Обновить источники и превью", () => _ = RefreshAsync(true));
-        DockPanel.SetDock(refresh, Dock.Right); bar.Children.Add(refresh);
-        var tabs = new StackPanel { Orientation = Orientation.Horizontal };
-        applications = new Button { Content = "Приложение" }; applications.Click += (_, _) => SelectTab(false);
-        screens = new Button { Content = "Экран" }; screens.Click += (_, _) => SelectTab(true);
-        Ui.Name(applications, "Источники · Приложение"); Ui.Name(screens, "Источники · Экран");
-        tabs.Children.Add(applications); tabs.Children.Add(screens); bar.Children.Add(tabs);
-        DockPanel.SetDock(bar, Dock.Top); root.Children.Add(bar);
-        Ui.Secondary(state); state.Margin = Ui.Insets(Ui.S); DockPanel.SetDock(state, Dock.Bottom); root.Children.Add(state);
-        var scroll = new ScrollViewer { Content = cards, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Height = Ui.Metric("Height.SourceList") };
-        root.Children.Add(scroll); Content = root;
+        Height=Ui.Metric("Height.SourceList");MinHeight=180;
+        var root=new DockPanel();
+        var tabs=new Grid{Margin=Ui.Insets(0,0,0,Ui.S)};
+        tabs.ColumnDefinitions.Add(new ColumnDefinition());tabs.ColumnDefinitions.Add(new ColumnDefinition());
+        applications=new Button{Content="Приложение",Margin=Ui.Insets(0)};applications.Click+=(_,_)=>SelectTab(false);
+        screens=new Button{Content="Экран",Margin=Ui.Insets(0)};screens.Click+=(_,_)=>SelectTab(true);
+        applications.HorizontalContentAlignment=screens.HorizontalContentAlignment=HorizontalAlignment.Center;
+        Ui.Name(applications,"Источники · Приложение");Ui.Name(screens,"Источники · Экран");
+        tabs.Children.Add(applications);Grid.SetColumn(screens,1);tabs.Children.Add(screens);
+        DockPanel.SetDock(tabs,Dock.Top);root.Children.Add(tabs);
+        var statusRow=new DockPanel{Margin=Ui.Insets(0,Ui.Xs,0,0)};
+        refresh=Buttons.Tool("refresh-cw","Обновить источники и превью",()=>_=RefreshAsync(true));DockPanel.SetDock(refresh,Dock.Right);statusRow.Children.Add(refresh);
+        Ui.Secondary(state);state.Margin=Ui.Insets(Ui.S);statusRow.Children.Add(state);DockPanel.SetDock(statusRow,Dock.Bottom);root.Children.Add(statusRow);
+        root.Children.Add(new ScrollViewer{Content=cards,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled});Content=root;
         SizeChanged += (_, _) => ResizeCards();
         IsVisibleChanged += (_, _) => { if (IsVisible && !disposed) { refreshTimer.Start(); _ = RefreshAsync(); } else refreshTimer.Stop(); };
         refreshTimer.Tick += (_, _) => { if (IsVisible) _ = RefreshAsync(); };
@@ -59,8 +60,9 @@ public sealed class ScreenSourcePicker : UserControl, IDisposable
     }
     private void UpdateTabs()
     {
-        Ui.Style(applications, showScreens ? "Button.Ghost" : "Button.Secondary");
-        Ui.Style(screens, showScreens ? "Button.Secondary" : "Button.Ghost");
+        foreach(var button in new[]{applications,screens}){Ui.Style(button,"Button.Ghost");button.BorderThickness=new Thickness(0,0,0,2);}
+        applications.SetResourceReference(Control.BorderBrushProperty,showScreens?"Border":"TextPrimary");screens.SetResourceReference(Control.BorderBrushProperty,showScreens?"TextPrimary":"Border");
+        applications.SetResourceReference(Control.BackgroundProperty,showScreens?"Surface":"Selected");screens.SetResourceReference(Control.BackgroundProperty,showScreens?"Selected":"Surface");
     }
     public async Task RefreshAsync(bool refreshPreviews = false)
     {
@@ -98,7 +100,7 @@ public sealed class ScreenSourcePicker : UserControl, IDisposable
             UpdateSelection(); ResizeCards();
             state.Text = filtered.Length == 0
                 ? (showScreens ? "Нет доступных экранов. Проверьте подключение мониторов." : "Нет доступных окон. Откройте или разверните приложение и нажмите «Обновить».")
-                : "Выберите источник. Превью обновляются при открытии и кнопкой обновления.";
+                : "";
             await Task.WhenAll(pending);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
@@ -119,7 +121,7 @@ public sealed class ScreenSourcePicker : UserControl, IDisposable
 
     private SourceCard CreateCard(CaptureSource source)
     {
-        var image = new Image { Height = Ui.Metric("Height.MediaPreview"), Stretch = Stretch.Uniform, SnapsToDevicePixels = true };
+        var image = new Image { Stretch = Stretch.Uniform, SnapsToDevicePixels = true };
         var previewState = Ui.Label("Загрузка превью…", Ui.Caption, true); previewState.HorizontalAlignment = HorizontalAlignment.Center; previewState.TextWrapping = TextWrapping.Wrap;
         var preview = new Grid { Height = Ui.Metric("Height.MediaPreview") }; preview.SetResourceReference(Panel.BackgroundProperty, "VideoBackground"); preview.Children.Add(image); preview.Children.Add(previewState);
         var panel = new StackPanel(); panel.Children.Add(preview);
@@ -128,7 +130,7 @@ public sealed class ScreenSourcePicker : UserControl, IDisposable
         var button = new Button { Content = panel, Padding = Ui.Insets(Ui.S), Margin = Ui.Insets(Ui.Xs), HorizontalContentAlignment = HorizontalAlignment.Stretch, ToolTip = source.Name };
         Ui.Style(button, "Button.Secondary"); Ui.Name(button, "Источник · " + source.Name);
         button.Click += (_, _) => { SelectedSource = source; UpdateSelection(); SelectionChanged?.Invoke(); };
-        return new SourceCard(source, button, image, previewState);
+        return new SourceCard(source, button, image, previewState, preview);
     }
     private void UpdateSelection()
     {
@@ -142,12 +144,17 @@ public sealed class ScreenSourcePicker : UserControl, IDisposable
     }
     private void ResizeCards()
     {
-        double available = Math.Max(Ui.ControlHeight, ActualWidth - Ui.L);
-        double minimum = Ui.Metric("Width.MediaPreview");
-        int count = Math.Max(1, (int)(available / minimum));
-        double width = Math.Max(Ui.ControlHeight, available / count - Ui.S);
-        foreach (var card in current.Values) card.Button.Width = width;
+        double available=Math.Max(Ui.ControlHeight,ActualWidth-Ui.S);
+        double cardMinimum=Ui.Metric("Width.SourceCardMinimum");
+        int count=Math.Max(1,(int)Math.Floor(available/(cardMinimum+Ui.S)));
+        double width=Math.Max(Ui.ControlHeight,available/count-Ui.S);
+        foreach(var card in current.Values)
+        {
+            card.Button.Width=width;
+            card.Preview.Height=Math.Max(1,width-Ui.S*2-2)*9/16;
+        }
     }
+
     private async Task LoadPreviewAsync(SourceCard card, CancellationToken token)
     {
         bool acquired = false;

@@ -56,3 +56,17 @@ func (h *hub) removeCommunityMember(community, uid string) {
 		s.stop("community-membership-removed")
 	}
 }
+
+func (h *hub) removeCommunityChannel(community, channel string) {
+	h.mu.Lock()
+	var removed []*session
+	for s := range h.sessions {
+		if s.ident.Community == community && s.ident.Channel == channel {
+			removed = append(removed, s)
+		}
+	}
+	h.mu.Unlock()
+	for _, s := range removed {
+		s.stop("voice-channel-removed")
+	}
+}

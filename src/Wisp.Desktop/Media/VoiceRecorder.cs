@@ -1,98 +1,145 @@
+using System.Threading.Channels;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
 namespace Wisp.Desktop.Media;
 
-/// <summary>Locally recorded WAV, mono 24kHz, at most 60 seconds (about 2.9 MB).</summary>
+/// <summary>Bounded 24kHz mono WAV recorder; an active call can lend its existing capture stream.</summary>
 public sealed class VoiceRecorder : IDisposable
 {
     private const int MaximumBytes = 24000 * 2 * 60;
-    private readonly object _gate = new();
-    private WaveInEvent? _input;
-    private WaveFileWriter? _writer;
-    private TaskCompletionSource<string>? _completion;
-    private string _path = "";
-    private int _bytes;
-    public bool IsRecording { get { lock (_gate) return _input is not null; } }
+    private readonly object gate = new();
+    private IWaveIn? input;
+    private VoiceService? source;
+    private Channel<byte[]>? audio;
+    private TaskCompletionSource<string>? completion;
+    private Task? writerTask, captureCleanup;
+    private string path = "";
+    private int bytes;
+    private bool active, stopping, disposed, sharedMode;
+    public bool IsRecording { get { lock (gate) return active; } }
+    public bool UsesSharedSource { get { lock (gate) return sharedMode && active; } }
+    public TimeSpan Duration { get { lock (gate) return TimeSpan.FromSeconds(bytes / 48000d); } }
     public event Action<string>? Completed;
+    public event Action? Started;
+    public event Action<string>? Error;
+    public event Action<float, TimeSpan>? LevelChanged;
 
-    public void Start(string path)
+    public void Start(string destination, VoiceService? sharedSource = null, string? inputDeviceId = null)
     {
-        lock (_gate)
+        StartExternal(destination);
+        try
         {
-            if (_input is not null) throw new InvalidOperationException("A voice recording is already active.");
-            _path = Path.GetFullPath(path);
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            _bytes = 0;
-            try
+            if (sharedSource is not null)
             {
-                _input = new WaveInEvent { WaveFormat = new WaveFormat(24000, 16, 1), BufferMilliseconds = 40 };
-                _writer = new WaveFileWriter(_path, _input.WaveFormat);
-                _input.DataAvailable += DataAvailable;
-                _input.RecordingStopped += RecordingStopped;
-                _input.StartRecording();
+                lock (gate) { source = sharedSource; sharedMode = true; source.MicrophonePcmAvailable += AppendPcm; }
             }
-            catch
+            else
             {
-                _input?.Dispose(); _input = null;
-                _writer?.Dispose(); _writer = null;
-                throw;
+                string endpoint;
+                using (var devices = new MMDeviceEnumerator())
+                using (var device = AudioDeviceSettings.Resolve(devices, inputDeviceId, DataFlow.Capture, _ => { })) endpoint = device.ID;
+                var capture = new CommunicationsCapture(endpoint, _ => { });
+                lock (gate) input = capture;
+                capture.DataAvailable += NativeData;
+                capture.RecordingStopped += NativeStopped;
+                capture.StartRecording();
             }
         }
+        catch (Exception ex) { RequestStop(ex); throw; }
     }
 
-    private void DataAvailable(object? sender, WaveInEventArgs e)
+    /// <summary>Capture adapters feed borrowed 48kHz/16-bit/mono PCM through AppendPcm.</summary>
+    public void StartExternal(string destination)
     {
-        WaveInEvent? stop = null;
-        lock (_gate)
+        lock (gate)
         {
-            if (_writer is null) return;
-            var count = Math.Min(e.BytesRecorded, MaximumBytes - _bytes);
-            if (count > 0) _writer.Write(e.Buffer, 0, count);
-            _bytes += count;
-            if (_bytes >= MaximumBytes) stop = _input;
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (active || writerTask?.IsCompleted == false || captureCleanup?.IsCompleted == false)
+                throw new InvalidOperationException("Предыдущая запись ещё завершается.");
+            path = Path.GetFullPath(destination); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var file = new WaveFileWriter(path, new WaveFormat(24000, 16, 1));
+            completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            audio = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(32) { SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait });
+            bytes = 0; stopping = false; active = true; sharedMode = false;
+            var queue = audio; var result = completion; var output = path;
+            writerTask = Task.Run(() => WriteAudio(file, queue, result, output));
         }
-        stop?.StopRecording();
+        Started?.Invoke();
     }
-
-    private void RecordingStopped(object? sender, StoppedEventArgs e)
+    public void AppendPcm(ReadOnlyMemory<byte> samples)
     {
-        string path;
-        TaskCompletionSource<string>? completion;
-        lock (_gate)
-        {
-            _writer?.Dispose(); _writer = null;
-            _input?.Dispose(); _input = null;
-            path = _path;
-            completion = _completion;
-        }
-        if (e.Exception is not null) completion?.TrySetException(e.Exception);
-        else { completion?.TrySetResult(path); Completed?.Invoke(path); }
+        Channel<byte[]>? queue;
+        lock (gate) { if (!active || stopping || disposed) return; queue = audio; }
+        if (samples.Length == 0) return;
+        if ((samples.Length & 1) != 0 || samples.Length > 192000)
+        { RequestStop(new InvalidDataException("Некорректный блок микрофона.")); return; }
+        if (queue?.Writer.TryWrite(samples.ToArray()) != true)
+            RequestStop(new IOException("Запись остановлена: накопилась очередь аудио."));
     }
+    private void NativeData(object? sender, WaveInEventArgs args) => AppendPcm(args.Buffer.AsMemory(0, args.BytesRecorded));
+    private void NativeStopped(object? sender, StoppedEventArgs args) => RequestStop(args.Exception);
 
-    public Task<string> StopAsync()
+    private async Task WriteAudio(WaveFileWriter file, Channel<byte[]> queue, TaskCompletionSource<string> result, string output)
     {
-        lock (_gate)
+        short? previous = null; Exception? failure = null;
+        try
         {
-            if (_completion is null) throw new InvalidOperationException("No voice recording has been started.");
-            _input?.StopRecording();
-            return _completion.Task;
-        }
-    }
-
-    public void Dispose()
-    {
-        lock (_gate)
-        {
-            if (_input is not null)
+            await foreach (var pcm in queue.Reader.ReadAllAsync())
             {
-                _input.DataAvailable -= DataAvailable;
-                _input.RecordingStopped -= RecordingStopped;
-                _input.StopRecording();
-                _input.Dispose(); _input = null;
+                var downsampled = new byte[pcm.Length / 2 + 2]; int written = 0; float peak = 0;
+                for (int i = 0; i + 1 < pcm.Length; i += 2)
+                {
+                    short value = (short)(pcm[i] | pcm[i + 1] << 8);
+                    if (previous is null) { previous = value; continue; }
+                    short averaged = (short)((previous.Value + (int)value) / 2); previous = null;
+                    downsampled[written++] = (byte)averaged; downsampled[written++] = (byte)(averaged >> 8);
+                    peak = Math.Max(peak, Math.Abs(averaged / 32768f));
+                }
+                int count; TimeSpan elapsed;
+                lock (gate) { count = Math.Min(written, MaximumBytes - bytes); bytes += count; elapsed = TimeSpan.FromSeconds(bytes / 48000d); }
+                if (count > 0) { file.Write(downsampled, 0, count); LevelChanged?.Invoke(peak, elapsed); }
+                if (elapsed.TotalSeconds >= 60) RequestStop();
             }
-            _writer?.Dispose(); _writer = null;
-            _completion?.TrySetCanceled();
+        }
+        catch (Exception ex) { failure = ex; RequestStop(ex); }
+        finally
+        {
+            try { file.Dispose(); } catch (Exception ex) { failure ??= ex; }
+            lock (gate) { active = false; sharedMode = false; }
+        }
+        if (failure is not null) { result.TrySetException(failure); if (!disposed) Error?.Invoke("Запись голоса: " + failure.Message); }
+        else { result.TrySetResult(output); if (!disposed) Completed?.Invoke(output); }
+    }
+    private void RequestStop(Exception? failure = null)
+    {
+        IWaveIn? capture;
+        lock (gate)
+        {
+            if (!active || stopping) return;
+            stopping = true;
+            if (source is not null) { source.MicrophonePcmAvailable -= AppendPcm; source = null; }
+            capture = input; input = null;
+            if (capture is not null)
+            {
+                capture.DataAvailable -= NativeData; capture.RecordingStopped -= NativeStopped;
+                captureCleanup = Task.Run(() => { try { capture.StopRecording(); } finally { capture.Dispose(); } });
+            }
+            audio?.Writer.TryComplete(failure);
         }
     }
+    public async Task<string> StopAsync()
+    {
+        Task<string> result;
+        lock (gate) result = completion?.Task ?? throw new InvalidOperationException("Запись не начата.");
+        RequestStop();
+        try { return await result; }
+        finally
+        {
+            Task? writer, cleanup; lock (gate) { writer = writerTask; cleanup = captureCleanup; }
+            if (writer is not null) await writer;
+            if (cleanup is not null) await cleanup;
+        }
+    }
+    public void Dispose() { lock (gate) disposed = true; RequestStop(); }
 }

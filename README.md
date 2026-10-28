@@ -43,3 +43,5 @@ dotnet test tests/Wisp.Desktop.Tests -c Release
 [Нативный редизайн, голос и Wisp Original](docs/MASTER_IMPLEMENTATION.md) · [Ход выполнения](PROGRESS.md)
 
 [Новые UI/UX-улучшения и проверка](docs/IMPROVEMENTS.md) · [ТЗ](docs/IMPROVEMENT_SPECIFICATION.md)
+
+[Нативные компоненты, Grayscale и GIF-редактор](docs/NATIVE_EXPANSION.md) · [Комплексное ТЗ](docs/NATIVE_EXPANSION_SPECIFICATION.md)

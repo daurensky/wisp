@@ -6,7 +6,7 @@ public sealed partial class MainWindow
 {
     private ProfileEditor CreateProfileEditor(bool initialEditing = false) => new(profile,
         avatars.Resolve(profile, store), profile.BannerPath ?? (profile.BannerAssetId is null ? null : store.GetAsset(profile.BannerAssetId)?.LocalPath),
-        SaveEditedProfile, initialEditing);
+        SaveEditedProfile, initialEditing,message=>Notify(message,true));
 
     private void EditProfile() => ModalHost.Open(this, "Мой профиль", CreateProfileEditor(true), 600);
 

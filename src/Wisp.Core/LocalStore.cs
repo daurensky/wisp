@@ -68,16 +68,25 @@ public sealed class LocalStore : IDisposable
         if (!profileColumns.Contains("avatar_asset_id")) Execute("ALTER TABLE profiles ADD COLUMN avatar_asset_id TEXT");
         if (!profileColumns.Contains("banner_asset_id")) Execute("ALTER TABLE profiles ADD COLUMN banner_asset_id TEXT");
         if (!profileColumns.Contains("avatar_revision")) Execute("ALTER TABLE profiles ADD COLUMN avatar_revision TEXT");
+        if (!profileColumns.Contains("avatar_cover_frame")) Execute("ALTER TABLE profiles ADD COLUMN avatar_cover_frame INTEGER NOT NULL DEFAULT 0");
+        if (!profileColumns.Contains("banner_cover_frame")) Execute("ALTER TABLE profiles ADD COLUMN banner_cover_frame INTEGER NOT NULL DEFAULT 0");
+        var channelColumns = new HashSet<string>();
+        using (var cmd = Command("PRAGMA table_info(channels)")) using (var reader = cmd.ExecuteReader()) while (reader.Read()) channelColumns.Add(reader.GetString(1));
+        if (!channelColumns.Contains("is_deleted")) Execute("ALTER TABLE channels ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0");
+        var assetColumns = new HashSet<string>();
+        using (var cmd = Command("PRAGMA table_info(assets)")) using (var reader = cmd.ExecuteReader()) while (reader.Read()) assetColumns.Add(reader.GetString(1));
+        if (!assetColumns.Contains("volume")) Execute("ALTER TABLE assets ADD COLUMN volume REAL NOT NULL DEFAULT 1");
         var messageColumns = new HashSet<string>();
         using (var cmd = Command("PRAGMA table_info(messages)")) using (var reader = cmd.ExecuteReader()) while (reader.Read()) messageColumns.Add(reader.GetString(1));
         if (!messageColumns.Contains("emoji_map")) Execute("ALTER TABLE messages ADD COLUMN emoji_map TEXT");
         var communityColumns = new HashSet<string>();
         using (var cmd = Command("PRAGMA table_info(communities)")) using (var reader = cmd.ExecuteReader()) while (reader.Read()) communityColumns.Add(reader.GetString(1));
         if (!communityColumns.Contains("icon_asset_id")) Execute("ALTER TABLE communities ADD COLUMN icon_asset_id TEXT");
+        if (!communityColumns.Contains("icon_cover_frame")) Execute("ALTER TABLE communities ADD COLUMN icon_cover_frame INTEGER NOT NULL DEFAULT 0");
         var memberColumns = new HashSet<string>();
         using (var cmd = Command("PRAGMA table_info(members)")) using (var reader = cmd.ExecuteReader()) while (reader.Read()) memberColumns.Add(reader.GetString(1));
         if (!memberColumns.Contains("role")) Execute("ALTER TABLE members ADD COLUMN role TEXT NOT NULL DEFAULT 'member'");
-        Execute("PRAGMA user_version = 4");
+        Execute("PRAGMA user_version = 5");
     }
 
     public UserProfile Register(string username, string password)
@@ -112,7 +121,7 @@ public sealed class LocalStore : IDisposable
         lock (gate)
         {
             ThrowIfDisposed();
-            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id,p.avatar_revision,a.salt,a.password_hash,a.iterations FROM accounts a JOIN profiles p ON p.id=a.profile_id WHERE a.username_key=$name", ("$name", UsernameKey(username.Trim())));
+            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id,p.avatar_revision,p.avatar_cover_frame,p.banner_cover_frame,a.salt,a.password_hash,a.iterations FROM accounts a JOIN profiles p ON p.id=a.profile_id WHERE a.username_key=$name", ("$name", UsernameKey(username.Trim())));
             using var reader = cmd.ExecuteReader();
             if (!reader.Read())
             {
@@ -120,8 +129,8 @@ public sealed class LocalStore : IDisposable
                 _ = Rfc2898DeriveBytes.Pbkdf2(password, new byte[16], PasswordIterations, HashAlgorithmName.SHA256, 32);
                 return null;
             }
-            var actual = Rfc2898DeriveBytes.Pbkdf2(password, (byte[])reader[10], reader.GetInt32(12), HashAlgorithmName.SHA256, 32);
-            return CryptographicOperations.FixedTimeEquals(actual, (byte[])reader[11]) ? ReadProfile(reader) : null;
+            var actual = Rfc2898DeriveBytes.Pbkdf2(password, (byte[])reader[12], reader.GetInt32(14), HashAlgorithmName.SHA256, 32);
+            return CryptographicOperations.FixedTimeEquals(actual, (byte[])reader[13]) ? ReadProfile(reader) : null;
         }
     }
 
@@ -141,7 +150,7 @@ public sealed class LocalStore : IDisposable
         lock (gate)
         {
             Execute("CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES accounts(profile_id), expires_at TEXT NOT NULL)");
-            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id,p.avatar_revision FROM profiles p JOIN sessions s ON p.id=s.profile_id WHERE s.token_hash=$hash AND s.expires_at>$now", ("$hash", SessionHash(token)), ("$now", DateTimeOffset.UtcNow.ToString("O")));
+            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id,p.avatar_revision,p.avatar_cover_frame,p.banner_cover_frame FROM profiles p JOIN sessions s ON p.id=s.profile_id WHERE s.token_hash=$hash AND s.expires_at>$now", ("$hash", SessionHash(token)), ("$now", DateTimeOffset.UtcNow.ToString("O")));
             using var reader = cmd.ExecuteReader();
             return reader.Read() ? ReadProfile(reader) : null;
         }
@@ -174,10 +183,10 @@ public sealed class LocalStore : IDisposable
     {
         lock (gate)
         {
-            using var cmd = Command("SELECT id,name,owner_id,icon_asset_id FROM communities ORDER BY name,id");
+            using var cmd = Command("SELECT id,name,owner_id,icon_asset_id,icon_cover_frame FROM communities ORDER BY name,id");
             using var reader = cmd.ExecuteReader();
             var result = new List<Community>();
-            while (reader.Read()) result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3)));
+            while (reader.Read()) result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetInt32(4)));
             return result;
         }
     }
@@ -213,13 +222,27 @@ public sealed class LocalStore : IDisposable
         if (string.IsNullOrWhiteSpace(name) || name.Length > 200 || name != Path.GetFileName(name)) throw new ArgumentException("Некорректное имя.");
         lock (gate) Execute("UPDATE assets SET name=$name WHERE id=$id", ("$name",name.Trim()), ("$id",id));
     }
+    public void SetAssetVolume(string id, float volume)
+    {
+        if(!float.IsFinite(volume)||volume<0||volume>1)throw new ArgumentOutOfRangeException(nameof(volume));
+        lock(gate)Execute("UPDATE assets SET volume=$volume WHERE id=$id AND kind='sound'",("$volume",volume),("$id",id));
+    }
+    public void UpdateChannel(Channel channel)
+    {
+        ValidateId(channel.Id);ValidateId(channel.CommunityId);var name=ValidateName(channel.Name,64,"канала");
+        lock(gate)Execute("UPDATE channels SET name=$name,is_voice=$voice,is_deleted=0 WHERE id=$id AND community_id=$cid",("$name",name),("$voice",channel.IsVoice),("$id",channel.Id),("$cid",channel.CommunityId));
+    }
+    public void DeleteChannel(string id)
+    {
+        ValidateId(id);lock(gate)Execute("UPDATE channels SET is_deleted=1 WHERE id=$id",("$id",id));
+    }
     public void RemoveAsset(string id) { lock (gate) Execute("DELETE FROM assets WHERE id=$id", ("$id",id)); }
 
     public List<Channel> GetChannels(string communityId)
     {
         lock (gate)
         {
-            using var cmd = Command("SELECT id,community_id,name,is_voice FROM channels WHERE community_id=$id ORDER BY is_voice,name,id", ("$id", communityId));
+            using var cmd = Command("SELECT id,community_id,name,is_voice FROM channels WHERE community_id=$id AND is_deleted=0 ORDER BY is_voice,name,id", ("$id", communityId));
             using var reader = cmd.ExecuteReader();
             var result = new List<Channel>();
             while (reader.Read()) result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetBoolean(3)));
@@ -251,6 +274,7 @@ public sealed class LocalStore : IDisposable
         ValidateId(snapshot.Community.Id);
         ValidateId(snapshot.Community.OwnerId);
         ValidateName(snapshot.Community.Name, 80, "сообщества");
+        if(snapshot.Community.IconCoverFrame is <0 or >499)throw new ArgumentOutOfRangeException(nameof(snapshot));
         if (snapshot.Channels.Count > 100 || snapshot.Members.Count > 1000) throw new ArgumentException("Слишком большое сообщество.");
         if (snapshot.Channels.Any(c => c.CommunityId != snapshot.Community.Id)) throw new ArgumentException("Канал принадлежит другому сообществу.");
         foreach (var channel in snapshot.Channels) { ValidateId(channel.Id); ValidateName(channel.Name, 64, "канала"); }
@@ -261,10 +285,11 @@ public sealed class LocalStore : IDisposable
             using (var existing = Command("SELECT owner_id FROM communities WHERE id=$id", ("$id", snapshot.Community.Id)))
                 if (existing.ExecuteScalar() is string ownerId && ownerId != snapshot.Community.OwnerId)
                     throw new ArgumentException("Владелец существующего сообщества не может меняться через сетевой снимок.", nameof(snapshot));
-            Execute("INSERT INTO communities(id,name,owner_id,icon_asset_id) VALUES($id,$name,$owner,$icon) ON CONFLICT(id) DO UPDATE SET name=excluded.name,icon_asset_id=excluded.icon_asset_id",
-                ("$id", snapshot.Community.Id), ("$name", snapshot.Community.Name), ("$owner", snapshot.Community.OwnerId), ("$icon", snapshot.Community.IconAssetId));
+            Execute("INSERT INTO communities(id,name,owner_id,icon_asset_id,icon_cover_frame) VALUES($id,$name,$owner,$icon,$cover) ON CONFLICT(id) DO UPDATE SET name=excluded.name,icon_asset_id=excluded.icon_asset_id,icon_cover_frame=excluded.icon_cover_frame",
+                ("$id", snapshot.Community.Id), ("$name", snapshot.Community.Name), ("$owner", snapshot.Community.OwnerId), ("$icon", snapshot.Community.IconAssetId),("$cover",snapshot.Community.IconCoverFrame));
+            Execute("UPDATE channels SET is_deleted=1 WHERE community_id=$cid",("$cid",snapshot.Community.Id));
             foreach (var channel in snapshot.Channels)
-                Execute("INSERT INTO channels(id,community_id,name,is_voice) VALUES($id,$community,$name,$voice) ON CONFLICT(id) DO UPDATE SET name=excluded.name,is_voice=excluded.is_voice WHERE channels.community_id=excluded.community_id",
+                Execute("INSERT INTO channels(id,community_id,name,is_voice) VALUES($id,$community,$name,$voice) ON CONFLICT(id) DO UPDATE SET name=excluded.name,is_voice=excluded.is_voice,is_deleted=0 WHERE channels.community_id=excluded.community_id",
                     ("$id", channel.Id), ("$community", channel.CommunityId), ("$name", channel.Name), ("$voice", channel.IsVoice));
             foreach (var member in snapshot.Members)
             {
@@ -283,7 +308,7 @@ public sealed class LocalStore : IDisposable
     {
         lock (gate)
         {
-            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id,p.avatar_revision FROM profiles p JOIN members m ON p.id=m.profile_id WHERE m.community_id=$id ORDER BY p.username,p.id", ("$id", communityId));
+            using var cmd = Command("SELECT p.id,p.username,p.about,p.avatar,p.banner,p.status,p.game,p.avatar_asset_id,p.banner_asset_id,p.avatar_revision,p.avatar_cover_frame,p.banner_cover_frame FROM profiles p JOIN members m ON p.id=m.profile_id WHERE m.community_id=$id ORDER BY p.username,p.id", ("$id", communityId));
             using var reader = cmd.ExecuteReader();
             var result = new List<UserProfile>();
             while (reader.Read()) result.Add(ReadProfile(reader));
@@ -380,7 +405,7 @@ public sealed class LocalStore : IDisposable
     {
         lock (gate)
         {
-            using var cmd = Command("SELECT id,community_id,name,kind,local_path,size FROM assets WHERE community_id=$community AND ($kind IS NULL OR kind=$kind) ORDER BY name,id", ("$community", communityId), ("$kind", kind));
+            using var cmd = Command("SELECT id,community_id,name,kind,local_path,size,volume FROM assets WHERE community_id=$community AND ($kind IS NULL OR kind=$kind) ORDER BY name,id", ("$community", communityId), ("$kind", kind));
             using var reader = cmd.ExecuteReader();
             var result = new List<MediaAsset>();
             while (reader.Read()) result.Add(ReadAsset(reader));
@@ -392,16 +417,16 @@ public sealed class LocalStore : IDisposable
     {
         lock (gate)
         {
-            using var cmd = Command("SELECT id,community_id,name,kind,local_path,size FROM assets WHERE id=$id", ("$id", id));
+            using var cmd = Command("SELECT id,community_id,name,kind,local_path,size,volume FROM assets WHERE id=$id", ("$id", id));
             using var reader = cmd.ExecuteReader();
             return reader.Read() ? ReadAsset(reader) : null;
         }
     }
 
     private void UpsertProfile(UserProfile profile) => Execute("""
-        INSERT INTO profiles(id,username,about,avatar,banner,status,game,avatar_asset_id,banner_asset_id,avatar_revision) VALUES($id,$username,$about,$avatar,$banner,$status,$game,$avatarAsset,$bannerAsset,$avatarRevision)
-        ON CONFLICT(id) DO UPDATE SET username=excluded.username,about=excluded.about,avatar=excluded.avatar,banner=excluded.banner,status=excluded.status,game=excluded.game,avatar_asset_id=excluded.avatar_asset_id,banner_asset_id=excluded.banner_asset_id,avatar_revision=excluded.avatar_revision
-        """, ("$id", profile.Id), ("$username", profile.Username), ("$about", profile.About), ("$avatar", profile.AvatarPath), ("$banner", profile.BannerPath), ("$status", profile.Status), ("$game", profile.Game), ("$avatarAsset", profile.AvatarAssetId), ("$bannerAsset", profile.BannerAssetId), ("$avatarRevision", profile.AvatarRevision));
+        INSERT INTO profiles(id,username,about,avatar,banner,status,game,avatar_asset_id,banner_asset_id,avatar_revision,avatar_cover_frame,banner_cover_frame) VALUES($id,$username,$about,$avatar,$banner,$status,$game,$avatarAsset,$bannerAsset,$avatarRevision,$avatarCover,$bannerCover)
+        ON CONFLICT(id) DO UPDATE SET username=excluded.username,about=excluded.about,avatar=excluded.avatar,banner=excluded.banner,status=excluded.status,game=excluded.game,avatar_asset_id=excluded.avatar_asset_id,banner_asset_id=excluded.banner_asset_id,avatar_revision=excluded.avatar_revision,avatar_cover_frame=excluded.avatar_cover_frame,banner_cover_frame=excluded.banner_cover_frame
+        """, ("$id", profile.Id), ("$username", profile.Username), ("$about", profile.About), ("$avatar", profile.AvatarPath), ("$banner", profile.BannerPath), ("$status", profile.Status), ("$game", profile.Game), ("$avatarAsset", profile.AvatarAssetId), ("$bannerAsset", profile.BannerAssetId), ("$avatarRevision", profile.AvatarRevision),("$avatarCover",profile.AvatarCoverFrame),("$bannerCover",profile.BannerCoverFrame));
 
     private static string ValidateUsername(string username)
     {
@@ -429,10 +454,11 @@ public sealed class LocalStore : IDisposable
         ArgumentNullException.ThrowIfNull(profile);
         ValidateId(profile.Id);
         if (ValidateUsername(profile.Username) != profile.Username) throw new ArgumentException("Имя не должно содержать пробелы по краям.");
+        if(profile.AvatarCoverFrame is <0 or >499||profile.BannerCoverFrame is <0 or >499)throw new ArgumentOutOfRangeException(nameof(profile));
         if (profile.About is null || profile.About.Length > 2000 || profile.Game?.Length > 200 || profile.Status.Length > 32 || profile.AvatarPath?.Length > 4096 || profile.BannerPath?.Length > 4096 || profile.AvatarAssetId?.Length > 128 || profile.BannerAssetId?.Length > 128) throw new ArgumentException("Профиль слишком большой.");
     }
-    private static UserProfile ReadProfile(SqliteDataReader reader) => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), NullableString(reader, 3), NullableString(reader, 4), reader.GetString(5), NullableString(reader, 6), NullableString(reader, 7), NullableString(reader, 8), NullableString(reader, 9));
-    private static MediaAsset ReadAsset(SqliteDataReader reader) => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetInt64(5));
+    private static UserProfile ReadProfile(SqliteDataReader reader) => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), NullableString(reader, 3), NullableString(reader, 4), reader.GetString(5), NullableString(reader, 6), NullableString(reader, 7), NullableString(reader, 8), NullableString(reader, 9),reader.GetInt32(10),reader.GetInt32(11));
+    private static MediaAsset ReadAsset(SqliteDataReader reader) => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetInt64(5),(float)reader.GetDouble(6));
     private static string? NullableString(SqliteDataReader reader, int index) => reader.IsDBNull(index) ? null : reader.GetString(index);
 
     private SqliteCommand Command(string sql, params (string Name, object? Value)[] parameters)

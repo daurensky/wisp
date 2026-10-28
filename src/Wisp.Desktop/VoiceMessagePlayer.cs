@@ -18,7 +18,10 @@ public sealed class VoiceMessagePlayer : UserControl, IDisposable
     private readonly ToggleIconButton play = new() { IconOff = "play", IconOn = "pause", ToolTipOff = "Воспроизвести", ToolTipOn = "Пауза" };
     private readonly Slider seek = new() { Minimum = 0, Maximum = 1, MinWidth = Ui.Metric("Width.Seek"), VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock time = new() { Text = "0:00", FontSize = Ui.Caption, VerticalAlignment = VerticalAlignment.Center, Margin = Ui.Insets(Ui.S, 0, 0, 0) };
-    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(200) };
+    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(50) };
+    private readonly WaveformView waveform = new() { VerticalAlignment = VerticalAlignment.Center };
+    private CancellationTokenSource? waveformLoad;
+    private bool waveformLoaded;
     private TimeSpan duration;
     private TimeSpan pendingPosition;
     private bool updating,subscribed;
@@ -27,7 +30,12 @@ public sealed class VoiceMessagePlayer : UserControl, IDisposable
         this.path = path; this.error = error; this.allowed = allowed ?? (() => true);
         var row = new DockPanel { Margin = Ui.Insets(0, Ui.S, 0, 0), MaxWidth = Ui.Metric("Width.Player"), HorizontalAlignment = HorizontalAlignment.Left };
         Ui.Name(seek, "Позиция голосового сообщения"); Ui.Secondary(time);
-        DockPanel.SetDock(play, Dock.Left); row.Children.Add(play); DockPanel.SetDock(time, Dock.Right); row.Children.Add(time); row.Children.Add(seek); Content = row;
+        DockPanel.SetDock(play, Dock.Left); row.Children.Add(play); DockPanel.SetDock(time, Dock.Right); row.Children.Add(time);
+        var timeline=new Grid{MinWidth=Ui.Metric("Width.Seek")};timeline.Children.Add(waveform);
+        // Retain the native range control as the accessibility/automation value;
+        // pointer and keyboard interaction use the actual waveform above it.
+        seek.Opacity=0;seek.IsHitTestVisible=false;seek.Focusable=false;timeline.Children.Add(seek);row.Children.Add(timeline);Content=row;
+        waveform.SeekRequested+=fraction=>seek.Value=seek.Maximum*fraction;
         play.Click += (_, _) => { try { Toggle(); } catch (Exception ex) { StopAll(); error(ex.Message); } };
         seek.ValueChanged += (_, _) =>
         {
@@ -36,10 +44,23 @@ public sealed class VoiceMessagePlayer : UserControl, IDisposable
             catch(Exception ex){error(ex.Message);}
         };
         timer.Tick += (_, _) => Refresh();
-        Loaded+=(_,_)=>{if(!subscribed){SessionChanged+=OnSessionChanged;subscribed=true;}Refresh();};
+        Loaded+=(_,_)=>{if(!subscribed){SessionChanged+=OnSessionChanged;subscribed=true;}Refresh();if(!waveformLoaded)_=LoadWaveformAsync();};
         // Virtualization/navigation detaches only this view; it does not stop audio.
         Unloaded+=(_,_)=>Dispose();
         try { using var metadata = new AudioFileReader(path);duration=metadata.TotalTime;seek.Maximum=Math.Max(.01,duration.TotalSeconds);Refresh(); } catch (Exception ex) { error(ex.Message); }
+    }
+    private async Task LoadWaveformAsync()
+    {
+        waveformLoad?.Cancel();var lifetime=new CancellationTokenSource();waveformLoad=lifetime;
+        try
+        {
+            var data=await AudioWaveform.LoadAsync(path,lifetime.Token);
+            if(lifetime.IsCancellationRequested)return;
+            waveform.Peaks=data.Peaks;waveform.ToolTip="Нажмите на волну для перемотки";waveformLoaded=true;
+        }
+        catch(OperationCanceledException)when(lifetime.IsCancellationRequested){}
+        catch(Exception ex){if(!lifetime.IsCancellationRequested)waveform.ToolTip="Волна недоступна: "+ex.Message;}
+        finally{if(ReferenceEquals(waveformLoad,lifetime))waveformLoad=null;lifetime.Dispose();}
     }
     private bool IsCurrent=>session is not null&&StringComparer.OrdinalIgnoreCase.Equals(session.Path,path);
     private void EnsureSession(bool playAfterOpen)
@@ -85,11 +106,12 @@ public sealed class VoiceMessagePlayer : UserControl, IDisposable
         var length=current?session!.Duration:duration;
         updating=true;seek.Value=Math.Clamp(position.TotalSeconds,seek.Minimum,seek.Maximum);updating=false;
         time.Text=$"{position:m\\:ss} / {length:m\\:ss}";
+        waveform.Progress=length.TotalSeconds>0?Math.Clamp(position.TotalSeconds/length.TotalSeconds,0,1):0;
         bool playing=current&&session!.State==PlaybackState.Playing;play.IsChecked=playing;
         if(playing&&IsLoaded)timer.Start();else timer.Stop();
     }
     public void Dispose()
     {
-        timer.Stop();if(subscribed){SessionChanged-=OnSessionChanged;subscribed=false;}
+        timer.Stop();waveformLoad?.Cancel();if(subscribed){SessionChanged-=OnSessionChanged;subscribed=false;}
     }
 }

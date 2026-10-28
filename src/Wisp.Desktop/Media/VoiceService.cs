@@ -76,6 +76,8 @@ public sealed class VoiceService : IDisposable
     }
     public AudioDeviceSettings Devices { get; private set; } = new();
     public event Action<byte[]>? PacketReady;
+    /// <summary>Borrowed 48kHz/16-bit/mono PCM; subscribers must consume or copy synchronously.</summary>
+    public event Action<ReadOnlyMemory<byte>>? MicrophonePcmAvailable;
     public event Action<string>? Error;
     public bool Muted { get => muted; set { muted = value; if (value) lock (gate) ClearSpeech(LocalSpeakerId); } }
     public bool Deafened
@@ -193,7 +195,9 @@ public sealed class VoiceService : IDisposable
         {
             lock (gate)
             {
-                if (!running || !ReferenceEquals(input, sender) || muted || deafened) { captureCount = 0; return; }
+                if(!running||!ReferenceEquals(input,sender)){captureCount=0;return;}
+                MicrophonePcmAvailable?.Invoke(args.Buffer.AsMemory(0,args.BytesRecorded));
+                if(muted||deafened){captureCount=0;return;}
                 for (int offset = 0; offset + 1 < args.BytesRecorded; offset += 2)
                 {
                     captureFrame[captureCount++] = (short)(args.Buffer[offset] | args.Buffer[offset + 1] << 8);

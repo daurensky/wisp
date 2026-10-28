@@ -196,7 +196,20 @@ public sealed class ThemeTests
         var main = new MainWindow(store, profile);
         try
         {
-            phase("main layout"); main.Show(); main.UpdateLayout();
+            phase("main layout"); main.Show(); PumpLayout(main);
+            const System.Reflection.BindingFlags privateFlags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            Assert.Null(typeof(MainWindow).GetField("community",privateFlags)!.GetValue(main));
+            Assert.Null(typeof(MainWindow).GetField("selectedChannel",privateFlags)!.GetValue(main));
+            Assert.True(Assert.IsType<ScrollViewer>(typeof(MainWindow).GetField("homeWorkspace",privateFlags)!.GetValue(main)).IsVisible);
+            SaveSnapshot(main, "startup-home-dark");
+            typeof(MainWindow).GetMethod("SetCommunity",privateFlags)!.Invoke(main,new object[]{community});PumpLayout(main);
+            Assert.Equal(288d,Ui.Metric("Width.Channels"));
+            phase("Grayscale, chosen GIF cover and popup controls");DesignRegressionChecks.Check(main,root);
+            phase("server settings roles, stale replies and real sound gain");SettingsIntegrationChecks.Check(main,store,profile,community);
+            phase("stream audience, gain and cleanup");StreamIntegrationChecks.Check(main,store,profile,community);
+            phase("native image editor save, cover and cancel");CheckImageEditor(main,gif);
+            phase("live recording waveform from PCM");CheckRecordingWaveform(main,root);
+            CheckComposerState(main,channel);
             SaveSnapshot(main, "main-dark");
             CheckCaptionButtons(main);
             Assert.NotNull(System.Windows.Shell.WindowChrome.GetWindowChrome(main));
@@ -329,6 +342,163 @@ public sealed class ThemeTests
             timer.Start(); Dispatcher.PushFrame(frame);
             Assert.False(main.IsVisible, "Quit must finish after the initial Closing callback returns.");
         }
+    }
+
+    private static void CheckImageEditor(MainWindow main,string gif)
+    {
+        var original=File.ReadAllBytes(gif);
+        int windowCount=Application.Current.Windows.Count;
+        var accepted=ImageEditor.ShowAsync(main,gif,ImageEditKind.UserAvatar);
+        var editor=Assert.Single(Descendants(main).OfType<ImageEditor>());
+        PumpUntil(main,()=>editor.ViewModel.CanEdit,"image editor decoded GIF");
+        Assert.Equal(windowCount,Application.Current.Windows.Count);Assert.True(editor.ViewModel.Animated);
+        Assert.Equal(1,editor.ViewModel.MaximumFrame);Assert.Equal(0,editor.ViewModel.CoverFrame);
+        var initialCrop=editor.SourceCrop;Assert.True(initialCrop.Width>0);Assert.InRange(initialCrop.Width/initialCrop.Height,.999,1.001);
+        var zoom=Assert.Single(Descendants(editor).OfType<Slider>(),slider=>Equals(slider.ToolTip,"Масштаб изображения"));
+        zoom.Value=2;PumpLayout(main);Assert.Equal(2,editor.ViewModel.Zoom);Assert.True(editor.SourceCrop.Width<initialCrop.Width);
+        var viewport=Assert.IsType<Canvas>(editor.FindName("Viewport"));
+        var wheel=new MouseWheelEventArgs(Mouse.PrimaryDevice,Environment.TickCount,120){RoutedEvent=Mouse.MouseWheelEvent};
+        viewport.RaiseEvent(wheel);PumpLayout(main);Assert.True(wheel.Handled);Assert.True(editor.ViewModel.Zoom>2);
+        Assert.Single(Descendants(editor).OfType<Button>(),button=>Equals(button.Content,"Сбросить")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpLayout(main);Assert.Equal(1,editor.ViewModel.Zoom);Assert.Equal(initialCrop,editor.SourceCrop);
+        var initialFrame=editor.ViewModel.Source;
+        var timeline=Assert.Single(Descendants(editor).OfType<Slider>(),slider=>Equals(slider.ToolTip,"Кадр статичной обложки"));timeline.Value=1;
+        PumpUntil(main,()=>editor.ViewModel.CoverFrame==1&&!ReferenceEquals(initialFrame,editor.ViewModel.Source),"image editor chosen cover");
+        SaveSnapshot(main,"image-editor-gif-dark");
+        Assert.Single(Descendants(editor).OfType<Button>(),button=>Equals(button.ToolTip,"Сохранить обрезку")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(main,()=>accepted.IsCompleted,"image editor animated save");
+        var result=Assert.IsType<EditedImage>(accepted.GetAwaiter().GetResult());
+        string draftPath=result.Path;string draftDirectory=Path.GetDirectoryName(draftPath)!;
+        try
+        {
+            Assert.Equal(1,result.CoverFrame);Assert.Equal(2,result.FrameCount);Assert.Equal(result.Width,result.Height);
+            Assert.True(new FileInfo(result.Path).Length<=Wisp.Desktop.Media.ImageEditingService.MaximumBytes);
+            var edited=new Wisp.Desktop.Media.ImageEditingDocument(result.Path);Assert.True(edited.Animated);Assert.Equal(2,edited.FrameCount);
+            Assert.Equal(new Wisp.Desktop.Media.ImageEditingDocument(gif).Delays.ToArray(),edited.Delays.ToArray());
+            Assert.Equal(original,File.ReadAllBytes(gif));
+        }
+        finally{result.Dispose();}
+        Assert.False(File.Exists(draftPath));Assert.False(Directory.Exists(draftDirectory));
+        var cancelled=ImageEditor.ShowAsync(main,gif,ImageEditKind.ProfileBanner,initialCoverFrame:1);
+        var bannerEditor=Assert.Single(Descendants(main).OfType<ImageEditor>());
+        PumpUntil(main,()=>bannerEditor.ViewModel.CanEdit,"banner editor decoded GIF");
+        Assert.Equal(1,bannerEditor.ViewModel.CoverFrame);
+        Assert.InRange(bannerEditor.SourceCrop.Width/bannerEditor.SourceCrop.Height,16d/9-.001,16d/9+.001);
+        bannerEditor.ViewModel.Zoom=2;PumpLayout(main);SaveSnapshot(main,"image-editor-banner-dark");
+        Assert.Single(Descendants(bannerEditor).OfType<Button>(),button=>Equals(button.ToolTip,"Отмена · Esc")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(main,()=>cancelled.IsCompleted,"image editor cancel");
+        Assert.Null(cancelled.GetAwaiter().GetResult());Assert.Equal(original,File.ReadAllBytes(gif));
+        Assert.DoesNotContain(Descendants(main),child=>child is ImageEditor);
+    }
+
+    private static void CheckRecordingWaveform(MainWindow main,string root)
+    {
+        string path=Path.Combine(root,"waveform-recording.wav"),retry=Path.Combine(root,"waveform-recording-retry.wav");
+        using var recorder=new Wisp.Desktop.Media.VoiceRecorder();
+        using var view=new RecordingWaveformView();view.Bind(recorder);
+        var handle=ModalHost.Open(main,"Запись голоса",view,740);PumpLayout(main);
+        var bars=Assert.IsType<WaveformBars>(view.FindName("Bars"));
+        var elapsed=Assert.IsType<TextBlock>(view.FindName("Elapsed"));
+        byte[] Pcm(float amplitude)
+        {
+            var block=new byte[4800*2];
+            for(int i=0;i<4800;i++)
+            {
+                short value=(short)(Math.Sin(2*Math.PI*440*i/48000)*amplitude*32767);
+                block[i*2]=(byte)value;block[i*2+1]=(byte)(value>>8);
+            }
+            return block;
+        }
+        try
+        {
+            recorder.StartExternal(path);
+            for(int i=0;i<20;i++)recorder.AppendPcm(Pcm(.1f+(i%9)*.1f));
+            PumpUntil(main,()=>bars.Peaks?.Count==20&&elapsed.Text=="0:02","recorded PCM waveform and elapsed time");
+            Assert.True(recorder.IsRecording);Assert.True(bars.ActualWidth>200);
+            Assert.True(bars.Peaks!.Max()>.85f);Assert.True(bars.Peaks!.Min()<.15f);
+            SaveSnapshot(main,"recording-live-waveform-dark");
+            recorder.AppendPcm(Pcm(.5f));
+            PumpUntil(main,()=>bars.Peaks?.Count==21,"live waveform update");
+            var stopping=recorder.StopAsync();PumpUntil(main,()=>stopping.IsCompleted,"waveform recording stop");
+            Assert.Equal(path,stopping.GetAwaiter().GetResult());Assert.False(recorder.IsRecording);
+            view.Reset();Assert.Empty(bars.Peaks!);Assert.Equal("0:00",elapsed.Text);
+            recorder.StartExternal(retry);recorder.AppendPcm(Pcm(.25f));
+            PumpUntil(main,()=>bars.Peaks?.Count==1,"waveform resets between recordings");
+            Assert.InRange(bars.Peaks![0],.24f,.26f);
+            stopping=recorder.StopAsync();PumpUntil(main,()=>stopping.IsCompleted,"waveform retry stop");stopping.GetAwaiter().GetResult();
+        }
+        finally
+        {
+            if(recorder.IsRecording){var stopping=recorder.StopAsync();PumpUntil(main,()=>stopping.IsCompleted,"waveform cleanup");stopping.GetAwaiter().GetResult();}
+            handle.Close();PumpLayout(main);File.Delete(path);File.Delete(retry);
+        }
+    }
+
+    private static void CheckComposerState(MainWindow main,Channel channel)
+    {
+        const System.Reflection.BindingFlags flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+        var composer=Assert.IsType<TextBox>(typeof(MainWindow).GetField("composer",flags)!.GetValue(main));
+        var send=Assert.IsType<Button>(typeof(MainWindow).GetField("sendButton",flags)!.GetValue(main));
+        var view=Assert.IsType<MessageComposerView>(typeof(MainWindow).GetField("messageComposer",flags)!.GetValue(main));
+        Assert.Equal("Написать "+channel.Name,view.Placeholder);Assert.False(send.IsEnabled);
+        composer.Text=" \r\n\t";PumpLayout(main);Assert.False(send.IsEnabled);
+        composer.Text="draft";PumpLayout(main);Assert.True(send.IsEnabled);
+        composer.Clear();PumpLayout(main);Assert.False(send.IsEnabled);
+        Assert.DoesNotContain(Descendants(main).OfType<TextBlock>(),text=>text.Text.Contains("Enter —")||text.Text.Contains("Shift+Enter"));
+        var actions=Assert.IsType<StackPanel>(send.Parent);
+        var recording=Assert.IsType<ToggleIconButton>(typeof(MainWindow).GetField("recordButton",flags)!.GetValue(main));
+        Assert.True(actions.Children.IndexOf(recording)<actions.Children.IndexOf(send));
+    }
+
+    private static void CheckGlobalMini(MainWindow main,ScreenViewer video,Grid center,UserProfile profile)
+    {
+        var surface=Assert.Single(center.Children.OfType<Border>());
+        video.SetVideoAspect(1920,1080);video.ToggleMini();PumpLayout(main);
+        Assert.True(video.IsMini);Assert.Empty(center.Children.OfType<Border>());
+        var overlay=ModalHost.Surface(main);Assert.Contains(surface,overlay.Children.OfType<Border>());
+        Assert.Equal(1000,Panel.GetZIndex(surface));
+        Assert.InRange(surface.Width/surface.Height,16d/9-.01,16d/9+.01);
+        var modalBody=new TextBlock{Text="Settings remain behind the mini preview"};
+        var modal=ModalHost.Open(main,"Поверх настроек",modalBody,options:new ModalOptions(FullWindow:true));PumpLayout(main);
+        Assert.True(Panel.GetZIndex(surface)>Panel.GetZIndex((UIElement)overlay.Children[overlay.Children.Count-1]));
+        Assert.True(surface.IsVisible);SaveSnapshot(main,"mini-above-settings-dark");
+        modal.Close();PumpUntil(main,()=>!Descendants(main).Contains(modalBody),"mini overlay modal close");
+        video.DockMini(MiniDockPosition.TopRight,false);PumpLayout(main);
+        Assert.Equal(MiniDockPosition.TopRight,video.MiniPosition);Assert.InRange(surface.Margin.Top,0,Ui.L+1);
+        video.DockMini(MiniDockPosition.BottomRight,false);PumpLayout(main);
+        Assert.Equal(MiniDockPosition.BottomRight,video.MiniPosition);
+        Assert.True(surface.Margin.Top+surface.Height<=overlay.ActualHeight+1);
+        video.Hide();Assert.False(video.IsVisible);video.Show();PumpLayout(main);
+        Assert.True(video.IsMini);Assert.True(video.IsVisible);Assert.Same(overlay,surface.Parent);
+        double oldWidth=main.Width;main.Width=main.MinWidth;PumpLayout(main);
+        Assert.True(surface.Margin.Left+surface.Width<=overlay.ActualWidth+1);
+        Assert.True(surface.Margin.Top+surface.Height<=overlay.ActualHeight+1);
+        main.Width=oldWidth;PumpLayout(main);
+        float changed=-1;video.VolumeChanged+=gain=>changed=gain;
+        var slider=Assert.Single(Descendants(surface).OfType<Slider>());slider.Value=25;
+        Assert.Equal(.25f,video.Volume);Assert.Equal(.25f,changed);
+        Button Find(string label)=>Assert.Single(Descendants(surface).OfType<Button>(),button=>System.Windows.Automation.AutomationProperties.GetName(button)==label);
+        Find("Выключить звук демонстрации").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Assert.Equal(0,video.Volume);
+        Find("Включить звук демонстрации").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Assert.Equal(.25f,video.Volume);
+        using(var voice=new Wisp.Desktop.Media.VoiceService())
+        {
+            var watchers=new[]{new PeerPresence(profile,"voice",false,false),new PeerPresence(new UserProfile("watcher","Actual viewer"),"voice",true,false)};
+            video.UpdateViewers(watchers,_=>null,voice,profile.Id);PumpLayout(main);
+            Assert.Contains(Descendants(surface).OfType<Border>(),border=>Equals(border.ToolTip,"Actual viewer"));
+            video.UpdateViewers(Array.Empty<PeerPresence>(),_=>null,voice,profile.Id);PumpLayout(main);
+            Assert.DoesNotContain(Descendants(surface).OfType<Border>(),border=>Equals(border.ToolTip,"Actual viewer"));
+        }
+        video.ToggleMini();PumpLayout(main);Assert.False(video.IsMini);Assert.Contains(surface,center.Children.OfType<Border>());
+        bool stopOwn=false;
+        var own=new ScreenViewer(main,"My demo",center,ownStream:true);own.StopRequested+=()=>stopOwn=true;own.ToggleMini();PumpLayout(main);
+        var ownSurface=Assert.Single(overlay.Children.OfType<Border>());
+        Assert.Single(Descendants(ownSurface).OfType<Button>(),button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Завершить демонстрацию").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.True(stopOwn);own.Close();Assert.DoesNotContain(ownSurface,overlay.Children.OfType<Border>());
+        bool remoteStop=false;
+        var remote=new ScreenViewer(main,"Remote demo",center);remote.StopRequested+=()=>remoteStop=true;remote.ToggleMini();PumpLayout(main);
+        var remoteSurface=Assert.Single(overlay.Children.OfType<Border>());
+        Assert.Single(Descendants(remoteSurface).OfType<Button>(),button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Закрыть просмотр").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.True(remote.IsClosed);Assert.False(remoteStop);Assert.DoesNotContain(remoteSurface,overlay.Children.OfType<Border>());
     }
 
     private static void CheckDesktopPolish(MainWindow main, string communityId, string channelId)
@@ -504,7 +674,8 @@ public sealed class ThemeTests
             var video=new ScreenViewer(main,"Central demo",center);PumpLayout(main);
             Assert.False(video.IsMini);Assert.True(video.IsLoading);Assert.Single(center.Children.Cast<Border>());
             Assert.Equal(2,Grid.GetColumn(rootPanel));Assert.True(((VirtualRows)Get("servers")!).IsVisible);
-            video.Present(new byte[16],2,2);Assert.False(video.IsLoading);video.ToggleMini();Assert.True(video.IsMini);video.ToggleMini();
+            video.Present(new byte[16],2,2);Assert.False(video.IsLoading);
+            CheckGlobalMini(main,video,center,profile);
             video.SetUnavailable();SaveSnapshot(main,"central-stream-dark");video.Close();Assert.Empty(center.Children.Cast<UIElement>());
             main.Width=Ui.Metric("Width.Window");Invoke("SetCommunity",original);Invoke("SelectChannel",voiceChannel);PumpLayout(main);
             var channelRows=(VirtualRows)Get("channels")!;
@@ -518,7 +689,7 @@ public sealed class ThemeTests
             Invoke("ShowHome");PumpLayout(main);
             Assert.True(((ScrollViewer)Get("homeWorkspace")!).IsVisible);Assert.Equal(Visibility.Collapsed,((DockPanel)Get("chatWorkspace")!).Visibility);
             Assert.False(Assert.IsType<Button>(Get("inviteButton")).IsEnabled);
-            Assert.False(Assert.IsType<Button>(Get("createChannelButton")).IsEnabled);
+            Assert.Equal(Visibility.Collapsed,Assert.IsType<Button>(Get("serverSettingsButton")).Visibility);
             var globalActions=Descendants(main).OfType<Button>().Where(button=>System.Windows.Automation.AutomationProperties.GetName(button) is "Создать сообщество" or "Присоединиться по приглашению").ToArray();
             Assert.NotEmpty(globalActions);Assert.All(globalActions,button=>Assert.True(button.IsEnabled));
             Assert.Equal(voiceChannel.Id,Get("voiceChannelId"));Assert.Equal(0,room.LeaveCalls);Assert.True((bool)Get("sharing")!);
@@ -542,28 +713,43 @@ public sealed class ThemeTests
             Motion.SetReduced(false);
             var sample=profile with{About="Native Windows client",Game="Dota 2",AvatarPath=gif,BannerPath=gif};
             var profileView=new ProfileView(sample,gif,gif);
-            var profileHandle=ModalHost.Open(main,"Профиль пользователя",profileView,480);PumpLayout(main);
+            var profileScroll=new ScrollViewer{Content=profileView,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+            var profileHandle=ModalHost.Open(main,"",profileScroll,600,new ModalOptions(Headerless:true));PumpLayout(main);
+            var profileCard=Assert.IsType<Border>(LogicalTreeHelper.GetParent(Assert.IsType<DockPanel>(LogicalTreeHelper.GetParent(profileScroll))));
+            Assert.DoesNotContain(Descendants(profileCard).OfType<Button>(),button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Закрыть · Esc");
+            Assert.DoesNotContain(Descendants(profileCard).OfType<Image>(),image=>ReferenceEquals(image.Source,Brand.Logo));
             Assert.Contains(Descendants(profileView).OfType<TextBlock>(),t=>t.Text==sample.About);
             Assert.Contains(Descendants(profileView).OfType<TextBlock>(),t=>t.Text.Contains("Dota 2"));
             var animated=Descendants(profileView).OfType<Image>().ToArray();
-            Assert.Equal(2,animated.Length);Assert.All(animated,i=>Assert.Equal(GifPlaybackMode.Hover,GifPlayback.GetMode(i)));
+            Assert.Equal(2,animated.Length);Assert.All(animated,i=>Assert.Equal(GifPlaybackMode.Always,GifPlayback.GetMode(i)));
+            Assert.Contains(animated,image=>image.Width==Ui.Metric("Size.ProfileAvatar")*2);
+            var bannerFrame=Assert.Single(Descendants(profileView).OfType<AspectRatioFrame>());
+            Assert.InRange(bannerFrame.ActualWidth/bannerFrame.ActualHeight,16d/9-.01,16d/9+.01);
             Assert.All(animated,i=>Assert.Equal(RepeatBehavior.Forever,AnimationBehavior.GetRepeatBehavior(i)));
-            SaveSnapshot(main,"profile-redesign-dark");profileHandle.Close();PumpLayout(main);
+            SaveSnapshot(main,"profile-redesign-dark");
+            var escape=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(main),Environment.TickCount,Key.Escape){RoutedEvent=Keyboard.PreviewKeyDownEvent};
+            profileView.RaiseEvent(escape);Assert.True(escape.Handled);PumpUntil(main,()=>!Descendants(main).Contains(profileView),"headerless profile Escape close");
             CheckProfileEditing(main,sample,gif);
             CheckExactTextSelection(main);
             Wisp.Desktop.Media.AudioDeviceSettings? applied=null;bool? notify=null;float volume=0;
             var settings=new SettingsView(new SettingsContext
             {
                 Profile=sample,AvatarPath=gif,BannerPath=gif,Audio=new(),NoiseSuppressionAvailable=true,
-                ApplyAudio=value=>{applied=value;return Task.CompletedTask;},EditProfile=()=>{},ShowNotifications=()=>{},ConnectionDetails=()=>{},ShareScreen=()=>{},
+                ApplyAudio=value=>{applied=value;return Task.CompletedTask;},EditProfile=()=>{},ShowNotifications=()=>{},
                 InputDevices=()=>new[]{new Wisp.Desktop.Media.AudioDeviceChoice(null,"Default input"),new("input-device","Test microphone")},
                 OutputDevices=()=>new[]{new Wisp.Desktop.Media.AudioDeviceChoice(null,"Default output"),new("output-device","Test headphones")},
-                ApplyNotifications=(enabled,level)=>{notify=enabled;volume=level;},ServerAddress="https://example.com:8443",ConnectionStatus=()=>"Не подключён"
+                ApplyNotifications=(enabled,level)=>{notify=enabled;volume=level;}
             });
-            var handle=ModalHost.Open(main,"Настройки",settings,880);PumpLayout(main);
-            Assert.Contains(Descendants(settings).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Аккаунт и профиль");
-            Assert.DoesNotContain(Descendants(settings).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Профиль");
-            settings.SelectSection(SettingsSection.Profile);PumpLayout(main);Assert.Equal(SettingsSection.Account,settings.SelectedSection);
+            var handle=ModalHost.Open(main,"Настройки",settings,options:new ModalOptions(FullWindow:true));PumpLayout(main);
+            Assert.Equal(new[]{"Account","Appearance","Audio","Notifications"},settings.Shell.Sections.Select(section=>section.Key));
+            Assert.Equal(new[]{"Аккаунт и профиль","Внешний вид","Голос и звук","Уведомления"},settings.Shell.Sections.Select(section=>section.Label));
+            Assert.Equal(SettingsSection.Account,settings.SelectedSection);Assert.Equal("Account",settings.Shell.SelectedKey);
+            Assert.DoesNotContain(Descendants(settings).OfType<Image>(),image=>ReferenceEquals(image.Source,Brand.Logo));
+            var navigation=Assert.Single(Descendants(settings).OfType<ListBox>());
+            navigation.SelectedIndex=1;PumpLayout(main);Assert.Equal(SettingsSection.Appearance,settings.SelectedSection);
+            var fullCard=Assert.IsType<Border>(LogicalTreeHelper.GetParent(Assert.IsType<DockPanel>(LogicalTreeHelper.GetParent(settings))));
+            Assert.Equal(Ui.Insets(Ui.L),fullCard.Margin);Assert.Equal(HorizontalAlignment.Stretch,fullCard.HorizontalAlignment);
+            Assert.InRange(fullCard.ActualWidth,ModalHost.Surface(main).ActualWidth-Ui.L*2-1,ModalHost.Surface(main).ActualWidth-Ui.L*2+1);
             settings.SelectSection(SettingsSection.Appearance);PumpLayout(main);
             var themes=Assert.Single(Descendants(settings).OfType<ComboBox>());
             themes.SelectedIndex=1;Assert.True(ThemeManager.IsLight);
@@ -586,9 +772,8 @@ public sealed class ThemeTests
             var enabled=Assert.Single(Descendants(settings).OfType<CheckBox>());enabled.IsChecked=false;
             Assert.False(notify);Assert.Equal(.8f,volume);
             SaveSnapshot(main,"settings-notifications-dark");
-            settings.SelectSection(SettingsSection.Connection);PumpLayout(main);
-            Assert.Contains(Descendants(settings).OfType<TextBlock>(),t=>t.Text=="https://example.com:8443");
-            handle.Close();PumpLayout(main);
+            Assert.DoesNotContain(settings.Shell.Sections,section=>section.Label is "Подключение" or "Демонстрация экрана");
+            handle.Close();PumpUntil(main,()=>!Descendants(main).Contains(settings),"settings close");
         }
         finally {if(ThemeManager.IsLight)ThemeManager.Toggle();Motion.SetReduced(wasReduced);}
     }
@@ -644,6 +829,32 @@ public sealed class ThemeTests
             sources.Clear();var refreshing=picker.RefreshAsync();PumpUntil(main,()=>refreshing.IsCompleted&&picker.SelectedSource is null,"closed source removal");
         }
         finally{handle.Close();}
+        CheckShareDialog(main);
+    }
+
+    private static void CheckShareDialog(MainWindow main)
+    {
+        Wisp.Desktop.Media.CaptureSource[] sources=[new("window:1","Editor"),new("window:2","Game"),new("window:3","Browser"),new("monitor:2","Second screen")];
+        using var dialog=new ScreenShareDialog(()=>sources,_=>
+        {
+            var bitmap=System.Windows.Media.Imaging.BitmapSource.Create(16,9,96,96,PixelFormats.Bgr32,null,new byte[16*9*4],16*4);bitmap.Freeze();return bitmap;
+        }){Height=500};
+        var handle=ModalHost.Open(main,"Демонстрация экрана",dialog,Ui.Metric("Width.ShareDialog"));PumpLayout(main);
+        try
+        {
+            PumpUntil(main,()=>Descendants(dialog).OfType<Image>().Count(image=>image.Source is not null)==3,"full share source previews");
+            var launch=Assert.Single(Descendants(dialog).OfType<Button>(),button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Запустить демонстрацию");
+            Assert.False(launch.IsEnabled);Assert.Equal(3,Descendants(dialog).OfType<ComboBox>().Count());
+            Assert.DoesNotContain(Descendants(dialog).OfType<Button>(),button=>Equals(button.Content,"Отмена"));
+            var source=Assert.Single(Descendants(dialog).OfType<Button>(),button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Источник · Game");
+            source.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(main);Assert.True(launch.IsEnabled);
+            var fps=Assert.Single(Descendants(dialog).OfType<ComboBox>(),box=>System.Windows.Automation.AutomationProperties.GetName(box)=="Частота кадров демонстрации");fps.SelectedIndex=2;
+            Assert.Equal(60,dialog.ViewModel.Selection()!.FramesPerSecond);
+            SaveSnapshot(main,"share-dialog-dark");
+            launch.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal(new ScreenShareSelection(sources[1],1080,60,4_000_000),dialog.Result);
+        }
+        finally{handle.Close();PumpLayout(main);}
     }
 
     private static void CheckExactTextSelection(MainWindow main)

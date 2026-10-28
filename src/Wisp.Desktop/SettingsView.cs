@@ -6,7 +6,7 @@ using Wisp.Desktop.Media;
 
 namespace Wisp.Desktop;
 
-public enum SettingsSection { Account, Profile, Appearance, Audio, Notifications, Connection, ScreenShare }
+public enum SettingsSection { Account, Appearance, Audio, Notifications }
 
 /// <summary>Existing application operations, injected without coupling settings to a voice session or navigation.</summary>
 public sealed class SettingsContext
@@ -22,16 +22,11 @@ public sealed class SettingsContext
     public required Func<AudioDeviceSettings, Task> ApplyAudio { get; init; }
     public required Action EditProfile { get; init; }
     public required Action ShowNotifications { get; init; }
-    public required Action ConnectionDetails { get; init; }
-    public Action? ServerSettings { get; init; }
-    public required Action ShareScreen { get; init; }
-    public bool CanShareScreen { get; init; }
     public Action? SignOut { get; init; }
-    public string ServerAddress { get; init; } = "";
-    public Func<string>? ConnectionStatus { get; init; }
     public bool NotificationsEnabled { get; init; } = true;
     public float NotificationVolume { get; init; } = .8f;
     public Action<bool, float>? ApplyNotifications { get; init; }
+    public Action<string>? ReportError { get; init; }
     public Func<IReadOnlyList<AudioDeviceChoice>>? InputDevices { get; init; }
     public Func<IReadOnlyList<AudioDeviceChoice>>? OutputDevices { get; init; }
 }
@@ -41,9 +36,10 @@ public sealed class SettingsView : UserControl
 {
     private readonly SettingsContext context;
     private readonly ContentControl page = new();
+    private readonly SettingsShell shell = new();
+    public SettingsShell Shell => shell;
     private readonly StackPanel accountIdentity = new();
     private readonly TextBlock feedback = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
-    private readonly Dictionary<SettingsSection, Button> navigation = new();
     private AudioDeviceSettings audio;
     private bool notificationsEnabled;
     private float notificationVolume;
@@ -53,46 +49,32 @@ public sealed class SettingsView : UserControl
     {
         this.context = context; audio = context.Audio;
         notificationsEnabled = context.NotificationsEnabled; notificationVolume = float.IsFinite(context.NotificationVolume) ? Math.Clamp(context.NotificationVolume, 0, 1) : .8f;
-        MinHeight = 320; MaxHeight = 520;
-        var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) }); root.ColumnDefinitions.Add(new ColumnDefinition());
-        var sidebar = new DockPanel { Margin = Ui.Insets(Ui.M) };
-        var identity = accountIdentity; identity.Margin = Ui.Insets(Ui.S, Ui.L, Ui.S, Ui.S); RefreshIdentity();
-        DockPanel.SetDock(identity, Dock.Bottom); sidebar.Children.Add(identity);
-        var links = new StackPanel();
-        Add(SettingsSection.Account, "Аккаунт и профиль", "users");
-        Add(SettingsSection.Appearance, "Внешний вид", "sun");
-        Add(SettingsSection.Audio, "Голос и звук", "headphones");
-        Add(SettingsSection.Notifications, "Уведомления", "bell");
-        Add(SettingsSection.Connection, "Подключение", "circle-dot");
-        Add(SettingsSection.ScreenShare, "Демонстрация", "monitor");
-        void Add(SettingsSection section, string label, string icon)
+        MinHeight = 240;
+        RefreshIdentity(); shell.Footer = accountIdentity;
+        foreach (var (section, label, icon) in new[]
         {
-            var button = Buttons.Create(label, () => SelectSection(section), icon: icon, style: "Button.Row");
-            button.HorizontalContentAlignment = HorizontalAlignment.Left; button.Margin = Ui.Insets(0, Ui.Xs);
-            button.Height = Ui.RowHeight; navigation.Add(section, button); links.Children.Add(button);
-        }
-        sidebar.Children.Add(new ScrollViewer { Content = links, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
-        root.Children.Add(Ui.Panel(sidebar));
-        var right = new DockPanel { Margin = Ui.Insets(Ui.Xl, Ui.L, Ui.Xl, Ui.Xl) };
-        feedback.SetResourceReference(TextBlock.ForegroundProperty, "Danger"); feedback.Margin = Ui.Insets(0, Ui.M, 0, 0); DockPanel.SetDock(feedback, Dock.Bottom); right.Children.Add(feedback);
-        right.Children.Add(new ScrollViewer { Content = page, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
-        Grid.SetColumn(right, 1); root.Children.Add(right); Content = root; SelectSection(SettingsSection.Account);
+            (SettingsSection.Account,"Аккаунт и профиль","users"),
+            (SettingsSection.Appearance,"Внешний вид","sun"),
+            (SettingsSection.Audio,"Голос и звук","headphones"),
+            (SettingsSection.Notifications,"Уведомления","bell")
+        }) shell.Sections.Add(new(section.ToString(),label,icon));
+        shell.SectionSelected += key => { if (Enum.TryParse<SettingsSection>(key,out var section)) SelectSection(section); };
+        var content = new DockPanel();
+        feedback.SetResourceReference(TextBlock.ForegroundProperty, "Danger"); feedback.Margin=Ui.Insets(0,Ui.M,0,0);DockPanel.SetDock(feedback,Dock.Bottom);content.Children.Add(feedback);content.Children.Add(page);
+        shell.PageContent=content;Content=shell;SelectSection(SettingsSection.Account);
     }
 
     public void SelectSection(SettingsSection section)
     {
-        // Keep callers using the old section identifier compatible without a second page.
-        if (section == SettingsSection.Profile) section = SettingsSection.Account;
         SelectedSection = section; feedback.Visibility = Visibility.Collapsed;
-        foreach (var entry in navigation) entry.Value.SetResourceReference(Button.BackgroundProperty, entry.Key == section ? "Selected" : "Surface");
+        shell.Select(section.ToString());
         try
         {
             page.Content = section switch
             {
                 SettingsSection.Account => Account(),
                 SettingsSection.Appearance => Appearance(), SettingsSection.Audio => Audio(),
-                SettingsSection.Notifications => Notifications(), SettingsSection.Connection => Connection(),
-                SettingsSection.ScreenShare => ScreenShare(), _ => throw new ArgumentOutOfRangeException(nameof(section))
+                SettingsSection.Notifications => Notifications(), _ => throw new ArgumentOutOfRangeException(nameof(section))
             };
             Motion.Enter(page);
         }
@@ -113,13 +95,13 @@ public sealed class SettingsView : UserControl
         var button = Buttons.Create(title, () => { try { action(); } catch (Exception ex) { Error(ex); } }, style: style);
         button.HorizontalAlignment = HorizontalAlignment.Left; button.Margin = Ui.Insets(0, Ui.M, 0, 0); return button;
     }
-    private void Error(Exception exception) { feedback.Text = exception.Message; feedback.Visibility = Visibility.Visible; DiagnosticLog.Write("settings", exception); }
+    private void Error(Exception exception) { feedback.Text = exception.Message; feedback.Visibility = Visibility.Visible; DiagnosticLog.Write("settings", exception); context.ReportError?.Invoke(exception.Message); }
 
     private void RefreshIdentity()
     {
         var current = context.CurrentProfile?.Invoke() ?? context.Profile;
         accountIdentity.Children.Clear();
-        accountIdentity.Children.Add(AvatarCatalog.Circle(context.ResolveAvatar?.Invoke(current) ?? current.AvatarPath ?? context.AvatarPath, 40, GifPlaybackMode.Hover));
+        accountIdentity.Children.Add(AvatarCatalog.Circle(context.ResolveAvatar?.Invoke(current) ?? current.AvatarPath ?? context.AvatarPath, 40, GifPlaybackMode.Hover, coverFrame: current.AvatarCoverFrame));
         accountIdentity.Children.Add(Ui.Label(current.Username, Ui.Body));
         var appName = Ui.Label("WISP · НАСТРОЙКИ", Ui.Caption, true); appName.Margin = Ui.Insets(0, Ui.Xs, 0, 0); accountIdentity.Children.Add(appName);
     }
@@ -188,19 +170,5 @@ public sealed class SettingsView : UserControl
         }
         panel.Children.Add(Note("Ошибки и предупреждения доступны в области уведомлений. Переключение темы и обычные действия интерфейса не воспроизводят системные звуки."));
         panel.Children.Add(Action("Открыть уведомления", context.ShowNotifications)); return panel;
-    }
-    private FrameworkElement Connection()
-    {
-        var panel = Section("Подключение", "Состояние сервера и текущего голосового соединения.");
-        var status = context.ConnectionStatus?.Invoke(); if (!string.IsNullOrWhiteSpace(status)) { var label = Ui.Label(status); label.TextWrapping = TextWrapping.Wrap; panel.Children.Add(label); }
-        if (!string.IsNullOrWhiteSpace(context.ServerAddress)) panel.Children.Add(Note(context.ServerAddress));
-        panel.Children.Add(Action("Сведения о подключении", context.ConnectionDetails));
-        if (context.ServerSettings is not null) panel.Children.Add(Action("Параметры сервера Wisp", context.ServerSettings)); return panel;
-    }
-    private FrameworkElement ScreenShare()
-    {
-        var panel = Section("Демонстрация экрана", "Выбор приложения или монитора, разрешение и частота кадров доступны при запуске демонстрации.");
-        var button = Action("Выбрать источник и качество", context.ShareScreen, "Button.Primary"); button.IsEnabled = context.CanShareScreen; panel.Children.Add(button);
-        if (!context.CanShareScreen) panel.Children.Add(Note("Подключись к голосовому каналу, чтобы начать демонстрацию.")); return panel;
     }
 }
