@@ -20,4 +20,6 @@
   <Target Name="RequireRnNoiseForDistribution" BeforeTargets="Publish" Condition="'$(RequireRnNoise)' == 'true'">
     <Error Condition="!Exists('$(RnNoiseBinary)')" Text="Build native/rnnoise before publishing with RequireRnNoise=true." />
   </Target>
+  <ItemGroup><Content Include="Assets/Sounds/*.wav" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /><Content Include="Assets/Sounds/Wisp-Original-README.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Resource Include="Assets/Fonts/*.ttf" /><Resource Include="Assets/Fonts/*.otf" /><Content Include="Assets/Fonts/Onest-OFL.txt" Link="licenses/Onest-OFL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
 </Project>

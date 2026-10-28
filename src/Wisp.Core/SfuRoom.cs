@@ -22,7 +22,9 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
     public SfuConnectionInfo ConnectionInfo => Volatile.Read(ref connectionInfo) with { CandidateTypes = links.TryGetValue("pub", out var pub) ? pub.Peer.SelectedCandidateTypes : null };
     private TaskCompletionSource? ready, published;
     private IReadOnlyList<RTCIceServer> servers = Array.Empty<RTCIceServer>();
-    private string? channel;
+    private string? channel, community;
+    private string phase="disconnected", lastMessageType="none", lastPeerState="none";
+    private IOException? lastFailure;
     private volatile bool joined;
     private int failed;
     public bool Joined => joined && Volatile.Read(ref failed) == 0;
@@ -51,12 +53,16 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
         if (stop?.IsCancellationRequested != false) return;
         if (outbound?.Writer.TryWrite(value) != true) Fail("Очередь сигналинга SFU переполнена. Подключись снова.");
     }
+    private SfuDiagnosticContext DiagnosticContext() => new(phase,lastMessageType,community,channel,
+        socket?.State.ToString()??"None",socket?.CloseStatus,socket?.CloseStatusDescription,connectionInfo.State,lastPeerState);
     private void Fail(string error,Exception? exception=null)
     {
         if (Interlocked.Exchange(ref failed, 1) != 0) return;
-        joined = false;
+        var diagnostic=new SfuDiagnosticException(error,DiagnosticContext(),exception);
+        var failure=new IOException(error,diagnostic);Volatile.Write(ref lastFailure,failure);
+        joined = false;phase="failed";
         Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Disconnected));
-        ready?.TrySetException(new IOException(error)); published?.TrySetException(new IOException(error));
+        ready?.TrySetException(failure); published?.TrySetException(failure);
         var lifetime=stop; lifetime?.Cancel(); socket?.Abort();
         // Native state callbacks may hold transport locks: never close their PC
         // synchronously from that callback. Also scope cleanup to this attempt.
@@ -67,7 +73,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
             catch(Exception) { /* The failed attempt is already reported below. */ }
             finally { lifecycle.Release(); }
         });
-        DiagnosticError?.Invoke(exception??new IOException(error));Error?.Invoke(error); Changed?.Invoke();
+        DiagnosticError?.Invoke(diagnostic);Error?.Invoke(error); Changed?.Invoke();
     }
     public async Task EnterAsync(string communityId, string channelId, bool mute, bool deafen, CancellationToken cancellation = default)
     {
@@ -76,7 +82,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
         {
             await LeaveCoreAsync();
             var endpoint = settings.Endpoint();
-            failed = 0; joined = false; channel = channelId;
+            failed = 0; joined = false; channel = channelId;community=communityId;lastFailure=null;lastMessageType="none";lastPeerState="none";phase="connecting";
             Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Connecting));
             ready = Completion(); published = Completion();
             stop = new CancellationTokenSource();
@@ -95,21 +101,28 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
                 writer = Task.Run(() => WriteAsync(stop.Token));
                 reader = Task.Run(() => ReadAsync(stop.Token));
                 Queue(new { type = "join", version = 2, token = await cloud.GetAccessTokenAsync(token), community = communityId, channel = channelId, session, muted = mute, deafened = deafen });
-                await ready.Task.WaitAsync(token);
+                phase="admission";await ready.Task.WaitAsync(token);
+                phase="negotiating";
                 var pub = CreateLink("pub", uid);
                 var sdp = await pub.Peer.OfferAsync(token);
                 Queue(new { type = "offer", id = "pub", sdp });
                 pub.LocalPublished = true;
                 maintenance = Task.Run(() => MaintainAsync(stop.Token));
                 await published.Task.WaitAsync(token);
-                joined = true;
+                joined = true;phase="connected";
                 Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Connected));
                 health = Task.Run(() => HealthAsync(stop.Token));
                 Changed?.Invoke();
             }
-            catch
+            catch(Exception ex)
             {
+                var failure=Volatile.Read(ref lastFailure);
+                bool timedOut=ex is OperationCanceledException&&!cancellation.IsCancellationRequested&&stop?.IsCancellationRequested==false;
+                if(failure is null&&!cancellation.IsCancellationRequested)
+                    DiagnosticError?.Invoke(new SfuDiagnosticException(timedOut?"Истёк срок подключения SFU.":"Не удалось подключиться к SFU.",DiagnosticContext(),ex));
                 await LeaveCoreAsync();
+                if(failure is not null&&!cancellation.IsCancellationRequested)throw failure;
+                if(timedOut)throw new TimeoutException("SFU не завершил подключение за 45 секунд. Проверь доступность UDP и сервер.");
                 throw;
             }
         }
@@ -124,6 +137,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
         peer.StateChanged += state =>
         {
             if (stop?.IsCancellationRequested != false || !links.TryGetValue(id,out var active) || !ReferenceEquals(active,link)) return;
+            lastPeerState=SfuProtocol.SafeLabel(state);
             if (state is "failed" or "invalid-packet" or "restart-required") { Fail("Соединение SFU потеряно. Подключись к каналу снова."); return; }
             if (id == "pub" && peer.Connected) published?.TrySetResult();
             Changed?.Invoke();
@@ -159,20 +173,19 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
                     result = await socket!.ReceiveAsync(new ArraySegment<byte>(buffer, count, buffer.Length - count), token);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        Fail(result.CloseStatus==WebSocketCloseStatus.PolicyViolation
-                            ? "SFU отклонил подключение: проверь доступ к каналу или ограничение сервера."
-                            : "SFU закрыл соединение (код "+result.CloseStatus+"). Будет выполнено повторное подключение.");
+                        if(!token.IsCancellationRequested)Fail(SfuProtocol.DescribeClose(result.CloseStatus,result.CloseStatusDescription));
                         return;
                     }
                     if (result.MessageType != WebSocketMessageType.Text) throw new InvalidDataException();
                     count += result.Count;
                 } while (!result.EndOfMessage);
                 using var json = JsonDocument.Parse(buffer.AsMemory(0, count));
-                var m = json.RootElement; string type = m.GetProperty("type").GetString()!;
+                var m = json.RootElement; string? type = m.GetProperty("type").GetString();
+                lastMessageType=SfuProtocol.SafeLabel(type);SfuProtocol.RequireKnownMessage(type);
                 switch (type)
                 {
                     case "ready":
-                        if (m.GetProperty("version").GetInt32() != 2) throw new InvalidDataException();
+                        if (m.GetProperty("version").GetInt32() != 2) throw new SfuProtocolException("Клиент и сервер SFU используют разные версии протокола. Нужна версия 2.");
                         ready!.TrySetResult(); break;
                     case "roster":
                         var roster = m.GetProperty("participants").Deserialize<RtcSeat[]>() ?? Array.Empty<RtcSeat>();
@@ -196,12 +209,12 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
                         if (Joined && viewer != uid && ConnectedPeerIds.Contains(viewer) && double.IsFinite(loss) && loss is >= 0 and <= 1 && double.IsFinite(jitter) && jitter is >= 0 and <= 30000)
                             MessageReceived?.Invoke(new("video-report", viewer, channel, JsonSerializer.SerializeToUtf8Bytes(new VideoNetworkReport(loss, jitter, null))));
                         break;
-                    default: throw new InvalidDataException();
+                    default: throw new SfuProtocolException("Несовместимый протокол SFU.");
                 }
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception ex) { if(!token.IsCancellationRequested)Fail("Соединение SFU закрыто: проверь доступ к каналу, сервер и сеть.",ex); }
+        catch (Exception ex) { if(!token.IsCancellationRequested)Fail(ex is SfuProtocolException?ex.Message:ex is JsonException or InvalidDataException?"SFU прислал некорректные данные (тип «"+lastMessageType+"»). Проверь совместимость клиента и сервера.":"Соединение SFU закрыто: "+ex.GetType().Name+". Проверь сервер и сеть; подробности записаны в журнал.",ex); }
     }
     private async Task MaintainAsync(CancellationToken token)
     {
@@ -252,7 +265,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
         Volatile.Write(ref participants, Array.Empty<RtcSeat>());
         socket?.Dispose(); socket = null; stop?.Dispose(); stop = null;
         outbound = null; reader = writer = maintenance = health = null;
-        Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Disconnected)); channel = null;
+        Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Disconnected)); channel = community = null;phase="disconnected";
         Changed?.Invoke();
     }
     public async ValueTask DisposeAsync() => await LeaveAsync();

@@ -23,13 +23,15 @@ The database role must be able to create/drop test schemas; each test cleans up 
 
 ## Manual Windows/VPS checks
 
-1. Upgrade the VPS using SERVER.md; confirm `/healthz` reports protocol2. Register new accounts: no old accounts/data are imported. Relaunch and verify session restore.
+1. Upgrade the VPS using SERVER.md; confirm `/healthz` reports protocol2. For an existing v2 deployment preserve accounts/data; new registration is needed only for the initial migration from the old external backend. Relaunch and verify session restore.
 2. Create a community and invitation. Join from another PC; confirm text, uploaded file, GIF avatar/banner, custom emoji and sound-panel persistence outside a voice call.
 3. Join a voice channel from six PCs. Verify visible membership, speaking rings, mute/deafen, exit/rejoin and that counts have no `/5` cap.
 4. Click another voice participant, set 25%, confirm only that voice becomes quieter and the setting survives a restart. Check 0% and unchanged other users.
-5. Play music in another application, join voice, change devices. Wisp must not lower the other application's volume. Check the new multimedia default and any exact category HRESULT in notifications. Driver/Windows and Bluetooth profile behavior cannot be established by software-only tests.
+5. Play music in another application, join voice, change devices. Wisp must not lower the other application's volume. Check the shared Multimedia endpoint and neutral microphone capture; no category warning should be shown on successful capture. Driver/Windows and Bluetooth profile behavior cannot be established by software-only tests.
 6. Scroll rapidly over text, avatars and lists; there must be no trailing 150ms easing backlog. Drag scrollbars and select/copy chat text. Hover rail icons and confirm the gap below remains unchanged.
 7. Share an app/monitor with audio, compare 1080p/60 load and blocked/occluded/minimized sources; check borderless consent or GDI fallback, viewer fullscreen/mini, multiple monitors and continued microphone audio.
 8. Close to tray and continue talking. Fully quit via tray before replacing a portable build.
 
 Keep the PR draft until physical audio/capture and the real Astana VPS routes are validated. A first local six-client test hit a publishing-connect timeout; a subsequent diagnostic run passed. Preserve diagnostic output and investigate if CI or real machines reproduce it rather than attributing it to the database without evidence.
+
+Master implementation: test navigation between communities/Home during voice+share, the independent call panel, selected audio output for simultaneous call/message/notification/soundboard/share streams, original semantic sound delivery, neutral idle status, tray state priority/handle disposal, Onest, rectangular captions and redesigned settings/profile screenshots. See MASTER_IMPLEMENTATION.md.

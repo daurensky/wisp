@@ -12,6 +12,7 @@ public class ThemedWindow : Window
 {
     private readonly WindowChrome chrome;
     private HwndSource? source;
+    private Button? minimizeButton,maximizeButton,closeButton;
     private bool immersive;
     public static readonly DependencyProperty TitleBarVisibilityProperty = DependencyProperty.Register(nameof(TitleBarVisibility), typeof(Visibility), typeof(ThemedWindow), new PropertyMetadata(Visibility.Visible));
     public Visibility TitleBarVisibility { get => (Visibility)GetValue(TitleBarVisibilityProperty); private set => SetValue(TitleBarVisibilityProperty, value); }
@@ -50,24 +51,30 @@ public class ThemedWindow : Window
     }
     public override void OnApplyTemplate()
     {
+        if(minimizeButton is not null)minimizeButton.Click-=Minimize;
+        if(maximizeButton is not null)maximizeButton.Click-=Maximize;
+        if(closeButton is not null)closeButton.Click-=CloseWindow;
         base.OnApplyTemplate();
-        if (GetTemplateChild("PART_Minimize") is Button minimize)
+        if ((minimizeButton=GetTemplateChild("PART_Minimize") as Button) is { } minimize)
         {
-            minimize.Click += (_, _) => SystemCommands.MinimizeWindow(this);
+            minimize.Click += Minimize;
             minimize.Visibility = ResizeMode == ResizeMode.NoResize ? Visibility.Collapsed : Visibility.Visible;
         }
-        if (GetTemplateChild("PART_Maximize") is Button maximize)
+        if ((maximizeButton=GetTemplateChild("PART_Maximize") as Button) is { } maximize)
         {
-            maximize.Click += (_, _) => { if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this); else SystemCommands.MaximizeWindow(this); };
+            maximize.Click += Maximize;
             maximize.Visibility = ResizeMode is ResizeMode.NoResize or ResizeMode.CanMinimize ? Visibility.Collapsed : Visibility.Visible;
         }
-        if (GetTemplateChild("PART_Close") is Button close) close.Click += (_, _) => Close();
+        if ((closeButton=GetTemplateChild("PART_Close") as Button) is { } close) close.Click += CloseWindow;
         UpdateMaximizeIcon();
     }
+    private void Minimize(object sender,RoutedEventArgs args)=>SystemCommands.MinimizeWindow(this);
+    private void Maximize(object sender,RoutedEventArgs args){if(WindowState==WindowState.Maximized)SystemCommands.RestoreWindow(this);else SystemCommands.MaximizeWindow(this);}
+    private void CloseWindow(object sender,RoutedEventArgs args)=>Close();
     private void UpdateMaximizeIcon()
     {
         if (GetTemplateChild("PART_Maximize") is not Button button) return;
-        button.Content = new Icon { Kind = WindowState == WindowState.Maximized ? "panels-top-left" : "square", Width = Ui.Metric("Size.InlineIcon"), Height = Ui.Metric("Size.InlineIcon") };
+        button.Content = new Icon { Kind = "square", Width = Ui.Metric("Size.InlineIcon"), Height = Ui.Metric("Size.InlineIcon") };
         button.ToolTip = WindowState == WindowState.Maximized ? "Восстановить" : "Развернуть";
         Ui.Name(button, (string)button.ToolTip);
     }

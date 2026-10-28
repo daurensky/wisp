@@ -15,8 +15,8 @@ public sealed class VoiceService : IDisposable
     private readonly Dictionary<string, PlaybackPeer> peers = new(StringComparer.Ordinal);
     private readonly short[] captureFrame = new short[FrameSamples];
     private IWaveIn? input;
-    private WasapiOut? output;
-    private MMDevice? inputDevice, outputDevice;
+    private SharedAudioOutput? output;
+    private MMDevice? inputDevice;
     private MixingSampleProvider? mixer;
     private IOpusEncoder? encoder;
     private AudioDeviceWatcher? watcher;
@@ -162,8 +162,7 @@ public sealed class VoiceService : IDisposable
                 using var catalog = new MMDeviceEnumerator();
                 try
                 {
-                    outputDevice = AudioDeviceSettings.Resolve(catalog, Devices.OutputId, DataFlow.Render, text => Error?.Invoke(text));
-                    output = new WasapiOut(outputDevice, AudioClientShareMode.Shared, true, 60);
+                    output = new SharedAudioOutput(Devices.OutputId,60,text=>Error?.Invoke(text));
                     output.PlaybackStopped += (_, args) => { if (running && args.Exception is not null) Error?.Invoke("Наушники отключены: " + args.Exception.Message); };
                     output.Init(new SampleToWaveProvider(new LimitedSampleProvider(mixer!)));
                     output.Play();
@@ -243,7 +242,7 @@ public sealed class VoiceService : IDisposable
         lock (gate) { previous = input; input = null; }
         if (previous is not null) { previous.DataAvailable -= Capture; previous.StopRecording(); previous.Dispose(); }
         output?.Stop(); output?.Dispose(); output = null;
-        inputDevice?.Dispose(); outputDevice?.Dispose(); inputDevice = outputDevice = null;
+        inputDevice?.Dispose(); inputDevice = null;
     }
     public void Stop()
     {

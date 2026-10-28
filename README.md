@@ -37,3 +37,5 @@ dotnet test tests/Wisp.Desktop.Tests -c Release
 [Архитектура](docs/ARCHITECTURE.md) · [Проверки](docs/TESTING.md) · [Лицензии и ресурсы](docs/licenses/ASSETS.md)
 
 [Восстановление голосового соединения и диагностика](docs/RECOVERY.md).
+
+[Нативный редизайн, голос и Wisp Original](docs/MASTER_IMPLEMENTATION.md) · [Ход выполнения](PROGRESS.md)

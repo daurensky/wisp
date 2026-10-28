@@ -37,6 +37,7 @@ public sealed class ThemeTests
                 ThemeManager.Initialize(root);
                 Motion.SetReduced(true);
                 Assert.False(ThemeManager.IsLight);
+                Assert.True(Typography.HasOnest);Assert.Equal("Onest",Typography.FamilyName);
 
                 using var store = new LocalStore(root);
                 SessionVault.Save(root, "test-session-secret");
@@ -46,34 +47,34 @@ public sealed class ThemeTests
                 Assert.Null(SessionVault.Read(root));
                 derived = new DerivedWindow();
                 auth = new AuthWindow(store);
-                AssertWindowColors(derived, Colors.Black, Color.FromRgb(237, 237, 242));
-                AssertWindowColors(auth, Colors.Black, Color.FromRgb(237, 237, 242));
+                AssertWindowColors(derived, Color.FromRgb(16, 19, 25), Color.FromRgb(242, 243, 247));
+                AssertWindowColors(auth, Color.FromRgb(16, 19, 25), Color.FromRgb(242, 243, 247));
                 CheckChatAndOverlays(store, root, value => phase = value);
                 var password = Assert.Single(Descendants(auth).OfType<PasswordBox>());
-                Assert.Equal(Color.FromRgb(237, 237, 242), BrushColor(password.Foreground));
-                Assert.Equal(Color.FromRgb(28, 29, 35), BrushColor(password.Background));
+                Assert.Equal(Color.FromRgb(242, 243, 247), BrushColor(password.Foreground));
+                Assert.Equal(Color.FromRgb(32, 39, 53), BrushColor(password.Background));
 
                 ThemeManager.Toggle();
                 Assert.True(ThemeManager.IsLight);
                 Assert.Equal("light", File.ReadAllText(Path.Combine(root, "theme.txt")).Trim());
-                AssertWindowColors(derived, Colors.White, Color.FromRgb(24, 25, 35));
-                AssertWindowColors(auth, Colors.White, Color.FromRgb(24, 25, 35));
-                Assert.Equal(Color.FromRgb(24, 25, 35), BrushColor(password.Foreground));
+                AssertWindowColors(derived, Color.FromRgb(245, 246, 250), Color.FromRgb(23, 32, 51));
+                AssertWindowColors(auth, Color.FromRgb(245, 246, 250), Color.FromRgb(23, 32, 51));
+                Assert.Equal(Color.FromRgb(23, 32, 51), BrushColor(password.Foreground));
                 auth.Show(); PumpLayout(auth); SaveSnapshot(auth, "auth-light"); auth.Hide();
 
                 var fresh = Path.Combine(root, "fresh");
                 Directory.CreateDirectory(fresh);
                 ThemeManager.Initialize(fresh);
                 Assert.False(ThemeManager.IsLight);
-                AssertWindowColors(derived, Colors.Black, Color.FromRgb(237, 237, 242));
+                AssertWindowColors(derived, Color.FromRgb(16, 19, 25), Color.FromRgb(242, 243, 247));
                 ThemeManager.Initialize(root);
                 Assert.True(ThemeManager.IsLight);
-                AssertWindowColors(auth, Colors.White, Color.FromRgb(24, 25, 35));
+                AssertWindowColors(auth, Color.FromRgb(245, 246, 250), Color.FromRgb(23, 32, 51));
 
                 File.WriteAllText(Path.Combine(root, "theme.txt"), "invalid-theme");
                 ThemeManager.Initialize(root);
                 Assert.False(ThemeManager.IsLight);
-                AssertWindowColors(auth, Colors.Black, Color.FromRgb(237, 237, 242));
+                AssertWindowColors(auth, Color.FromRgb(16, 19, 25), Color.FromRgb(242, 243, 247));
             }
             catch (Exception ex) { failure = ex; }
             finally
@@ -106,8 +107,8 @@ public sealed class ThemeTests
         Assert.True(ComposerInput.ShouldSend(Key.Enter, ModifierKeys.None));
         Assert.False(ComposerInput.ShouldSend(Key.Enter, ModifierKeys.Shift));
         var tip = new ToolTip { Content = "Подсказка" };
-        Assert.Equal(Color.FromRgb(28, 29, 35), BrushColor(tip.Background));
-        Assert.Equal(Color.FromRgb(237, 237, 242), BrushColor(tip.Foreground));
+        Assert.Equal(Color.FromRgb(32, 39, 53), BrushColor(tip.Background));
+        Assert.Equal(Color.FromRgb(242, 243, 247), BrushColor(tip.Foreground));
         var avatar = Assert.IsType<Image>(AvatarCatalog.Circle(null, 36));
         var frozen = new ScaleTransform(1, 1); frozen.Freeze();
         var frozenProbe = new Border { RenderTransform = frozen };
@@ -152,6 +153,7 @@ public sealed class ThemeTests
         {
             phase("main layout"); main.Show(); main.UpdateLayout();
             SaveSnapshot(main, "main-dark");
+            CheckCaptionButtons(main);
             Assert.NotNull(System.Windows.Shell.WindowChrome.GetWindowChrome(main));
             Assert.Contains(VisualDescendants(main).OfType<Button>(), button => button.Name == "PART_Close");
             phase("recycling");
@@ -231,7 +233,8 @@ public sealed class ThemeTests
             Assert.Equal(GifPlaybackMode.Hover, GifPlayback.GetMode(chatEmoji));
             Assert.NotNull(GifPlayback.GetScope(chatEmoji));
             phase("connection status, brand and smooth scrolling"); CheckDesktopPolish(main, community.Id, store.GetChannels(community.Id).First(c => c.IsVoice).Id);
-            var inputButton = Descendants(main).OfType<Button>().First(button => Equals(System.Windows.Automation.AutomationProperties.GetName(button), "Профиль и настройки"));
+            phase("navigation during call and redesigned screens");CheckNavigationAndScreens(main,store,profile,community,gif);
+            var inputButton = Descendants(main).OfType<Button>().First(button => Equals(System.Windows.Automation.AutomationProperties.GetName(button), "Настройки Wisp"));
             inputButton.Focus(); PointerFocus.SetKeyboardFocus(inputButton, true); main.UpdateLayout();
             Assert.Equal(1, ((Border)inputButton.Template.FindName("FocusRing", inputButton)).Opacity);
             inputButton.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left) { RoutedEvent = Mouse.PreviewMouseDownEvent });
@@ -250,19 +253,19 @@ public sealed class ThemeTests
             var voiceChannel = store.GetChannels(community.Id).First(c => c.IsVoice);
             var joinTask = (Task)typeof(MainWindow).GetMethod("JoinVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, new object[] { voiceChannel, false, CancellationToken.None })!;
             Assert.False(joinTask.IsCompleted);
-            Assert.Contains(Descendants(main).OfType<TextBlock>(), text => text.Text == "Соединение");
+            Assert.Contains(Descendants(main).OfType<TextBlock>(), text => text.Text == "SFU · Подключение");
             main.UpdateLayout();
             Assert.Contains(Descendants(main).OfType<VoiceParticipantRow>(), row => System.Windows.Automation.AutomationProperties.GetName(row).StartsWith(profile.Username));
             SaveSnapshot(main, "voice-connecting");
             var leaveTask = (Task)typeof(MainWindow).GetMethod("LeaveVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, null)!;
             PumpLayout(main);
             Assert.True(joinTask.IsCompletedSuccessfully); Assert.True(leaveTask.IsCompletedSuccessfully);
-            Assert.DoesNotContain(Descendants(main).OfType<TextBlock>(), text => text.Text == "Соединение");
+            Assert.DoesNotContain(Descendants(main).OfType<TextBlock>(), text => text.Text == "SFU · Подключение");
             using (var exclusive = new FileStream(emoji.LocalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) Assert.True(exclusive.Length > 0);
             Assert.Equal(Visibility.Collapsed, Descendants(main).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetName(button) == "Отменить запись").Visibility);
             phase("responsive layout"); main.Width = Ui.Metric("Width.WindowMinimum"); PumpLayout(main); SaveSnapshot(main, "main-compact-dark");
             var lists = VisualDescendants(main).OfType<VirtualRows>().ToArray();
-            Assert.Equal(4, lists.Length); Assert.Equal(3, lists.Count(list => list.IsVisible));
+            Assert.Equal(5, lists.Length); Assert.Equal(3, lists.Count(list => list.IsVisible));
             Assert.All(lists, list => Assert.Equal(Colors.Transparent, BrushColor(list.Background)));
             main.Width = Ui.Metric("Width.Window"); ThemeManager.Toggle(); PumpLayout(main); SaveSnapshot(main, "main-light"); ThemeManager.Toggle();
         }
@@ -286,12 +289,14 @@ public sealed class ThemeTests
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var roomField = typeof(MainWindow).GetField("rtc", flags)!;
         var channelField = typeof(MainWindow).GetField("voiceChannelId", flags)!;
-        var oldRoom = roomField.GetValue(main); var oldChannel = channelField.GetValue(main);
+        var communityField=typeof(MainWindow).GetField("voiceCommunity",flags)!;
+        var failedField=typeof(MainWindow).GetField("activeVoiceFailed",flags)!;
+        var oldRoom = roomField.GetValue(main); var oldChannel = channelField.GetValue(main);var oldVoiceCommunity=communityField.GetValue(main);var oldFailed=failedField.GetValue(main);
         var info = new SfuConnectionInfo("wss://89.126.195.20:8443/rtc", ServerConnectionState.Connected, 42, DateTimeOffset.UtcNow, "host/host");
         var room = new TestVoiceRoom(info, channelId);
         try
         {
-            roomField.SetValue(main, room); channelField.SetValue(main, channelId);
+            roomField.SetValue(main, room); channelField.SetValue(main, channelId);communityField.SetValue(main,typeof(MainWindow).GetField("community",flags)!.GetValue(main));failedField.SetValue(main,false);
             var text = (TextBlock)typeof(MainWindow).GetField("connection", flags)!.GetValue(main)!;
             void Update(double? ping, ServerConnectionState state, string brush)
             {
@@ -299,11 +304,13 @@ public sealed class ThemeTests
                 typeof(MainWindow).GetMethod("UpdateStatus", flags)!.Invoke(main, null);
                 Assert.Equal(BrushColor((Brush)Application.Current.FindResource(brush)), BrushColor(text.Foreground));
             }
-            Update(42, ServerConnectionState.Connected, "Success"); Assert.Contains("Подключён · SFU · 42 мс", text.Text);
+            Update(42, ServerConnectionState.Connected, "Success"); Assert.Contains("SFU · Подключено · 42 мс", text.Text);
             Update(150, ServerConnectionState.Connected, "Warning");
-            Update(250, ServerConnectionState.Connected, "Danger");
+            Update(250, ServerConnectionState.Connected, "Warning");
             Update(null, ServerConnectionState.Unreachable, "Warning"); Assert.Contains("пинг —", text.Text);
-            Update(null, ServerConnectionState.Disconnected, "Danger"); Assert.Contains("потеряно", text.Text);
+            Update(null, ServerConnectionState.Disconnected, "TextSecondary");Assert.Equal("Не подключён",text.Text);
+            failedField.SetValue(main,true);Update(null, ServerConnectionState.Disconnected, "Danger"); Assert.Contains("потеряно", text.Text);
+            failedField.SetValue(main,false);
             Update(42, ServerConnectionState.Connected, "Success");
             main.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
             {
@@ -316,7 +323,7 @@ public sealed class ThemeTests
             typeof(MainWindow).GetMethod("ConnectionDetails", flags)!.Invoke(main, null);
             SaveSnapshot(main, "sfu-connected");
         }
-        finally { roomField.SetValue(main, oldRoom); channelField.SetValue(main, oldChannel); typeof(MainWindow).GetMethod("UpdateStatus", flags)!.Invoke(main, null); }
+        finally { roomField.SetValue(main, oldRoom); channelField.SetValue(main, oldChannel);communityField.SetValue(main,oldVoiceCommunity);failedField.SetValue(main,oldFailed);typeof(MainWindow).GetMethod("UpdateStatus", flags)!.Invoke(main, null); }
         var messages = (VirtualRows)typeof(MainWindow).GetField("messages", flags)!.GetValue(main)!;
         var item = Assert.IsType<ListBoxItem>(messages.ItemContainerGenerator.ContainerFromIndex(0));
         item.IsSelected = true; item.ApplyTemplate();
@@ -349,6 +356,7 @@ public sealed class ThemeTests
         Assert.InRange(view.VerticalOffset, 1, 200); // movement, bounded independently of Windows' wheel-line preference
         Motion.SetReduced(true); overlay.Close();
         var target=new Channel(channelId,communityId,"Reconnect test",true);
+        communityField.SetValue(main,typeof(MainWindow).GetField("community",flags)!.GetValue(main));
         typeof(MainWindow).GetMethod("BeginReconnect",flags)!.Invoke(main,new object[]{communityId,target});
         var intent=(VoiceJoinIntent)typeof(MainWindow).GetField("voiceIntent",flags)!.GetValue(main)!;
         Assert.True(intent.Connecting);
@@ -356,6 +364,157 @@ public sealed class ThemeTests
         PumpLayout(main);Assert.True(leaving.IsCompletedSuccessfully);
         Assert.False(intent.Connecting);Assert.Null(intent.ChannelId);
         Assert.Null(typeof(MainWindow).GetField("reconnect",flags)!.GetValue(main));
+        var status=(TextBlock)typeof(MainWindow).GetField("connection",flags)!.GetValue(main)!;
+        Assert.Equal("Не подключён",status.Text);Assert.Equal(BrushColor((Brush)Application.Current.FindResource("TextSecondary")),BrushColor(status.Foreground));
+    }
+    private static void CheckCaptionButtons(MainWindow main)
+    {
+        var buttons=VisualDescendants(main).OfType<Button>().Where(b=>b.Name is "PART_Minimize" or "PART_Maximize" or "PART_Close").ToArray();
+        Assert.Equal(3,buttons.Length);
+        foreach(var button in buttons)
+        {
+            button.ApplyTemplate();
+            var surface=Assert.IsType<Border>(button.Template.FindName("CaptionSurface",button));
+            Assert.Equal(new CornerRadius(0),surface.CornerRadius);
+            Assert.True(System.Windows.Shell.WindowChrome.GetIsHitTestVisibleInChrome(button));
+            Assert.Equal(Ui.Metric("Size.TitleBar"),button.Height);
+        }
+        var maximize=buttons.Single(b=>b.Name=="PART_Maximize");
+        Assert.Equal("square",Assert.IsType<Icon>(maximize.Content).Kind);
+        var size=new Size(main.Width,main.Height);
+        maximize.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(main,()=>main.WindowState==WindowState.Maximized,"maximize caption button");
+        Assert.Equal("square",Assert.IsType<Icon>(maximize.Content).Kind);
+        Assert.Equal("Восстановить",maximize.ToolTip);
+        maximize.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        PumpUntil(main,()=>main.WindowState==WindowState.Normal,"restore caption button");
+        Assert.Equal("square",Assert.IsType<Icon>(maximize.Content).Kind);
+        Assert.Equal("Развернуть",maximize.ToolTip);
+        Assert.InRange(main.Width,size.Width-1,size.Width+1);Assert.InRange(main.Height,size.Height-1,size.Height+1);
+    }
+
+    private static void CheckNavigationAndScreens(MainWindow main,LocalStore store,UserProfile profile,Community original,string gif)
+    {
+        const System.Reflection.BindingFlags flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+        var type=typeof(MainWindow);
+        object? Get(string name)=>type.GetField(name,flags)!.GetValue(main);
+        void Set(string name,object? value)=>type.GetField(name,flags)!.SetValue(main,value);
+        void Invoke(string name,params object[] arguments)=>type.GetMethod(name,flags)!.Invoke(main,arguments);
+        var originalRoom=Get("rtc");var originalVoice=Get("voiceCommunity");var originalChannel=Get("voiceChannelId");
+        var originalSharing=Get("sharing");var originalFailed=Get("activeVoiceFailed");var originalSelected=Get("selectedChannel");
+        var voiceChannel=store.GetChannels(original.Id).First(c=>c.IsVoice);
+        var info=new SfuConnectionInfo("wss://89.126.195.20:8443/rtc",ServerConnectionState.Connected,28,DateTimeOffset.UtcNow,"host/host");
+        var room=new TestVoiceRoom(info,voiceChannel.Id)
+        {
+            Participants=new[]{new RtcSeat(profile.Id,new string('a',32),DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())}
+        };
+        var second=store.CreateCommunity("Other community",profile.Id);
+        var secondText=store.GetChannels(second.Id).First(c=>!c.IsVoice);
+        try
+        {
+            Set("rtc",room);Set("voiceCommunity",original);Set("voiceChannelId",voiceChannel.Id);Set("activeVoiceFailed",false);Set("sharing",true);
+            Invoke("UpdateStatus");Invoke("RenderServers");PumpLayout(main);
+            var originalSource=(Wisp.Desktop.Media.ScreenShareService)Get("screen")!;
+            var originalGeneration=Get("shareGeneration");
+            var rail=(VirtualRows)Get("servers")!;
+            var otherButton=Assert.Single(Descendants(rail).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)==second.Name);
+            otherButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(main);
+            Assert.Equal(second.Id,Assert.IsType<Community>(Get("community")).Id);
+            Assert.Same(room,Get("rtc"));Assert.Same(original,Get("voiceCommunity"));Assert.Equal(voiceChannel.Id,Get("voiceChannelId"));
+            Assert.True(Assert.IsType<bool>(Get("sharing")));Assert.Equal(originalGeneration,Get("shareGeneration"));Assert.Same(originalSource,Get("screen"));
+            Assert.Equal(0,room.EnterCalls);Assert.Equal(0,room.LeaveCalls);
+            Invoke("SelectChannel",secondText);PumpLayout(main);
+            Assert.Equal(secondText.Id,Assert.IsType<Channel>(Get("selectedChannel")).Id);
+            Assert.Equal(voiceChannel.Id,Get("voiceChannelId"));Assert.Equal(0,room.LeaveCalls);Assert.Equal(0,room.EnterCalls);
+            var status=(TextBlock)Get("connection")!;
+            Assert.Contains(original.Name,status.Text);Assert.Contains(voiceChannel.Name,status.Text);Assert.DoesNotContain(second.Name,status.Text);
+            var callPanel=(Border)Get("callPanel")!;
+            Assert.True(callPanel.IsVisible);Assert.Contains(Descendants(callPanel).OfType<TextBlock>(),t=>t.Text==original.Name);
+            SaveSnapshot(main,"community-during-call-dark");
+            main.Width=1100;PumpLayout(main);Assert.False(callPanel.IsVisible);
+            Invoke("OpenCallPanel");PumpLayout(main);
+            Assert.Contains(Descendants(main).OfType<TextBlock>(),t=>t.Text==original.Name);
+            SaveSnapshot(main,"call-modal-dark");
+            var closeCall=Assert.Single(Descendants(main).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Закрыть · Esc");
+            closeCall.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(main);
+            main.Width=Ui.Metric("Width.Window");Invoke("SetCommunity",original);Invoke("SelectChannel",voiceChannel);PumpLayout(main);
+            var channelRows=(VirtualRows)Get("channels")!;
+            var voiceButton=Assert.Single(Descendants(channelRows).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)==voiceChannel.Name);
+            Assert.NotEqual(BrushColor((Brush)Application.Current.FindResource("Selected")),BrushColor(voiceButton.Background));
+            Invoke("ShowHome");PumpLayout(main);
+            Assert.True(((ScrollViewer)Get("homeWorkspace")!).IsVisible);Assert.Equal(Visibility.Collapsed,((DockPanel)Get("chatWorkspace")!).Visibility);
+            Assert.Equal(voiceChannel.Id,Get("voiceChannelId"));Assert.Equal(0,room.LeaveCalls);Assert.True((bool)Get("sharing")!);
+            SaveSnapshot(main,"home-dark");
+            CheckSettingsAndProfile(main,profile,gif);
+        }
+        finally
+        {
+            Set("sharing",originalSharing);Set("rtc",originalRoom);Set("voiceCommunity",originalVoice);Set("voiceChannelId",originalChannel);Set("activeVoiceFailed",originalFailed);
+            main.Width=Ui.Metric("Width.Window");Invoke("SetCommunity",original);
+            if(originalSelected is Channel selected)Invoke("SelectChannel",selected);
+            Invoke("UpdateStatus");PumpLayout(main);
+        }
+    }
+
+    private static void CheckSettingsAndProfile(MainWindow main,UserProfile profile,string gif)
+    {
+        var wasReduced=Motion.Reduce;
+        try
+        {
+            Motion.SetReduced(false);
+            var sample=profile with{About="Native Windows client",Game="Dota 2",AvatarPath=gif,BannerPath=gif};
+            var profileView=new ProfileView(sample,gif,gif);
+            var profileHandle=ModalHost.Open(main,"Профиль пользователя",profileView,480);PumpLayout(main);
+            Assert.Contains(Descendants(profileView).OfType<TextBlock>(),t=>t.Text==sample.About);
+            Assert.Contains(Descendants(profileView).OfType<TextBlock>(),t=>t.Text.Contains("Dota 2"));
+            var animated=Descendants(profileView).OfType<Image>().Where(i=>AnimationBehavior.GetSourceStream(i)is not null).ToArray();
+            Assert.Equal(2,animated.Length);Assert.All(animated,i=>Assert.Equal(GifPlaybackMode.Always,GifPlayback.GetMode(i)));
+            Assert.All(animated,i=>Assert.Equal(RepeatBehavior.Forever,AnimationBehavior.GetRepeatBehavior(i)));
+            SaveSnapshot(main,"profile-redesign-dark");profileHandle.Close();PumpLayout(main);
+            Wisp.Desktop.Media.AudioDeviceSettings? applied=null;bool? notify=null;float volume=0;
+            var settings=new SettingsView(new SettingsContext
+            {
+                Profile=sample,AvatarPath=gif,BannerPath=gif,Audio=new(),NoiseSuppressionAvailable=true,
+                ApplyAudio=value=>{applied=value;return Task.CompletedTask;},EditProfile=()=>{},ShowNotifications=()=>{},ConnectionDetails=()=>{},ShareScreen=()=>{},
+                InputDevices=()=>new[]{new Wisp.Desktop.Media.AudioDeviceChoice(null,"Default input"),new("input-device","Test microphone")},
+                OutputDevices=()=>new[]{new Wisp.Desktop.Media.AudioDeviceChoice(null,"Default output"),new("output-device","Test headphones")},
+                ApplyNotifications=(enabled,level)=>{notify=enabled;volume=level;},ServerAddress="https://example.com:8443",ConnectionStatus=()=>"Не подключён"
+            });
+            var handle=ModalHost.Open(main,"Настройки",settings,880);PumpLayout(main);
+            settings.SelectSection(SettingsSection.Appearance);PumpLayout(main);
+            var themes=Assert.Single(Descendants(settings).OfType<ComboBox>());
+            themes.SelectedIndex=1;Assert.True(ThemeManager.IsLight);
+            themes.SelectedIndex=0;Assert.False(ThemeManager.IsLight);
+            var reduce=Assert.Single(Descendants(settings).OfType<CheckBox>());
+            reduce.IsChecked=true;Assert.True(Motion.Reduce);
+            settings.SelectSection(SettingsSection.Audio);PumpLayout(main);
+            var devices=Descendants(settings).OfType<ComboBox>().ToArray();Assert.Equal(2,devices.Length);
+            devices[0].SelectedIndex=1;devices[1].SelectedIndex=1;
+            var suppress=Assert.Single(Descendants(settings).OfType<CheckBox>());suppress.IsChecked=false;
+            var apply=Assert.Single(Descendants(settings).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Применить");
+            apply.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(main);
+            Assert.NotNull(applied);Assert.Equal("input-device",applied.InputId);Assert.Equal("output-device",applied.OutputId);Assert.False(applied.NoiseSuppression);
+            SaveSnapshot(main,"settings-audio-dark");
+            settings.SelectSection(SettingsSection.Notifications);PumpLayout(main);
+            var slider=Assert.Single(Descendants(settings).OfType<Slider>());slider.Value=25;
+            slider.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.Left){RoutedEvent=Mouse.PreviewMouseUpEvent});
+            var enabled=Assert.Single(Descendants(settings).OfType<CheckBox>());enabled.IsChecked=false;
+            Assert.False(notify);Assert.Equal(.25f,volume);
+            SaveSnapshot(main,"settings-notifications-dark");
+            settings.SelectSection(SettingsSection.Connection);PumpLayout(main);
+            Assert.Contains(Descendants(settings).OfType<TextBlock>(),t=>t.Text=="https://example.com:8443");
+            handle.Close();PumpLayout(main);
+        }
+        finally {if(ThemeManager.IsLight)ThemeManager.Toggle();Motion.SetReduced(wasReduced);}
+    }
+
+    private static void PumpUntil(Window window,Func<bool> condition,string scenario)
+    {
+        if(condition()){PumpLayout(window);return;}
+        var frame=new DispatcherFrame();var deadline=DateTime.UtcNow.AddSeconds(2);
+        var timer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(10)};
+        timer.Tick+=(_,_)=>{if(condition()||DateTime.UtcNow>=deadline){timer.Stop();frame.Continue=false;}};
+        timer.Start();Dispatcher.PushFrame(frame);PumpLayout(window);Assert.True(condition(),scenario);
     }
     private sealed class TestVoiceRoom(SfuConnectionInfo info, string channel) : IVoiceRoom
     {
@@ -363,17 +522,19 @@ public sealed class ThemeTests
         public bool Joined => ConnectionInfo.State is ServerConnectionState.Connected or ServerConnectionState.Unreachable;
         public string? ChannelId => Joined ? channel : null;
         public string TransportName => "WebRTC · SFU";
-        public IReadOnlyList<RtcSeat> Participants => Array.Empty<RtcSeat>();
+        public IReadOnlyList<RtcSeat> Participants {get;set;} = Array.Empty<RtcSeat>();
+        public int EnterCalls {get;private set;}
+        public int LeaveCalls {get;private set;}
         public int ConnectedCount => 0;
         public IReadOnlyList<string> ConnectedPeerIds => Array.Empty<string>();
         public IReadOnlyDictionary<string,string> ConnectionPaths => new Dictionary<string,string>();
         public event Action<WireMessage>? MessageReceived { add {} remove {} }
         public event Action<string>? Error { add {} remove {} }
         public event Action? Changed { add {} remove {} }
-        public Task EnterAsync(string communityId,string channelId,bool mute,bool deafen,CancellationToken cancellation=default)=>Task.CompletedTask;
+        public Task EnterAsync(string communityId,string channelId,bool mute,bool deafen,CancellationToken cancellation=default){EnterCalls++;return Task.CompletedTask;}
         public Task SetMutedAsync(bool mute,bool deafen)=>Task.CompletedTask;
         public Task SendAsync(WireMessage message)=>Task.CompletedTask;
-        public Task LeaveAsync()=>Task.CompletedTask;
+        public Task LeaveAsync(){LeaveCalls++;return Task.CompletedTask;}
         public ValueTask DisposeAsync()=>ValueTask.CompletedTask;
     }
     private static Color BrushColor(Brush brush) => Assert.IsType<SolidColorBrush>(brush).Color;

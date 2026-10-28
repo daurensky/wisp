@@ -432,8 +432,18 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 	joinCtx, joinCancel := context.WithTimeout(ctx, 12*time.Second)
 	_, data, err := ws.Read(joinCtx)
 	var m message
-	if err != nil || json.Unmarshal(data, &m) != nil || m.Type != "join" || m.Version != 2 {
+	if err != nil {
 		joinCancel()
+		return
+	}
+	if json.Unmarshal(data, &m) != nil || m.Type != "join" {
+		joinCancel()
+		_ = ws.Close(websocket.StatusProtocolError, "join message required")
+		return
+	}
+	if m.Version != 2 {
+		joinCancel()
+		_ = ws.Close(websocket.StatusProtocolError, "protocol version 2 required")
 		return
 	}
 	ident, err := h.auth(joinCtx, m)
@@ -612,6 +622,7 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 			s.authMessage.Token = in.Token
 			s.mu.Unlock()
 		default:
+			_ = ws.Close(websocket.StatusProtocolError, "unsupported protocol message")
 			return
 		}
 	}

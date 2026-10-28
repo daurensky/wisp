@@ -5,7 +5,7 @@ using NAudio.Wave;
 
 namespace Wisp.Desktop.Media;
 
-/// <summary>Shared event-driven WASAPI capture, GameChat category (no system ducking), Windows conversion to 48k/16-bit/mono.</summary>
+/// <summary>Shared event-driven neutral WASAPI capture with Windows conversion to 48k/16-bit/mono.</summary>
 internal sealed class CommunicationsCapture(string endpointId, Action<string> status) : IWaveIn
 {
     private readonly CancellationTokenSource stop = new();
@@ -80,27 +80,13 @@ internal sealed class CommunicationsCapture(string endpointId, Action<string> st
         try
         {
             Marshal.ThrowExceptionForHR(enumerator.GetDevice(id, out endpoint));
-            var iid = typeof(IAudioClient2).GUID;
+            // The capture client uses the ordinary Other/default shared category.
+            // No Communications category or global Windows setting is requested.
+            // The old IAudioClient2.SetClientProperties path failed before init
+            // (AUDCLNT_E_NOT_INITIALIZED). Capture needs neither that category
+            // request nor the derived-interface marshaling path at all.
+            var iid = typeof(IAudioClient).GUID;
             Marshal.ThrowExceptionForHR(endpoint.Activate(ref iid, 23, IntPtr.Zero, out audio));
-            var properties = new NativeAudioClientProperties
-            {
-                cbSize = (uint)Marshal.SizeOf<NativeAudioClientProperties>(),
-                eCategory = (int)AudioStreamCategory.GameChat
-            };
-            var memory = Marshal.AllocHGlobal(Marshal.SizeOf<NativeAudioClientProperties>());
-            try
-            {
-                Marshal.StructureToPtr(properties, memory, false);
-                try { ((IAudioClient2)audio).SetClientProperties(memory); }
-                catch (COMException first)
-                {
-                    properties.eCategory = (int)AudioStreamCategory.Other;
-                    Marshal.StructureToPtr(properties,memory,false);
-                    try { ((IAudioClient2)audio).SetClientProperties(memory); }
-                    catch(COMException fallback) { status($"Категория микрофона недоступна (0x{first.HResult:X8}/0x{fallback.HResult:X8}); используется мультимедийное устройство без запроса Communications."); }
-                }
-            }
-            finally { Marshal.FreeHGlobal(memory); }
             var result = new AudioClient((IAudioClient)audio);
             audio = null; // Ownership transfers to NAudio.AudioClient.Dispose.
             return result;
@@ -114,15 +100,6 @@ internal sealed class CommunicationsCapture(string endpointId, Action<string> st
     }
     public void StopRecording() { stop.Cancel(); if (worker is not null && Thread.CurrentThread != worker) worker.Join(TimeSpan.FromSeconds(2)); }
     public void Dispose() { StopRecording(); if (worker?.IsAlive != true) stop.Dispose(); }
-    // AUDIOCLIENT_PROPERTIES includes the Options DWORD on supported Windows.
-    // Keep an explicit 16-byte ABI while trying GameChat, then neutral Other.
-    [StructLayout(LayoutKind.Sequential)] internal struct NativeAudioClientProperties
-    {
-        public uint cbSize;
-        public int bIsOffload;
-        public int eCategory;
-        public int Options;
-    }
     [DllImport("ole32.dll")] private static extern int CoInitializeEx(IntPtr reserved, uint mode);
     [DllImport("ole32.dll")] private static extern void CoUninitialize();
     [ComImport, Guid("a95664d2-9614-4f35-a746-de8db63617e6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
