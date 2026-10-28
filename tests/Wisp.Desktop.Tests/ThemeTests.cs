@@ -110,10 +110,17 @@ public sealed class ThemeTests
                 login.Show();PumpLayout(login);
                 Assert.Contains(Descendants(login).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Email");
                 var username=Assert.Single(Descendants(login).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Имя пользователя при регистрации");
+                void CheckSubmitContrast()
+                {
+                    var submit=Assert.Single(Descendants(login).OfType<Button>(),b=>b.IsDefault);
+                    var label=Assert.Single(Descendants(submit).OfType<TextBlock>());
+                    Assert.Equal(BrushColor((Brush)Application.Current.FindResource("OnAccent")),BrushColor(label.Foreground));
+                }
+                CheckSubmitContrast();
                 Assert.Equal(Visibility.Collapsed,username.Visibility);SaveSnapshot(login,"auth-server-dark");
                 var mode=Assert.Single(Descendants(login).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Нет аккаунта? Зарегистрироваться");
                 mode.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(login);
-                Assert.Equal(Visibility.Visible,username.Visibility);Assert.Contains("Регистрация",login.Title);SaveSnapshot(login,"signup-server-dark");
+                Assert.Equal(Visibility.Visible,username.Visibility);Assert.Contains("Регистрация",login.Title);CheckSubmitContrast();SaveSnapshot(login,"signup-server-dark");
             }
             finally{login.Close();}
             var setup=new ServerSetupWindow(Path.Combine(root,"setup-preview"),config);
