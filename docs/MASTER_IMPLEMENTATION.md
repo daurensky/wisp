@@ -98,3 +98,14 @@ tests/Wisp.Desktop.Tests/SoundServiceTests.cs
 tests/Wisp.Desktop.Tests/ThemeTests.cs
 tests/Wisp.Desktop.Tests/TrayIndicatorTests.cs
 ```
+
+## Final results (28 October 2026)
+
+- Validated source/test commit: `68b4a2a278c17518046c00d79e980ce4144d36c0`.
+- [Windows CI](https://github.com/daurensky/wisp/actions/runs/40649165988):76 Core +29 Desktop tests passed,0 warnings/errors, native RNNoise and portable packaging passed. This includes startup setup/login/signup validation, voice navigation, themes/settings/profile, original sounds, shared playback and tray lifetimes.
+- [Linux CI](https://github.com/daurensky/wisp/actions/runs/40649165812): real PostgreSQL/API, seven Go tests/race detector, six native clients/30 downlinks, Opus+independent share audio+H.264, file transfer during media, token refresh, takeover/reentry and invitations; go vet/static build passed.
+- Thirteen isolated PCM/audio tests also passed; these overlap Desktop coverage and are not counted as additional unique tests.
+- [Sixteen screenshots and TRX results](https://github.com/daurensky/wisp/actions/runs/40649165988/artifacts/12798463431) cover dark/light/compact community, navigation during a call, Home, call modal, profiles, audio/notification settings, setup, login and registration. Images were visually inspected; the discovered raw device-record label was corrected through the actual ComboBox data template, and dark dropdown indicator contrast was corrected.
+- [Verified portable](https://github.com/daurensky/wisp/actions/runs/40649165988/artifacts/12799600158):522files,90,015,636bytes; SHA256 `36a56e27498443cd1bae9498ad4cfd4ecc5bcf9f6100e19ef8eee51248a5e5bf`. All8 audio assets match the uploaded archive exactly; RNNoise and Onest OFL notice are present.
+
+Implementation and diagnostics are complete. The physical Windows/Bluetooth/device/driver/DPI/capture/provider checks described above remain manual. No production deployment or OS audio changes were performed. PROGRESS.md is the authoritative continuation log; later documentation-only commits do not change this validated executable.
