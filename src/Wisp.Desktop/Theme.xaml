@@ -432,7 +432,7 @@
                 <ControlTemplate TargetType="ToggleButton">
                   <Border x:Name="Field" Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="{StaticResource Radius.Control}" Padding="{StaticResource Padding.Control}">
                     <DockPanel>
-                      <local:Icon DockPanel.Dock="Right" Kind="chevron-down" Width="{StaticResource Size.InlineIcon}" Height="{StaticResource Size.InlineIcon}"/>
+                      <local:Icon DockPanel.Dock="Right" Kind="chevron-down" Foreground="{DynamicResource TextSecondary}" Width="{StaticResource Size.InlineIcon}" Height="{StaticResource Size.InlineIcon}"/>
                       <ContentPresenter Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}" ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType=ComboBox}}" ContentTemplateSelector="{Binding ItemTemplateSelector, RelativeSource={RelativeSource AncestorType=ComboBox}}"/>
                     </DockPanel>
                   </Border>
