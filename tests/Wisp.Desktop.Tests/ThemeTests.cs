@@ -61,6 +61,7 @@ public sealed class ThemeTests
                 AssertWindowColors(auth, Color.FromRgb(245, 246, 250), Color.FromRgb(23, 32, 51));
                 Assert.Equal(Color.FromRgb(23, 32, 51), BrushColor(password.Foreground));
                 auth.Show(); PumpLayout(auth); SaveSnapshot(auth, "auth-light"); auth.Hide();
+                phase="server setup and server account screens";CheckServerAccountScreens(store,root);
 
                 var fresh = Path.Combine(root, "fresh");
                 Directory.CreateDirectory(fresh);
@@ -93,6 +94,43 @@ public sealed class ThemeTests
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "The Windows UI check did not finish at: " + phase);
         if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    private static void CheckServerAccountScreens(LocalStore store,string root)
+    {
+        bool wasLight=ThemeManager.IsLight;
+        if(wasLight)ThemeManager.Toggle();
+        try
+        {
+            var config=new ServerConfig("https://example.com:8443",new string('a',64));
+            using var backend=new ServerBackend(config);
+            var login=new AuthWindow(store,backend);
+            try
+            {
+                login.Show();PumpLayout(login);
+                Assert.Contains(Descendants(login).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Email");
+                var username=Assert.Single(Descendants(login).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Имя пользователя при регистрации");
+                Assert.Equal(Visibility.Collapsed,username.Visibility);SaveSnapshot(login,"auth-server-dark");
+                var mode=Assert.Single(Descendants(login).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Нет аккаунта? Зарегистрироваться");
+                mode.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(login);
+                Assert.Equal(Visibility.Visible,username.Visibility);Assert.Contains("Регистрация",login.Title);SaveSnapshot(login,"signup-server-dark");
+            }
+            finally{login.Close();}
+            var setup=new ServerSetupWindow(Path.Combine(root,"setup-preview"),config);
+            try
+            {
+                setup.Show();PumpLayout(setup);
+                var pin=Assert.Single(Descendants(setup).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Публичный SHA-256 сертификата");
+                Assert.Equal(config.CertificateSha256,pin.Text);SaveSnapshot(setup,"server-setup-dark");
+                pin.Text="invalid";
+                var next=Assert.Single(Descendants(setup).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Продолжить ко входу");
+                next.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(setup);
+                Assert.Null(setup.Config);Assert.Contains(Descendants(setup).OfType<TextBlock>(),t=>t.IsVisible&&t.Text.Contains("64")&&BrushColor(t.Foreground)==BrushColor((Brush)Application.Current.FindResource("Danger")));
+                Assert.False(File.Exists(Path.Combine(root,"setup-preview","server.json")));
+            }
+            finally{setup.Close();}
+        }
+        finally{if(ThemeManager.IsLight!=wasLight)ThemeManager.Toggle();}
     }
 
     private static void AssertWindowColors(Window window, Color background, Color foreground)
