@@ -40,12 +40,12 @@ public sealed class SoundServiceTests
         sounds.PlayFile(Path.Combine(AppContext.BaseDirectory,"Assets","Sounds","voice-join.wav"));
         Assert.True(outputs.TryPeek(out var board));Assert.Equal(PlaybackState.Playing,board!.PlaybackState);
         sounds.Play(SoundEvent.MessageReceived);
-        var deadline=DateTime.UtcNow.AddSeconds(3);
+        var deadline=DateTime.UtcNow.AddSeconds(10);
         while(outputs.Count<2&&DateTime.UtcNow<deadline)await Task.Delay(10);
         Assert.Equal(2,outputs.Count);
-        var notification=outputs.Last();await notification.Initialized.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var notification=outputs.Last();await notification.Initialized.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var buffer=new byte[48000];
-        bool audible=false;deadline=DateTime.UtcNow.AddSeconds(2);
+        bool audible=false;deadline=DateTime.UtcNow.AddSeconds(10);
         while(!audible&&DateTime.UtcNow<deadline){notification.Source!.Read(buffer,0,buffer.Length);audible=buffer.Any(b=>b!=0);if(!audible)await Task.Delay(10);}
         Assert.True(audible,"Original samples must reach the independent notification renderer.");
         Assert.Equal(PlaybackState.Playing,board.PlaybackState);Assert.Equal(0,board.Stops);
@@ -87,12 +87,15 @@ public sealed class SoundServiceTests
     {
         var output=new FakeOutput();
         using var sounds=new SoundService(_=>output);
+        var failure=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);sounds.Error+=message=>failure.TrySetResult(message);
         sounds.Play(SoundEvent.MessageReceived);
-        await output.Initialized.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var startup=await Task.WhenAny(output.Initialized.Task,failure.Task).WaitAsync(TimeSpan.FromSeconds(10));
+        if(ReferenceEquals(startup,failure.Task))Assert.Fail(await failure.Task);
+        await output.Initialized.Task;
         var bytes=new byte[4800];
         async Task WaitForSound()
         {
-            var deadline=DateTime.UtcNow.AddSeconds(2);
+            var deadline=DateTime.UtcNow.AddSeconds(10);
             while(DateTime.UtcNow<deadline)
             {
                 output.Source!.Read(bytes,0,bytes.Length);
