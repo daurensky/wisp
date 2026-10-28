@@ -109,6 +109,7 @@ public sealed partial class MainWindow : ThemedWindow
     private readonly Button micButton, deafenButton, recordButton, shareButton, leaveButton, watchButton, soundboardButton;
     private Button emojiButton = null!;
     private EmojiPicker? emojiPicker;
+    private ChatTextSelection chatTextSelection=null!;
     private Grid streamWorkspace = null!;
     private readonly System.Windows.Forms.NotifyIcon tray;
     private bool exitRequested;
@@ -177,6 +178,7 @@ public sealed partial class MainWindow : ThemedWindow
         connectionButton.HorizontalContentAlignment = HorizontalAlignment.Left; connectionButton.Content = connection;
         Ui.Name(connectionButton, "Информация о подключении"); connectionButton.ToolTip = "Подключение, сервер и пинг";
         connectionButton.Click += (_, _) => ConnectionDetails();
+        chatTextSelection=new ChatTextSelection(messages);
         messages.SetResourceReference(ItemsControl.ItemContainerStyleProperty, "ListItem.Chat");
         servers.SetResourceReference(ItemsControl.ItemContainerStyleProperty, "ListItem.Chat");
         channels.SetResourceReference(ItemsControl.ItemContainerStyleProperty, "ListItem.Chat");
@@ -658,7 +660,7 @@ public sealed partial class MainWindow : ThemedWindow
     }
     private SelectableChatText MessageText(ChatMessage message, FrameworkElement scope)
     {
-        var text=new SelectableChatText();
+        var text=new SelectableChatText();chatTextSelection.Register(text);
         var tokens=message.Emojis?.Keys;double size=EmojiContent.EmojiSize(message.Text,tokens);
         text.Document.LineHeight=double.NaN;
         foreach(var segment in EmojiContent.Split(message.Text,tokens))
@@ -862,7 +864,9 @@ public sealed partial class MainWindow : ThemedWindow
         var info = ScreenShareService.Describe(selected, resolution.SelectedIndex == 0 ? 720 : 1080, new[] { 15, 30, 60 }[framerate.SelectedIndex], new[] { 2000000, 4000000, 6000000, 8000000 }[bitrate.SelectedIndex]) with { SessionId = Guid.NewGuid().ToString("N"), StartedAtUnixMs=(cloud?.ServerNow()??DateTimeOffset.UtcNow).ToUnixTimeMilliseconds() };
         await SendPacket(new WireMessage("screen-start", profile.Id, voiceChannelId, JsonSerializer.SerializeToUtf8Bytes(info)));
         if (closing || voiceChannelId != sharingChannel || shareRequest != Volatile.Read(ref shareGeneration)) return;
-        streamViewers.Start(info.SessionId);screen.Start(selected, info, withoutBorder, borderlessGranted);soundEvents.ObserveStreamStarted(VoiceRoomKey,profile.Id,info.SessionId); sharing = true; sharedPeers = "";
+        streamViewers.Start(info.SessionId);sharing=true;
+        try{screen.Start(selected,info,withoutBorder,borderlessGranted);}catch{StopSharing();throw;}
+        soundEvents.ObserveStreamStarted(VoiceRoomKey,profile.Id,info.SessionId);sharedPeers="";
         ((ToggleIconButton)shareButton).IsChecked = true;
         if (ShareAudioCapture.Supported) { try { await shareAudio.StartAsync(selected); } catch (Exception ex) { Notify(ex.Message, true); } }
         Notify($"Демонстрация начата: {selected.Name} · H.264 · {info.FramesPerSecond} FPS");UpdateStatus();

@@ -54,7 +54,7 @@ public sealed class SettingsView : UserControl
         this.context = context; audio = context.Audio;
         notificationsEnabled = context.NotificationsEnabled; notificationVolume = float.IsFinite(context.NotificationVolume) ? Math.Clamp(context.NotificationVolume, 0, 1) : .8f;
         MinHeight = 320; MaxHeight = 520;
-        var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) }); root.ColumnDefinitions.Add(new ColumnDefinition());
+        var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) }); root.ColumnDefinitions.Add(new ColumnDefinition());
         var sidebar = new DockPanel { Margin = Ui.Insets(Ui.M) };
         var identity = accountIdentity; identity.Margin = Ui.Insets(Ui.S, Ui.L, Ui.S, Ui.S); RefreshIdentity();
         DockPanel.SetDock(identity, Dock.Bottom); sidebar.Children.Add(identity);

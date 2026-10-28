@@ -28,10 +28,10 @@ public sealed class ProfileView : UserControl
         avatar.SetResourceReference(Border.BackgroundProperty, "Surface"); avatar.SetResourceReference(Border.BorderBrushProperty, "Surface"); hero.Children.Add(avatar); panel.Children.Add(hero);
         var body = new StackPanel { Margin = Ui.Insets(Ui.L, Ui.S, Ui.L, Ui.L) };
         body.Children.Add(new TextBlock { Text = profile.Username, FontSize = Ui.Heading, FontWeight = FontWeights.Bold, TextWrapping = TextWrapping.Wrap });
-        var status = profile.Status switch { "idle" => "Нет на месте", "dnd" => "Не беспокоить", "offline" => "Не в сети", _ => "В сети" };
+        var status = profile.Status switch { "idle" => "Нет на месте", "dnd" => "Не беспокоить", "offline" or "invisible" => "Не в сети", _ => "В сети" };
         var presence = new StackPanel { Orientation = Orientation.Horizontal, Margin = Ui.Insets(0, Ui.S, 0, Ui.L) };
         var dot = new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Margin = Ui.Insets(0, 0, Ui.S, 0), VerticalAlignment = VerticalAlignment.Center };
-        dot.SetResourceReference(Border.BackgroundProperty, profile.Status switch { "idle" => "Warning", "dnd" => "Danger", "offline" => "TextDisabled", _ => "Success" }); presence.Children.Add(dot); presence.Children.Add(Ui.Label(status, Ui.Caption, true)); body.Children.Add(presence);
+        dot.SetResourceReference(Border.BackgroundProperty, profile.Status switch { "idle" => "Warning", "dnd" => "Danger", "offline" or "invisible" => "TextDisabled", _ => "Success" }); presence.Children.Add(dot); presence.Children.Add(Ui.Label(status, Ui.Caption, true)); body.Children.Add(presence);
         void Section(string title, string text)
         {
             var heading = Ui.Label(title, Ui.Caption, true); heading.FontWeight = FontWeights.SemiBold; heading.Margin = Ui.Insets(0, Ui.M, 0, Ui.S); body.Children.Add(heading);
@@ -124,6 +124,9 @@ public sealed class ProfileEditor : UserControl
         imageActions.Children.Add(removeAvatar); imageActions.Children.Add(removeBanner); fields.Children.Add(imageActions);
         fields.Children.Add(Ui.Label("Имя пользователя", Ui.Caption, true));
         name = new TextBox { Text = profile.Username, MaxLength = 32, Margin = Ui.Insets(0, Ui.Xs, 0, Ui.M) }; Ui.Name(name, "Имя пользователя"); fields.Children.Add(name);
+        fields.Children.Add(Ui.Label("Статус",Ui.Caption,true));
+        var statusCodes=new[]{"online","idle","dnd","invisible"};
+        var status=new ComboBox{ItemsSource=new[]{"В сети","Нет на месте","Не беспокоить","Невидимый"},SelectedIndex=Math.Max(0,Array.IndexOf(statusCodes,profile.Status)),Margin=Ui.Insets(0,Ui.Xs,0,Ui.M)};Ui.Name(status,"Статус профиля");fields.Children.Add(status);
         fields.Children.Add(Ui.Label("О себе", Ui.Caption, true));
         about = new TextBox { Text = profile.About, MaxLength = 2000, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = Ui.Metric("Height.Multiline"), VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = Ui.Insets(0, Ui.Xs, 0, Ui.M) }; Ui.Name(about, "О себе"); fields.Children.Add(about);
         fields.Children.Add(Ui.Label("PNG, JPEG или GIF · до 4 МБ · до 2048×2048", Ui.Caption, true));
@@ -137,7 +140,7 @@ public sealed class ProfileEditor : UserControl
             {
                 saving = true; body.IsEnabled = false; Buttons.Label(saveButton, "Сохранение…", "check");
                 ValidateDraft(name.Text, about.Text, draftAvatar, draftBanner);
-                var result = await save(profile with { Username = name.Text.Trim(), About = about.Text, AvatarPath = draftAvatar, BannerPath = draftBanner });
+                var result = await save(profile with { Username = name.Text.Trim(), About = about.Text, Status=statusCodes[status.SelectedIndex], AvatarPath = draftAvatar, BannerPath = draftBanner });
                 profile = result; avatarPath = result.AvatarPath; bannerPath = result.BannerPath;
                 feedback.Visibility = Visibility.Collapsed; View(); Saved?.Invoke(result);
             }

@@ -223,6 +223,7 @@ public sealed class ThemeTests
             var videoView = new ScreenViewer(main, "Demo"); Assert.False(videoView.IsMini); Assert.Equal(windowCount, Application.Current.Windows.Count);
             videoView.ToggleMini(); Assert.True(videoView.IsMini); videoView.ToggleMini(); Assert.False(videoView.IsMini);
             videoView.ToggleFullscreen(); Assert.True(videoView.IsFullscreen); videoView.ToggleFullscreen(); Assert.False(videoView.IsFullscreen); videoView.Close();
+            CheckSourcePicker(main);
             phase("form overlay"); var dialog = new FormDialog(main, "Профиль"); dialog.Field("Имя", "UiTester"); dialog.Accept();
             main.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
             {
@@ -269,6 +270,9 @@ public sealed class ThemeTests
             Assert.Equal(22d, Assert.IsType<Image>(body.Paragraph.Inlines.OfType<InlineUIContainer>().Single().Child).Width);
             Assert.Equal(position, body.TranslatePoint(new Point(0, 0), main));
             var chatEmoji = Assert.IsType<Image>(body.Paragraph.Inlines.OfType<InlineUIContainer>().Single().Child);
+            Assert.Null(AnimationBehavior.GetSourceStream(chatEmoji));var firstFrame=chatEmoji.Source;
+            chatEmoji.Source=null;GifPlayback.Reset(chatEmoji);Assert.Same(firstFrame,chatEmoji.Source);
+
             Assert.Equal(GifPlaybackMode.Hover, GifPlayback.GetMode(chatEmoji));
             Assert.NotNull(GifPlayback.GetScope(chatEmoji));
             phase("connection status, brand and smooth scrolling"); CheckDesktopPolish(main, community.Id, store.GetChannels(community.Id).First(c => c.IsVoice).Id);
@@ -614,6 +618,27 @@ public sealed class ThemeTests
         finally{handle.Close();PumpLayout(main);}
     }
 
+    private static void CheckSourcePicker(MainWindow main)
+    {
+        var sources=new List<Wisp.Desktop.Media.CaptureSource>{new("window:1","Application A"),new("monitor:1","Screen 1")};
+        using var picker=new ScreenSourcePicker(()=>sources.ToArray(),_=>
+        {var bitmap=System.Windows.Media.Imaging.BitmapSource.Create(2,2,96,96,PixelFormats.Bgr32,null,new byte[16],8);bitmap.Freeze();return bitmap;});
+        var handle=ModalHost.Open(main,"Демонстрация экрана",picker,720);PumpLayout(main);
+        try
+        {
+            Button Find(string label)=>Assert.Single(Descendants(picker).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)==label);
+            PumpUntil(main,()=>Descendants(picker).OfType<Image>().Any(i=>i.Source is not null),"source thumbnails");
+            Find("Источник · Application A").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Assert.Equal("window:1",picker.SelectedSource?.Id);
+            Assert.DoesNotContain(Descendants(picker).OfType<CheckBox>(),_=>true);
+            SaveSnapshot(main,"source-picker-dark");
+            Find("Источники · Экран").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(main,()=>Descendants(picker).OfType<Button>().Any(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Источник · Screen 1"),"screen tab");
+            Find("Источник · Screen 1").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Assert.Equal("monitor:1",picker.SelectedSource?.Id);
+            sources.Clear();var refreshing=picker.RefreshAsync();PumpUntil(main,()=>refreshing.IsCompleted&&picker.SelectedSource is null,"closed source removal");
+        }
+        finally{handle.Close();}
+    }
+
     private static void CheckExactTextSelection(MainWindow main)
     {
         const string original="First sentence.\r\nSecond line with space \r\n";
@@ -626,6 +651,18 @@ public sealed class ThemeTests
             var start=run.ContentStart;
             selectable.Selection.Select(start,start.GetPositionAtOffset("First sentence.".Length));
             Assert.Equal("First sentence.",selectable.SelectedPlainText());
+            var pair=new StackPanel();var first=new SelectableChatText();var second=new SelectableChatText();
+            first.Paragraph.Inlines.Add(new Run("One sentence."));second.Paragraph.Inlines.Add(new Run("Two\nlines."));pair.Children.Add(first);pair.Children.Add(second);
+            var groupedSelection=new ChatTextSelection(pair);groupedSelection.Register(first);groupedSelection.Register(second);
+            var pairHandle=ModalHost.Open(main,"Несколько сообщений",pair,440);PumpLayout(main);
+            try
+            {
+                groupedSelection.SelectBetween(first,first.Paragraph.ContentStart,second,second.Paragraph.ContentEnd);
+                Assert.Equal("One sentence.\nTwo\nlines.",groupedSelection.SelectedPlainText());
+                ApplicationCommands.Copy.Execute(null,first);Assert.Equal("One sentence.\nTwo\nlines.",Clipboard.GetText());
+            }
+            finally{pairHandle.Close();}
+
         }
         finally{handle.Close();PumpLayout(main);}
     }

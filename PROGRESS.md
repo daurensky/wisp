@@ -12,6 +12,13 @@
 - Исправлены integration compileошибки namespace ScreenStreamInfo и затенение Button тестовым helper. Сборка solution:0warnings/errors;93Core PASS;171WPFресурс валиден. Go real PostgreSQL/race:7PASS, nativeprobe покаSKIP до новой сборки. WindowsUI/снимки новых изменений ещё не проверены.
 - **Следующее конкретное действие:** собрать обновлённый multi-client viewerprobe, повторить сборку после membershiprefresh, опубликовать checkpoint и выполнить Windows CI/снимки. Cross-message selection требует отдельной проверки/доработки. Затем portable и итоговый отчёт. Не считать новое ТЗ завершённым по результатам предыдущего Master.
 
+### Проверка этапа9 — первый опубликованный checkpoint da9de59
+
+- Windows CI40684614634: **93Core+29Desktop=122PASS**,RNNoise/build/package PASS. Linux CI40684614770 PASS. 17снимков получены; просмотрены основной UI/обе темы/Home/центр трансляции/профиль/настройки; слишком короткая навигация «Аккаунт и профиль» расширяется.
+- Локальный real nativeprobe обновлён:6клиентов/30downlinks,2зрителя,viewjoin/leave/dedup/recovery, голос после выхода зрителя, H264/отдельноеaudio/2MB/token/takeover/rejoin PASS;Go/race полный8PASS. Первый локальный проход старой сборки дал таймаут при takeover; новая сборка и независимый LinuxCI прошли. Причина единичного таймаута не установлена, он не скрывается.
+- Добавлены cross-message selection (новый `ChatTextSelection.cs`), regression точного копирования нескольких сообщений, lazyGIF/reset, выбор источников с удалением закрытого источника, cleanupпри синхронном отказе захвата. Эти последние изменения собираются локально, но требуют нового WindowsCI перед завершением.
+- **Продолжить:** опубликовать follow-up, выполнить его WindowsCI, разобрать реальные ошибки/снимки (включая source picker), скачать финальный portable, обновить итоговый отчёт/PROGRESS и сохранить всё вgit.
+
 ---
 
 # Wisp — выполнение Master Implementation Specification
