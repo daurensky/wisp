@@ -123,7 +123,7 @@ public sealed class ThemeTests
                 var pin=Assert.Single(Descendants(setup).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Публичный SHA-256 сертификата");
                 Assert.Equal(config.CertificateSha256,pin.Text);SaveSnapshot(setup,"server-setup-dark");
                 pin.Text="invalid";
-                var next=Assert.Single(Descendants(setup).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Продолжить ко входу");
+                var next=Assert.Single(Descendants(setup).OfType<Button>(),b=>b.IsDefault);
                 next.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(setup);
                 Assert.Null(setup.Config);Assert.Contains(Descendants(setup).OfType<TextBlock>(),t=>t.IsVisible&&t.Text.Contains("64")&&BrushColor(t.Foreground)==BrushColor((Brush)Application.Current.FindResource("Danger")));
                 Assert.False(File.Exists(Path.Combine(root,"setup-preview","server.json")));
