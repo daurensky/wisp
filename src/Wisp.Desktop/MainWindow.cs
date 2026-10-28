@@ -43,6 +43,7 @@ public sealed partial class MainWindow : ThemedWindow
     private bool cloudPolling;
     private string? savedRefreshToken;
     private readonly HashSet<string> renderedMessages = new();
+    private readonly HashSet<string> creatingCommunities=new();
     private readonly VoiceJoinIntent voiceIntent = new();
     private readonly SemaphoreSlim voiceTransitions = new(1, 1);
     private string channelRenderKey = "";
@@ -511,10 +512,16 @@ public sealed partial class MainWindow : ThemedWindow
     }
     private void CreateCommunity()
     {
-        var d = new FormDialog(this, "Создать сообщество"); var name = d.Field("Название"); d.Accept("Создать"); if (d.ShowDialog() != true) return;
-        SetCommunity(store.CreateCommunity(name.Text, profile.Id));
-        if (cloud is not null) Run(async () => { await cloud.CreateCommunityAsync(new CommunitySnapshot(community!, store.GetChannels(community!.Id), new List<UserProfile> { profile })); await RefreshCloud(); });
-
+        EnsureNoRecording();
+        var dialog=new FormDialog(this,"Создать сервер");var name=dialog.Field("Название");dialog.Accept("Создать");if(dialog.ShowDialog()!=true)return;
+        var created=store.CreateCommunity(name.Text,profile.Id);
+        if(cloud is not null)creatingCommunities.Add(created.Id);
+        SetCommunity(created);
+        if(cloud is not null)Run(async()=>
+        {
+            try{await cloud.CreateCommunityAsync(new CommunitySnapshot(created,store.GetChannels(created.Id),new List<UserProfile>{profile}));await RefreshCloud();}
+            finally{creatingCommunities.Remove(created.Id);}
+        });
     }
     private async Task HostCommunity()
     {
@@ -1054,8 +1061,10 @@ public sealed partial class MainWindow : ThemedWindow
         cloudPolling = true; var id = community?.Id; var channelId = selectedChannel?.Id;
         try
         {
+            var pendingCreates=creatingCommunities.ToHashSet();
             var access=await cloud.GetAsync<Dictionary<string,bool>>($"users/{profile.Id}/communities")??new();
-            foreach(var old in MyCommunities().Where(c=>!access.ContainsKey(c.Id)).ToArray())
+            if (savedRefreshToken != cloud.RefreshToken) { SessionVault.Save(store.RootDirectory, cloud.RefreshToken!); savedRefreshToken = cloud.RefreshToken; }
+            foreach(var old in MyCommunities().Where(c=>!access.ContainsKey(c.Id)&&!pendingCreates.Contains(c.Id)&&!creatingCommunities.Contains(c.Id)).ToArray())
             {
                 store.RemoveCommunityMembership(old.Id,profile.Id);
                 if(voiceCommunity?.Id==old.Id){CancelReconnect();activeVoiceFailed=false;cloudChannelId=null;StopVoice();voiceCommunity=null;if(rtc is not null)await rtc.LeaveAsync();}
@@ -1069,7 +1078,6 @@ public sealed partial class MainWindow : ThemedWindow
             }
             if(id is null)return;
             if(id!=voiceCommunity?.Id)await cloud.PresenceAsync(id,profile,null);
-            if (savedRefreshToken != cloud.RefreshToken) { SessionVault.Save(store.RootDirectory, cloud.RefreshToken!); savedRefreshToken = cloud.RefreshToken; }
             var snapshot = await cloud.GetAsync<CommunitySnapshot>($"communities/{id}/snapshot");
             if(snapshot is not null){store.SaveSnapshot(snapshot);if(community?.Id==id){bool changed=community!=snapshot.Community;community=snapshot.Community;serverTitle.Text=community.Name;await RefreshCommunityIcon(community);if(changed)RenderServers();}if(voiceCommunity?.Id==id)voiceCommunity=snapshot.Community;}
             var online = await cloud.GetAsync<Dictionary<string, ServerPresence>>($"communities/{id}/presence") ?? new();
