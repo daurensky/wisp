@@ -13,8 +13,8 @@ public sealed class AuthWindow : ThemedWindow
         var panel=new StackPanel{Margin=Ui.Insets(Ui.Xxl,Ui.Xl)};Content=new ScrollViewer{Content=panel,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
         var branding=new StackPanel{Orientation=Orientation.Horizontal,Margin=Ui.Insets(0,0,0,Ui.Xl)};
         branding.Children.Add(Brand.Image(48));var brand=Ui.Label("Wisp",28);brand.FontWeight=FontWeights.Bold;brand.Margin=Ui.Insets(Ui.M,0,0,0);branding.Children.Add(brand);panel.Children.Add(branding);
-        var heading=Ui.Label("С возвращением",Ui.Heading);heading.FontWeight=FontWeights.SemiBold;panel.Children.Add(heading);
-        var intro=new TextBlock{Text="Продолжи разговор со своими.",TextWrapping=TextWrapping.Wrap,Margin=Ui.Insets(0,Ui.S,0,Ui.Xl)};Ui.Secondary(intro);panel.Children.Add(intro);
+        var heading=Ui.Label("Вход",Ui.Heading);heading.FontWeight=FontWeights.SemiBold;panel.Children.Add(heading);
+        var intro=new TextBlock{Text="Введите данные аккаунта.",TextWrapping=TextWrapping.Wrap,Margin=Ui.Insets(0,Ui.S,0,Ui.Xl)};Ui.Secondary(intro);panel.Children.Add(intro);
         panel.Children.Add(Ui.Label(cloud is null?"Имя пользователя":"Email",Ui.Caption,true));var user=new TextBox{MaxLength=254};Ui.Name(user,cloud is null?"Имя пользователя":"Email");panel.Children.Add(user);
         var nameLabel=Ui.Label("Имя пользователя",Ui.Caption,true);var username=new TextBox{MaxLength=32};Ui.Name(username,"Имя пользователя при регистрации");panel.Children.Add(nameLabel);panel.Children.Add(username);
         panel.Children.Add(Ui.Label("Пароль · от 8 символов",Ui.Caption,true));var pass=new PasswordBox{MaxLength=128};Ui.Name(pass,"Пароль");panel.Children.Add(pass);
@@ -24,11 +24,11 @@ public sealed class AuthWindow : ThemedWindow
         Button? submit=null;Button? mode=null;
         void ChangeMode()
         {
-            heading.Text=registering?"Создать аккаунт":"С возвращением";intro.Text=registering?"Имя, по которому тебя узнают в сообществах.":"Продолжи разговор со своими.";
+            heading.Text=registering?"Создать аккаунт":"Вход";intro.Text=registering?"Укажите данные нового аккаунта.":"Введите данные аккаунта.";
             nameLabel.Visibility=username.Visibility=registering&&cloud is not null?Visibility.Visible:Visibility.Collapsed;
             Title=registering?"Wisp · Регистрация":"Wisp · Вход";
-            if(submit is not null)submit.Content=registering?"Создать аккаунт":"Войти";
-            if(mode is not null)mode.Content=registering?"Уже есть аккаунт? Войти":"Нет аккаунта? Зарегистрироваться";
+            if(submit is not null)Buttons.Label(submit,registering?"Создать аккаунт":"Войти","arrow-right");
+            if(mode is not null)Buttons.Label(mode,registering?"Уже есть аккаунт? Войти":"Нет аккаунта? Зарегистрироваться");
             error.Visibility=Visibility.Collapsed;
         }
         async void Submit()
