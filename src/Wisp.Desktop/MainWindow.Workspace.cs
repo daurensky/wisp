@@ -41,12 +41,13 @@ public sealed partial class MainWindow
         var streamArea=new ScrollViewer{Content=callStreams,MaxHeight=180,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};DockPanel.SetDock(streamArea,Dock.Bottom);dock.Children.Add(streamArea);dock.Children.Add(callParticipants);
         return Ui.Panel(dock,"AsideSurface");
     }
-    private void UpdateResponsivePanels()
+    private void UpdateResponsivePanels(double? viewportWidth=null)
     {
+        double width=viewportWidth??ActualWidth;
         bool home=homeWorkspace.Visibility==Visibility.Visible;
-        bool compact=ActualWidth<Ui.Metric("Width.CompactBreakpoint")||home;
+        bool compact=width<Ui.Metric("Width.CompactBreakpoint")||home;
         memberPanel.Visibility=compact?Visibility.Collapsed:Visibility.Visible;memberColumn.Width=new GridLength(compact?0:Ui.Metric("Width.Members"));
-        bool show=voiceChannelId is not null&&ActualWidth>=Ui.Metric("Width.CallBreakpoint");
+        bool show=voiceChannelId is not null&&width>=Ui.Metric("Width.CallBreakpoint");
         callPanel.Visibility=show?Visibility.Visible:Visibility.Collapsed;callColumn.Width=new GridLength(show?Ui.Metric("Width.CallPanel"):0);
     }
     private void RenderCallPanel()

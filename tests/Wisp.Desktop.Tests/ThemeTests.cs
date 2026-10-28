@@ -429,8 +429,25 @@ public sealed class ThemeTests
             var status=(TextBlock)Get("connection")!;
             Assert.Contains(original.Name,status.Text);Assert.Contains(voiceChannel.Name,status.Text);Assert.DoesNotContain(second.Name,status.Text);
             var callPanel=(Border)Get("callPanel")!;
-            Assert.True(callPanel.IsVisible);Assert.Contains(Descendants(callPanel).OfType<TextBlock>(),t=>t.Text==original.Name);
+            // The Windows runner may physically clamp restored windows to its
+            // display. First verify the actual viewport, then exercise both
+            // breakpoints explicitly without assuming a particular monitor.
+            var memberPanel=(Border)Get("memberPanel")!;
+            var callColumn=(ColumnDefinition)Get("callColumn")!;
+            var memberColumn=(ColumnDefinition)Get("memberColumn")!;
+            Assert.Equal(main.ActualWidth>=Ui.Metric("Width.CallBreakpoint"),callPanel.IsVisible);
+            Assert.Contains(Descendants(callPanel).OfType<TextBlock>(),t=>t.Text==original.Name);
             SaveSnapshot(main,"community-during-call-dark");
+            Invoke("UpdateResponsivePanels",1360d);main.UpdateLayout();
+            Assert.True(callPanel.IsVisible);Assert.True(memberPanel.IsVisible);
+            Assert.Equal(260d,callColumn.Width.Value);Assert.Equal(220d,memberColumn.Width.Value);
+            Invoke("UpdateResponsivePanels",1100d);main.UpdateLayout();
+            Assert.False(callPanel.IsVisible);Assert.True(memberPanel.IsVisible);
+            Assert.Equal(0d,callColumn.Width.Value);Assert.Equal(220d,memberColumn.Width.Value);
+            Invoke("UpdateResponsivePanels",1040d);main.UpdateLayout();
+            Assert.False(callPanel.IsVisible);Assert.False(memberPanel.IsVisible);
+            Assert.Equal(0d,callColumn.Width.Value);Assert.Equal(0d,memberColumn.Width.Value);
+            Invoke("UpdateResponsivePanels",new object[]{null!});main.UpdateLayout();
             main.Width=1100;PumpLayout(main);Assert.False(callPanel.IsVisible);
             Invoke("OpenCallPanel");PumpLayout(main);
             Assert.Contains(Descendants(main).OfType<TextBlock>(),t=>t.Text==original.Name);

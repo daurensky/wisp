@@ -18,6 +18,11 @@ public sealed class DesignSystemTests
         {
             try
             {
+                // Register WPF's pack URI parser without constructing a second
+                // Application or depending on xUnit test ordering.
+                System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(Application).TypeHandle);
+                _=System.Windows.Navigation.BaseUriHelper.GetBaseUri(new DependencyObject());
+                Assert.True(UriParser.IsKnownScheme("pack"));
                 foreach(var name in new[]{"Dark","Light"})
                 {
                     var palette=new ResourceDictionary{Source=new Uri("pack://application:,,,/Wisp;component/Design/Palette."+name+".xaml")};
