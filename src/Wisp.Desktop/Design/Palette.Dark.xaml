@@ -1,33 +1,39 @@
 <?xml version="1.0"?>
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options">
-  <SolidColorBrush x:Key="Background" Color="#101319" po:Freeze="True"/>
-  <SolidColorBrush x:Key="Surface" Color="#151A23" po:Freeze="True"/>
-  <SolidColorBrush x:Key="SurfaceElevated" Color="#202735" po:Freeze="True"/>
-  <SolidColorBrush x:Key="RailSurface" Color="#0C0F15" po:Freeze="True"/>
-  <SolidColorBrush x:Key="ChannelSurface" Color="#151A23" po:Freeze="True"/>
-  <SolidColorBrush x:Key="ChatSurface" Color="#1A202B" po:Freeze="True"/>
-  <SolidColorBrush x:Key="AsideSurface" Color="#131923" po:Freeze="True"/>
-  <SolidColorBrush x:Key="Border" Color="#2C3443" po:Freeze="True"/>
-  <SolidColorBrush x:Key="TextPrimary" Color="#F2F3F7" po:Freeze="True"/>
-  <SolidColorBrush x:Key="TextSecondary" Color="#969EAE" po:Freeze="True"/>
-  <SolidColorBrush x:Key="TextDisabled" Color="#647085" po:Freeze="True"/>
-  <SolidColorBrush x:Key="Accent" Color="#8B5CF6" po:Freeze="True"/>
-  <SolidColorBrush x:Key="AccentBlue" Color="#2185FF" po:Freeze="True"/>
-  <SolidColorBrush x:Key="AccentHover" Color="#A583FF" po:Freeze="True"/>
-  <SolidColorBrush x:Key="AccentPressed" Color="#7143D4" po:Freeze="True"/>
-  <SolidColorBrush x:Key="OnAccent" Color="#FFFFFF" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Background" Color="#101010" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Surface" Color="#181818" po:Freeze="True"/>
+  <SolidColorBrush x:Key="SurfaceElevated" Color="#242424" po:Freeze="True"/>
+  <SolidColorBrush x:Key="RailSurface" Color="#0C0C0C" po:Freeze="True"/>
+  <SolidColorBrush x:Key="ChannelSurface" Color="#181818" po:Freeze="True"/>
+  <SolidColorBrush x:Key="ChatSurface" Color="#1C1C1C" po:Freeze="True"/>
+  <SolidColorBrush x:Key="AsideSurface" Color="#151515" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Border" Color="#343434" po:Freeze="True"/>
+  <SolidColorBrush x:Key="TextPrimary" Color="#F4F4F5" po:Freeze="True"/>
+  <SolidColorBrush x:Key="TextSecondary" Color="#A1A1AA" po:Freeze="True"/>
+  <SolidColorBrush x:Key="TextDisabled" Color="#707077" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Accent" Color="#E4E4E7" po:Freeze="True"/>
+  <SolidColorBrush x:Key="AccentBlue" Color="#BDBDC3" po:Freeze="True"/>
+  <SolidColorBrush x:Key="AccentHover" Color="#FAFAFA" po:Freeze="True"/>
+  <SolidColorBrush x:Key="AccentPressed" Color="#C4C4CB" po:Freeze="True"/>
+  <SolidColorBrush x:Key="OnAccent" Color="#18181B" po:Freeze="True"/>
   <SolidColorBrush x:Key="Danger" Color="#F04459" po:Freeze="True"/>
   <SolidColorBrush x:Key="DangerSurface" Color="#3F202B" po:Freeze="True"/>
   <SolidColorBrush x:Key="Warning" Color="#F0BF60" po:Freeze="True"/>
   <SolidColorBrush x:Key="Success" Color="#23C483" po:Freeze="True"/>
-  <SolidColorBrush x:Key="Hover" Color="#272F3D" po:Freeze="True"/>
-  <SolidColorBrush x:Key="Selected" Color="#30394C" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Hover" Color="#292929" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Selected" Color="#353535" po:Freeze="True"/>
   <SolidColorBrush x:Key="Overlay" Color="#B3000000" po:Freeze="True"/>
   <SolidColorBrush x:Key="VideoBackground" Color="#000000" po:Freeze="True"/>
   <SolidColorBrush x:Key="CaptionCloseHover" Color="#C42B1C" po:Freeze="True"/>
-  <SolidColorBrush x:Key="Bg" Color="#101319" po:Freeze="True"/>
-  <SolidColorBrush x:Key="Panel" Color="#151A23" po:Freeze="True"/>
-  <SolidColorBrush x:Key="Card" Color="#202735" po:Freeze="True"/>
-  <SolidColorBrush x:Key="Fg" Color="#F2F3F7" po:Freeze="True"/>
-  <SolidColorBrush x:Key="Muted" Color="#969EAE" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Bg" Color="#101010" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Panel" Color="#181818" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Card" Color="#242424" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Fg" Color="#F4F4F5" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Muted" Color="#A1A1AA" po:Freeze="True"/>
+  <SolidColorBrush x:Key="FocusRing" Color="#D4D4D8" po:Freeze="True"/>
+  <SolidColorBrush x:Key="FocusSurface" Color="#303030" po:Freeze="True"/>
+  <SolidColorBrush x:Key="OnDanger" Color="#FFFFFF" po:Freeze="True"/>
+  <SolidColorBrush x:Key="ToggleOn" Color="#3B3B3B" po:Freeze="True"/>
+  <SolidColorBrush x:Key="StreamLive" Color="#E53949" po:Freeze="True"/>
+  <SolidColorBrush x:Key="Speaking" Color="#23C483" po:Freeze="True"/>
 </ResourceDictionary>

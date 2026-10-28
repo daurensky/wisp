@@ -48,7 +48,7 @@ public sealed class AvatarCatalog(string root, string localId)
         if (decoder.Frames.Count > 500 || decoder.Frames[0].PixelWidth > 2048 || decoder.Frames[0].PixelHeight > 2048)
             throw new InvalidDataException("Аватар: максимум 2048×2048 и 500 кадров GIF.");
     }
-    public static Image Image(string path, double size, bool animate = true, GifPlaybackMode mode = GifPlaybackMode.Always, FrameworkElement? hoverScope = null)
+    public static Image Image(string path, double size, bool animate = true, GifPlaybackMode mode = GifPlaybackMode.Hover, FrameworkElement? hoverScope = null)
     {
         var image = new Image { Width = size, Height = size, Stretch = Stretch.UniformToFill };
         GifPlayback.SetMode(image, mode); GifPlayback.SetScope(image, hoverScope);
@@ -57,39 +57,55 @@ public sealed class AvatarCatalog(string root, string localId)
         {
             AnimationBehavior.SetAutoStart(image, false);
             AnimationBehavior.SetRepeatBehavior(image, RepeatBehavior.Forever);
-            // Bounded encoded bytes keep playback independent of the cached file's lifetime.
-            // The library retains caller-owned streams across unload/reload; no OS handle stays open.
-            AnimationBehavior.SetSourceStream(image, new MemoryStream(File.ReadAllBytes(path), writable: false));
-            Window? owner = null;
-            FrameworkElement? scope = null;
+            // Decode only frame zero until this visible avatar is actually hovered.
+            var bytes=File.ReadAllBytes(path);
+            BitmapSource first;
+            using(var encoded=new MemoryStream(bytes,false))
+            {
+                first=BitmapDecoder.Create(encoded,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad).Frames[0];first.Freeze();
+            }
+            image.Source=first;
+            BitmapSource? animatedSource=null;
+            bool playing=false;
+            Window? owner=null;FrameworkElement? scope=null;
+            void Reset()
+            {
+                playing=false;AnimationBehavior.SetAutoStart(image,false);
+                if(AnimationBehavior.GetAnimator(image)is{} animator){animator.Pause();animator.Rewind();}
+                image.Source=first;
+            }
             void UpdatePlayback()
             {
-                bool play = GifPlayback.Allowed(image);
-                AnimationBehavior.SetAutoStart(image, play);
-                var animator = AnimationBehavior.GetAnimator(image);
-                if (animator is null) return;
-                if (play) { if (animator.IsPaused) animator.Play(); }
-                else animator.Pause();
+                if(!GifPlayback.Allowed(image)){if(playing||image.Source!=first)Reset();return;}
+                AnimationBehavior.SetAutoStart(image,true);
+                if(AnimationBehavior.GetSourceStream(image)is null)
+                {playing=true;AnimationBehavior.SetSourceStream(image,new MemoryStream(bytes,false));return;}
+                if(AnimationBehavior.GetAnimator(image)is{} animator)
+                {
+                    if(!playing){animator.Pause();animator.Rewind();}
+                    if(animatedSource is not null)image.Source=animatedSource;
+                    if(animator.IsPaused)animator.Play();playing=true;
+                }
             }
-            void WindowChanged(object? sender, EventArgs args) => UpdatePlayback();
-            void HoverChanged(object? sender, System.Windows.Input.MouseEventArgs args) => UpdatePlayback();
-            GifPlayback.SetUpdate(image, UpdatePlayback);
-            image.Loaded += (_, _) =>
+            void WindowChanged(object? sender,EventArgs args)=>UpdatePlayback();
+            void HoverChanged(object? sender,System.Windows.Input.MouseEventArgs args)=>UpdatePlayback();
+            GifPlayback.SetUpdate(image,UpdatePlayback);GifPlayback.SetReset(image,Reset);
+            image.Loaded+=(_,_)=>
             {
-                owner = Window.GetWindow(image);
-                scope = GifPlayback.GetScope(image) ?? image;
-                scope.MouseEnter += HoverChanged; scope.MouseLeave += HoverChanged;
-                if (owner is not null) { owner.Activated += WindowChanged; owner.Deactivated += WindowChanged; owner.StateChanged += WindowChanged; }
-                Motion.Changed += UpdatePlayback; UpdatePlayback();
+                owner=Window.GetWindow(image);scope=GifPlayback.GetScope(image)??image;
+                scope.MouseEnter+=HoverChanged;scope.MouseLeave+=HoverChanged;
+                if(owner is not null){owner.Activated+=WindowChanged;owner.Deactivated+=WindowChanged;owner.StateChanged+=WindowChanged;}
+                Motion.Changed+=UpdatePlayback;UpdatePlayback();
             };
-            image.Unloaded += (_, _) =>
+            image.Unloaded+=(_,_)=>
             {
-                if (scope is not null) { scope.MouseEnter -= HoverChanged; scope.MouseLeave -= HoverChanged; scope = null; }
-                if (owner is not null) { owner.Activated -= WindowChanged; owner.Deactivated -= WindowChanged; owner.StateChanged -= WindowChanged; owner = null; }
-                Motion.Changed -= UpdatePlayback; AnimationBehavior.GetAnimator(image)?.Pause();
+                if(scope is not null){scope.MouseEnter-=HoverChanged;scope.MouseLeave-=HoverChanged;scope=null;}
+                if(owner is not null){owner.Activated-=WindowChanged;owner.Deactivated-=WindowChanged;owner.StateChanged-=WindowChanged;owner=null;}
+                Motion.Changed-=UpdatePlayback;Reset();animatedSource=null;
             };
-            image.IsVisibleChanged += (_, _) => UpdatePlayback();
-            AnimationBehavior.AddLoadedHandler(image, (_, _) => UpdatePlayback());
+            image.IsVisibleChanged+=(_,_)=>UpdatePlayback();
+            AnimationBehavior.AddLoadedHandler(image,(_,_)=>{animatedSource=image.Source as BitmapSource;playing=false;UpdatePlayback();});
+
         }
         else
         {
@@ -97,7 +113,7 @@ public sealed class AvatarCatalog(string root, string localId)
         }
         return image;
     }
-    public static FrameworkElement Circle(string? path, double size, GifPlaybackMode mode = GifPlaybackMode.Always, FrameworkElement? hoverScope = null)
+    public static FrameworkElement Circle(string? path, double size, GifPlaybackMode mode = GifPlaybackMode.Hover, FrameworkElement? hoverScope = null)
     {
         Image image;
         try { image = path is null ? new Image { Width = size, Height = size, Stretch = Stretch.UniformToFill, Source = new BitmapImage(new Uri("pack://application:,,,/Wisp;component/Assets/wisp.png")) } : Image(path, size, mode: mode, hoverScope: hoverScope); }

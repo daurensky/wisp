@@ -8,6 +8,9 @@ namespace Wisp.Desktop.Media;
 /// <summary>Bounded original notifications and an independent soundboard shared render stream.</summary>
 public sealed class SoundService : IDisposable
 {
+    // Only built-in application cues are attenuated; independent soundboard,
+    // voice and shared-audio renderers retain their own gain.
+    public const float BuiltInEffectsGain = .5f;
     private readonly object gate = new();
     private readonly Func<string?, IWavePlayer> createOutput;
     private readonly record struct NotificationCue(SoundEvent Event,int Generation);
@@ -101,7 +104,7 @@ public sealed class SoundService : IDisposable
                             catch { notifications?.Dispose(); notifications = null; mixer = null; throw; }
                         }
                         if (mixer.MixerInputs.Count() >= 4) continue;
-                        mixer.AddMixerInput(new MonoToStereoSampleProvider(new CueSamples(sound, NotificationVolume)));
+                        mixer.AddMixerInput(new MonoToStereoSampleProvider(new CueSamples(sound, NotificationVolume * BuiltInEffectsGain)));
                     }
                 }
                 catch (Exception ex) { Error?.Invoke("Звук уведомления недоступен: " + ex.Message); }

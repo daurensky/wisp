@@ -14,6 +14,7 @@ public sealed class SettingsContext
     public required UserProfile Profile { get; init; }
     public Func<UserProfile>? CurrentProfile { get; init; }
     public Func<UserProfile, string?>? ResolveAvatar { get; init; }
+    public Func<FrameworkElement>? ProfileSurface { get; init; }
     public string? AvatarPath { get; init; }
     public string? BannerPath { get; init; }
     public required AudioDeviceSettings Audio { get; init; }
@@ -40,6 +41,7 @@ public sealed class SettingsView : UserControl
 {
     private readonly SettingsContext context;
     private readonly ContentControl page = new();
+    private readonly StackPanel accountIdentity = new();
     private readonly TextBlock feedback = new() { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
     private readonly Dictionary<SettingsSection, Button> navigation = new();
     private AudioDeviceSettings audio;
@@ -54,14 +56,10 @@ public sealed class SettingsView : UserControl
         MinHeight = 320; MaxHeight = 520;
         var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) }); root.ColumnDefinitions.Add(new ColumnDefinition());
         var sidebar = new DockPanel { Margin = Ui.Insets(Ui.M) };
-        var identity = new StackPanel { Margin = Ui.Insets(Ui.S, Ui.L, Ui.S, Ui.S) };
-        identity.Children.Add(AvatarCatalog.Circle(context.AvatarPath, 40));
-        identity.Children.Add(Ui.Label(context.Profile.Username, Ui.Body));
-        var appName = Ui.Label("WISP · НАСТРОЙКИ", Ui.Caption, true); appName.Margin = Ui.Insets(0, Ui.Xs, 0, 0); identity.Children.Add(appName);
+        var identity = accountIdentity; identity.Margin = Ui.Insets(Ui.S, Ui.L, Ui.S, Ui.S); RefreshIdentity();
         DockPanel.SetDock(identity, Dock.Bottom); sidebar.Children.Add(identity);
         var links = new StackPanel();
-        Add(SettingsSection.Account, "Учётная запись", "users");
-        Add(SettingsSection.Profile, "Профиль", "pencil");
+        Add(SettingsSection.Account, "Аккаунт и профиль", "users");
         Add(SettingsSection.Appearance, "Внешний вид", "sun");
         Add(SettingsSection.Audio, "Голос и звук", "headphones");
         Add(SettingsSection.Notifications, "Уведомления", "bell");
@@ -83,13 +81,15 @@ public sealed class SettingsView : UserControl
 
     public void SelectSection(SettingsSection section)
     {
+        // Keep callers using the old section identifier compatible without a second page.
+        if (section == SettingsSection.Profile) section = SettingsSection.Account;
         SelectedSection = section; feedback.Visibility = Visibility.Collapsed;
         foreach (var entry in navigation) entry.Value.SetResourceReference(Button.BackgroundProperty, entry.Key == section ? "Selected" : "Surface");
         try
         {
             page.Content = section switch
             {
-                SettingsSection.Account => Account(), SettingsSection.Profile => Profile(),
+                SettingsSection.Account => Account(),
                 SettingsSection.Appearance => Appearance(), SettingsSection.Audio => Audio(),
                 SettingsSection.Notifications => Notifications(), SettingsSection.Connection => Connection(),
                 SettingsSection.ScreenShare => ScreenShare(), _ => throw new ArgumentOutOfRangeException(nameof(section))
@@ -115,21 +115,26 @@ public sealed class SettingsView : UserControl
     }
     private void Error(Exception exception) { feedback.Text = exception.Message; feedback.Visibility = Visibility.Visible; DiagnosticLog.Write("settings", exception); }
 
+    private void RefreshIdentity()
+    {
+        var current = context.CurrentProfile?.Invoke() ?? context.Profile;
+        accountIdentity.Children.Clear();
+        accountIdentity.Children.Add(AvatarCatalog.Circle(context.ResolveAvatar?.Invoke(current) ?? current.AvatarPath ?? context.AvatarPath, 40, GifPlaybackMode.Hover));
+        accountIdentity.Children.Add(Ui.Label(current.Username, Ui.Body));
+        var appName = Ui.Label("WISP · НАСТРОЙКИ", Ui.Caption, true); appName.Margin = Ui.Insets(0, Ui.Xs, 0, 0); accountIdentity.Children.Add(appName);
+    }
+
     private FrameworkElement Account()
     {
         var profile = context.CurrentProfile?.Invoke() ?? context.Profile;
-        var panel = Section("Учётная запись", "Параметры твоего аккаунта Wisp.");
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
-        row.Children.Add(AvatarCatalog.Circle(context.ResolveAvatar is not null ? context.ResolveAvatar(profile) : profile.AvatarPath ?? context.AvatarPath, 56));
-        var name = Ui.Label(profile.Username, Ui.Subtitle); name.FontWeight = FontWeights.SemiBold; name.Margin = Ui.Insets(Ui.L, 0, 0, 0); row.Children.Add(name); panel.Children.Add(row);
-        panel.Children.Add(Action("Редактировать профиль", EditProfile, "Button.Primary"));
+        var panel = Section("Аккаунт и профиль", "Изображения, имя и информация о себе.");
+        var surface = context.ProfileSurface?.Invoke() ?? new ProfileView(profile,
+            context.ResolveAvatar is not null ? context.ResolveAvatar(profile) : profile.AvatarPath ?? context.AvatarPath,
+            context.CurrentProfile is not null ? profile.BannerPath : profile.BannerPath ?? context.BannerPath, EditProfile);
+        if (surface is ProfileEditor editor) editor.Saved += _ => RefreshIdentity();
+        panel.Children.Add(surface);
         if (context.SignOut is not null) panel.Children.Add(Action("Выйти из аккаунта", context.SignOut, "Button.Danger"));
         return panel;
-    }
-    private FrameworkElement Profile()
-    {
-        var profile = context.CurrentProfile?.Invoke() ?? context.Profile;
-        return new ProfileView(profile, context.ResolveAvatar is not null ? context.ResolveAvatar(profile) : profile.AvatarPath ?? context.AvatarPath, context.CurrentProfile is not null ? profile.BannerPath : profile.BannerPath ?? context.BannerPath, EditProfile);
     }
     private void EditProfile() { context.EditProfile(); SelectSection(SelectedSection); }
     private FrameworkElement Appearance()
@@ -177,12 +182,9 @@ public sealed class SettingsView : UserControl
         if (context.ApplyNotifications is not null)
         {
             var enabled = new CheckBox { Content = "Звуковые уведомления", IsChecked = notificationsEnabled, Margin = Ui.Insets(0, Ui.S) };
-            panel.Children.Add(enabled); panel.Children.Add(Ui.Label("Громкость уведомлений", Ui.Caption, true));
-            var volume = new Slider { Minimum = 0, Maximum = 100, Value = notificationVolume * 100, Margin = Ui.Insets(0, Ui.S, 0, Ui.L), IsEnabled = notificationsEnabled }; Ui.Name(volume, "Громкость уведомлений"); panel.Children.Add(volume);
-            void Apply() { try { notificationsEnabled = enabled.IsChecked == true; notificationVolume = (float)(volume.Value / 100); volume.IsEnabled = notificationsEnabled; context.ApplyNotifications(notificationsEnabled, notificationVolume); } catch (Exception ex) { Error(ex); } }
+            panel.Children.Add(enabled);
+            void Apply() { try { notificationsEnabled = enabled.IsChecked == true; context.ApplyNotifications(notificationsEnabled, notificationVolume); } catch (Exception ex) { Error(ex); } }
             enabled.Checked += (_, _) => Apply(); enabled.Unchecked += (_, _) => Apply();
-            // Persist once at the end of interaction rather than on each drag tick.
-            volume.PreviewMouseLeftButtonUp += (_, _) => Apply(); volume.LostKeyboardFocus += (_, _) => Apply();
         }
         panel.Children.Add(Note("Ошибки и предупреждения доступны в области уведомлений. Переключение темы и обычные действия интерфейса не воспроизводят системные звуки."));
         panel.Children.Add(Action("Открыть уведомления", context.ShowNotifications)); return panel;
@@ -197,7 +199,7 @@ public sealed class SettingsView : UserControl
     }
     private FrameworkElement ScreenShare()
     {
-        var panel = Section("Демонстрация экрана", "Выбор приложения или монитора, разрешение, частота кадров и звук доступны при запуске демонстрации.");
+        var panel = Section("Демонстрация экрана", "Выбор приложения или монитора, разрешение и частота кадров доступны при запуске демонстрации.");
         var button = Action("Выбрать источник и качество", context.ShareScreen, "Button.Primary"); button.IsEnabled = context.CanShareScreen; panel.Children.Add(button);
         if (!context.CanShareScreen) panel.Children.Add(Note("Подключись к голосовому каналу, чтобы начать демонстрацию.")); return panel;
     }

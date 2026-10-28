@@ -47,19 +47,19 @@ public sealed class ThemeTests
                 Assert.Null(SessionVault.Read(root));
                 derived = new DerivedWindow();
                 auth = new AuthWindow(store);
-                AssertWindowColors(derived, Color.FromRgb(16, 19, 25), Color.FromRgb(242, 243, 247));
-                AssertWindowColors(auth, Color.FromRgb(16, 19, 25), Color.FromRgb(242, 243, 247));
+                AssertWindowColors(derived, Color.FromRgb(16, 16, 16), Color.FromRgb(244, 244, 245));
+                AssertWindowColors(auth, Color.FromRgb(16, 16, 16), Color.FromRgb(244, 244, 245));
                 CheckChatAndOverlays(store, root, value => phase = value);
                 var password = Assert.Single(Descendants(auth).OfType<PasswordBox>());
-                Assert.Equal(Color.FromRgb(242, 243, 247), BrushColor(password.Foreground));
-                Assert.Equal(Color.FromRgb(32, 39, 53), BrushColor(password.Background));
+                Assert.Equal(Color.FromRgb(244, 244, 245), BrushColor(password.Foreground));
+                Assert.Equal(Color.FromRgb(36, 36, 36), BrushColor(password.Background));
 
                 ThemeManager.Toggle();
                 Assert.True(ThemeManager.IsLight);
                 Assert.Equal("light", File.ReadAllText(Path.Combine(root, "theme.txt")).Trim());
-                AssertWindowColors(derived, Color.FromRgb(245, 246, 250), Color.FromRgb(23, 32, 51));
-                AssertWindowColors(auth, Color.FromRgb(245, 246, 250), Color.FromRgb(23, 32, 51));
-                Assert.Equal(Color.FromRgb(23, 32, 51), BrushColor(password.Foreground));
+                AssertWindowColors(derived, Color.FromRgb(247, 247, 247), Color.FromRgb(24, 24, 27));
+                AssertWindowColors(auth, Color.FromRgb(247, 247, 247), Color.FromRgb(24, 24, 27));
+                Assert.Equal(Color.FromRgb(24, 24, 27), BrushColor(password.Foreground));
                 auth.Show(); PumpLayout(auth); SaveSnapshot(auth, "auth-light"); auth.Hide();
                 phase="server setup and server account screens";CheckServerAccountScreens(store,root);
 
@@ -67,15 +67,15 @@ public sealed class ThemeTests
                 Directory.CreateDirectory(fresh);
                 ThemeManager.Initialize(fresh);
                 Assert.False(ThemeManager.IsLight);
-                AssertWindowColors(derived, Color.FromRgb(16, 19, 25), Color.FromRgb(242, 243, 247));
+                AssertWindowColors(derived, Color.FromRgb(16, 16, 16), Color.FromRgb(244, 244, 245));
                 ThemeManager.Initialize(root);
                 Assert.True(ThemeManager.IsLight);
-                AssertWindowColors(auth, Color.FromRgb(245, 246, 250), Color.FromRgb(23, 32, 51));
+                AssertWindowColors(auth, Color.FromRgb(247, 247, 247), Color.FromRgb(24, 24, 27));
 
                 File.WriteAllText(Path.Combine(root, "theme.txt"), "invalid-theme");
                 ThemeManager.Initialize(root);
                 Assert.False(ThemeManager.IsLight);
-                AssertWindowColors(auth, Color.FromRgb(16, 19, 25), Color.FromRgb(242, 243, 247));
+                AssertWindowColors(auth, Color.FromRgb(16, 16, 16), Color.FromRgb(244, 244, 245));
             }
             catch (Exception ex) { failure = ex; }
             finally
@@ -92,7 +92,7 @@ public sealed class ThemeTests
         }) { IsBackground = true };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        Assert.True(thread.Join(TimeSpan.FromSeconds(30)), "The Windows UI check did not finish at: " + phase);
+        Assert.True(thread.Join(TimeSpan.FromSeconds(45)), "The Windows UI check did not finish at: " + phase);
         if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
@@ -145,8 +145,8 @@ public sealed class ThemeTests
         Assert.True(ComposerInput.ShouldSend(Key.Enter, ModifierKeys.None));
         Assert.False(ComposerInput.ShouldSend(Key.Enter, ModifierKeys.Shift));
         var tip = new ToolTip { Content = "Подсказка" };
-        Assert.Equal(Color.FromRgb(32, 39, 53), BrushColor(tip.Background));
-        Assert.Equal(Color.FromRgb(242, 243, 247), BrushColor(tip.Foreground));
+        Assert.Equal(Color.FromRgb(36, 36, 36), BrushColor(tip.Background));
+        Assert.Equal(Color.FromRgb(244, 244, 245), BrushColor(tip.Foreground));
         var avatar = Assert.IsType<Image>(AvatarCatalog.Circle(null, 36));
         var frozen = new ScaleTransform(1, 1); frozen.Freeze();
         var frozenProbe = new Border { RenderTransform = frozen };
@@ -265,7 +265,8 @@ public sealed class ThemeTests
             body.Focus(); body.SelectAll(); PumpLayout(main);
             Assert.Contains("hello", body.Selection.Text); Assert.Contains("world", body.Selection.Text);
             ApplicationCommands.Copy.Execute(null, body);
-            Assert.Contains("hello", Clipboard.GetText());
+            Assert.Equal("hello :loop: world", Clipboard.GetText());
+            Assert.Equal(22d, Assert.IsType<Image>(body.Paragraph.Inlines.OfType<InlineUIContainer>().Single().Child).Width);
             Assert.Equal(position, body.TranslatePoint(new Point(0, 0), main));
             var chatEmoji = Assert.IsType<Image>(body.Paragraph.Inlines.OfType<InlineUIContainer>().Single().Child);
             Assert.Equal(GifPlaybackMode.Hover, GifPlayback.GetMode(chatEmoji));
@@ -283,7 +284,7 @@ public sealed class ThemeTests
             participant.IsSpeaking = false; Assert.False(GifPlayback.GetSpeaking(participant.Avatar));
             var mutedParticipant = new VoiceParticipantRow(new PeerPresence(profile, "voice", true, true), gif, localVoice, true);
             mutedParticipant.IsSpeaking = true; Assert.False(GifPlayback.GetSpeaking(mutedParticipant.Avatar));
-            Assert.Equal(GifPlaybackMode.Speaking, GifPlayback.GetMode(participant.Avatar));
+            Assert.Equal(GifPlaybackMode.Hover, GifPlayback.GetMode(participant.Avatar));
             Assert.Contains(Descendants(mutedParticipant).OfType<Icon>(), icon => icon.Kind == "mic-off");
             Assert.Contains(Descendants(mutedParticipant).OfType<Icon>(), icon => icon.Kind == "headphone-off");
             localVoice.Dispose();
@@ -303,7 +304,7 @@ public sealed class ThemeTests
             Assert.Equal(Visibility.Collapsed, Descendants(main).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetName(button) == "Отменить запись").Visibility);
             phase("responsive layout"); main.Width = Ui.Metric("Width.WindowMinimum"); PumpLayout(main); SaveSnapshot(main, "main-compact-dark");
             var lists = VisualDescendants(main).OfType<VirtualRows>().ToArray();
-            Assert.Equal(5, lists.Length); Assert.Equal(3, lists.Count(list => list.IsVisible));
+            Assert.Equal(4, lists.Length); Assert.Equal(3, lists.Count(list => list.IsVisible));
             Assert.All(lists, list => Assert.Equal(Colors.Transparent, BrushColor(list.Background)));
             main.Width = Ui.Metric("Width.Window"); ThemeManager.Toggle(); PumpLayout(main); SaveSnapshot(main, "main-light"); ThemeManager.Toggle();
         }
@@ -446,6 +447,14 @@ public sealed class ThemeTests
         {
             Participants=new[]{new RtcSeat(profile.Id,new string('a',32),DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())}
         };
+        var mic=Assert.IsType<ToggleIconButton>(Get("micButton"));var deafen=Assert.IsType<ToggleIconButton>(Get("deafenButton"));
+        Assert.True(mic.IsVisible);Assert.True(deafen.IsVisible);Assert.Null(Get("voiceChannelId"));
+        ((Task)type.GetMethod("ToggleMic",flags)!.Invoke(main,null)!).GetAwaiter().GetResult();
+        Assert.True(mic.IsChecked);Assert.True(VoicePreferences.Load(store.RootDirectory).Muted);
+        ((Task)type.GetMethod("ToggleDeafen",flags)!.Invoke(main,null)!).GetAwaiter().GetResult();
+        Assert.True(deafen.IsChecked);Assert.True(VoicePreferences.Load(store.RootDirectory).Deafened);
+        ((Task)type.GetMethod("ToggleDeafen",flags)!.Invoke(main,null)!).GetAwaiter().GetResult();
+        ((Task)type.GetMethod("ToggleMic",flags)!.Invoke(main,null)!).GetAwaiter().GetResult();
         var second=store.CreateCommunity("Other community",profile.Id);
         var secondText=store.GetChannels(second.Id).First(c=>!c.IsVoice);
         try
@@ -466,32 +475,26 @@ public sealed class ThemeTests
             Assert.Equal(voiceChannel.Id,Get("voiceChannelId"));Assert.Equal(0,room.LeaveCalls);Assert.Equal(0,room.EnterCalls);
             var status=(TextBlock)Get("connection")!;
             Assert.Contains(original.Name,status.Text);Assert.Contains(voiceChannel.Name,status.Text);Assert.DoesNotContain(second.Name,status.Text);
-            var callPanel=(Border)Get("callPanel")!;
-            // The Windows runner may physically clamp restored windows to its
-            // display. First verify the actual viewport, then exercise both
-            // breakpoints explicitly without assuming a particular monitor.
             var memberPanel=(Border)Get("memberPanel")!;
-            var callColumn=(ColumnDefinition)Get("callColumn")!;
             var memberColumn=(ColumnDefinition)Get("memberColumn")!;
-            Assert.Equal(main.ActualWidth>=Ui.Metric("Width.CallBreakpoint"),callPanel.IsVisible);
-            Assert.Contains(Descendants(callPanel).OfType<TextBlock>(),t=>t.Text==original.Name);
+            var rootPanel=Assert.IsType<Grid>(Get("streamWorkspace") is Grid stream?stream.Parent:null);
+            var layout=Assert.IsType<Grid>(rootPanel.Parent);
+            Assert.Equal(4,layout.ColumnDefinitions.Count);
+            Assert.DoesNotContain(Descendants(main).OfType<TextBox>(),box=>System.Windows.Automation.AutomationProperties.GetName(box)=="Поиск участников");
             SaveSnapshot(main,"community-during-call-dark");
-            Invoke("UpdateResponsivePanels",1360d);main.UpdateLayout();
-            Assert.True(callPanel.IsVisible);Assert.True(memberPanel.IsVisible);
-            Assert.Equal(260d,callColumn.Width.Value);Assert.Equal(220d,memberColumn.Width.Value);
-            Invoke("UpdateResponsivePanels",1100d);main.UpdateLayout();
-            Assert.False(callPanel.IsVisible);Assert.True(memberPanel.IsVisible);
-            Assert.Equal(0d,callColumn.Width.Value);Assert.Equal(220d,memberColumn.Width.Value);
-            Invoke("UpdateResponsivePanels",1040d);main.UpdateLayout();
-            Assert.False(callPanel.IsVisible);Assert.False(memberPanel.IsVisible);
-            Assert.Equal(0d,callColumn.Width.Value);Assert.Equal(0d,memberColumn.Width.Value);
+            foreach(double width in new[]{1360d,1100d})
+            {Invoke("UpdateResponsivePanels",width);main.UpdateLayout();Assert.True(memberPanel.IsVisible);Assert.Equal(220d,memberColumn.Width.Value);}
+            Invoke("UpdateResponsivePanels",1040d);main.UpdateLayout();Assert.False(memberPanel.IsVisible);Assert.Equal(0d,memberColumn.Width.Value);
             Invoke("UpdateResponsivePanels",new object[]{null!});main.UpdateLayout();
-            main.Width=1100;PumpLayout(main);Assert.False(callPanel.IsVisible);
-            Invoke("OpenCallPanel");PumpLayout(main);
-            Assert.Contains(Descendants(main).OfType<TextBlock>(),t=>t.Text==original.Name);
-            SaveSnapshot(main,"call-modal-dark");
-            var closeCall=Assert.Single(Descendants(main).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Закрыть · Esc");
-            closeCall.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(main);
+            var chat=(VirtualRows)Get("messages")!;var before=chat.Items.Cast<UiRow>().ToArray();
+            var selectedBefore=Get("selectedChannel");Invoke("SetCommunity",second);PumpLayout(main);
+            Assert.Same(selectedBefore,Get("selectedChannel"));Assert.Equal(before,chat.Items.Cast<UiRow>().ToArray());Assert.Equal(new Thickness(0),chat.Margin);
+            var center=Assert.IsType<Grid>(Get("streamWorkspace"));
+            var video=new ScreenViewer(main,"Central demo",center);PumpLayout(main);
+            Assert.False(video.IsMini);Assert.True(video.IsLoading);Assert.Single(center.Children.Cast<Border>());
+            Assert.Equal(2,Grid.GetColumn(rootPanel));Assert.True(((VirtualRows)Get("servers")!).IsVisible);
+            video.Present(new byte[16],2,2);Assert.False(video.IsLoading);video.ToggleMini();Assert.True(video.IsMini);video.ToggleMini();
+            video.SetUnavailable();SaveSnapshot(main,"central-stream-dark");video.Close();Assert.Empty(center.Children.Cast<UIElement>());
             main.Width=Ui.Metric("Width.Window");Invoke("SetCommunity",original);Invoke("SelectChannel",voiceChannel);PumpLayout(main);
             var channelRows=(VirtualRows)Get("channels")!;
             var voiceButton=Assert.Single(Descendants(channelRows).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)==voiceChannel.Name);
@@ -531,10 +534,12 @@ public sealed class ThemeTests
             var profileHandle=ModalHost.Open(main,"Профиль пользователя",profileView,480);PumpLayout(main);
             Assert.Contains(Descendants(profileView).OfType<TextBlock>(),t=>t.Text==sample.About);
             Assert.Contains(Descendants(profileView).OfType<TextBlock>(),t=>t.Text.Contains("Dota 2"));
-            var animated=Descendants(profileView).OfType<Image>().Where(i=>AnimationBehavior.GetSourceStream(i)is not null).ToArray();
-            Assert.Equal(2,animated.Length);Assert.All(animated,i=>Assert.Equal(GifPlaybackMode.Always,GifPlayback.GetMode(i)));
+            var animated=Descendants(profileView).OfType<Image>().ToArray();
+            Assert.Equal(2,animated.Length);Assert.All(animated,i=>Assert.Equal(GifPlaybackMode.Hover,GifPlayback.GetMode(i)));
             Assert.All(animated,i=>Assert.Equal(RepeatBehavior.Forever,AnimationBehavior.GetRepeatBehavior(i)));
             SaveSnapshot(main,"profile-redesign-dark");profileHandle.Close();PumpLayout(main);
+            CheckProfileEditing(main,sample,gif);
+            CheckExactTextSelection(main);
             Wisp.Desktop.Media.AudioDeviceSettings? applied=null;bool? notify=null;float volume=0;
             var settings=new SettingsView(new SettingsContext
             {
@@ -545,6 +550,9 @@ public sealed class ThemeTests
                 ApplyNotifications=(enabled,level)=>{notify=enabled;volume=level;},ServerAddress="https://example.com:8443",ConnectionStatus=()=>"Не подключён"
             });
             var handle=ModalHost.Open(main,"Настройки",settings,880);PumpLayout(main);
+            Assert.Contains(Descendants(settings).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Аккаунт и профиль");
+            Assert.DoesNotContain(Descendants(settings).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Профиль");
+            settings.SelectSection(SettingsSection.Profile);PumpLayout(main);Assert.Equal(SettingsSection.Account,settings.SelectedSection);
             settings.SelectSection(SettingsSection.Appearance);PumpLayout(main);
             var themes=Assert.Single(Descendants(settings).OfType<ComboBox>());
             themes.SelectedIndex=1;Assert.True(ThemeManager.IsLight);
@@ -563,16 +571,63 @@ public sealed class ThemeTests
             Assert.NotNull(applied);Assert.Equal("input-device",applied.InputId);Assert.Equal("output-device",applied.OutputId);Assert.False(applied.NoiseSuppression);
             SaveSnapshot(main,"settings-audio-dark");
             settings.SelectSection(SettingsSection.Notifications);PumpLayout(main);
-            var slider=Assert.Single(Descendants(settings).OfType<Slider>());slider.Value=25;
-            slider.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.Left){RoutedEvent=Mouse.PreviewMouseUpEvent});
+            Assert.Empty(Descendants(settings).OfType<Slider>());
             var enabled=Assert.Single(Descendants(settings).OfType<CheckBox>());enabled.IsChecked=false;
-            Assert.False(notify);Assert.Equal(.25f,volume);
+            Assert.False(notify);Assert.Equal(.8f,volume);
             SaveSnapshot(main,"settings-notifications-dark");
             settings.SelectSection(SettingsSection.Connection);PumpLayout(main);
             Assert.Contains(Descendants(settings).OfType<TextBlock>(),t=>t.Text=="https://example.com:8443");
             handle.Close();PumpLayout(main);
         }
         finally {if(ThemeManager.IsLight)ThemeManager.Toggle();Motion.SetReduced(wasReduced);}
+    }
+
+    private static void CheckProfileEditing(MainWindow main,UserProfile profile,string gif)
+    {
+        UserProfile? saved=null;
+        var editor=new ProfileEditor(profile,gif,gif,value=>{saved=value;return Task.FromResult(value);});
+        var handle=ModalHost.Open(main,"Аккаунт и профиль",editor,520);PumpLayout(main);
+        Button FindProfileButton(string label)=>Assert.Single(Descendants(editor).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)==label);
+        void Click(string label){FindProfileButton(label).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(main);}
+        try
+        {
+            Assert.False(editor.IsEditing);
+            Assert.DoesNotContain(Descendants(editor).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b) is "Изменить аватар" or "Изменить баннер");
+            Click("Редактировать профиль");Assert.True(editor.IsEditing);
+            Assert.NotNull(FindProfileButton("Изменить аватар"));Assert.NotNull(FindProfileButton("Изменить баннер"));
+            var name=Assert.Single(Descendants(editor).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Имя пользователя");
+            name.Text="CancelledName";Click("Удалить баннер");Click("Отмена");
+            Assert.False(editor.IsEditing);Assert.Null(saved);
+            Click("Редактировать профиль");
+            name=Assert.Single(Descendants(editor).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Имя пользователя");
+            Assert.Equal(profile.Username,name.Text);Assert.Equal(2,Descendants(editor).OfType<Image>().Count());
+            name.Text="UpdatedName";
+            var about=Assert.Single(Descendants(editor).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="О себе");about.Text="Line one\nLine two";
+            Click("Удалить аватар");Click("Сохранить");
+            Assert.False(editor.IsEditing);Assert.NotNull(saved);Assert.Equal("UpdatedName",saved.Username);Assert.Equal("Line one\nLine two",saved.About);
+            Assert.Null(saved.AvatarPath);Assert.Equal(gif,saved.BannerPath);
+            Assert.Throws<ArgumentException>(()=>ProfileEditor.ValidateDraft("x","",null,null));
+            Assert.Throws<ArgumentException>(()=>ProfileEditor.ValidateDraft("ValidName",new string('x',2001),null,null));
+            ProfileEditor.ValidateImage(gif);
+            SaveSnapshot(main,"profile-editor-dark");
+        }
+        finally{handle.Close();PumpLayout(main);}
+    }
+
+    private static void CheckExactTextSelection(MainWindow main)
+    {
+        const string original="First sentence.\r\nSecond line with space \r\n";
+        var selectable=new SelectableChatText();var run=new Run(original);selectable.Paragraph.Inlines.Add(run);
+        var handle=ModalHost.Open(main,"Выделение текста",selectable,440);PumpLayout(main);
+        try
+        {
+            selectable.SelectAll();Assert.Equal(original,selectable.SelectedPlainText());
+            ApplicationCommands.Copy.Execute(null,selectable);Assert.Equal(original,Clipboard.GetText());
+            var start=run.ContentStart;
+            selectable.Selection.Select(start,start.GetPositionAtOffset("First sentence.".Length));
+            Assert.Equal("First sentence.",selectable.SelectedPlainText());
+        }
+        finally{handle.Close();PumpLayout(main);}
     }
 
     private static void PumpUntil(Window window,Func<bool> condition,string scenario)

@@ -9,6 +9,7 @@
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="FontSize" Value="{StaticResource Font.Body}"/>
     <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+    <Setter Property="TextOptions.TextRenderingMode" Value="Auto"/>
   </Style>
   <Style x:Key="Text.Section" TargetType="TextBlock">
     <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
@@ -73,7 +74,7 @@
   <Style x:Key="Button.Primary" BasedOn="{StaticResource Button.Base}" TargetType="Button">
     <Setter Property="Foreground" Value="{DynamicResource OnAccent}"/>
     <Setter Property="Background" Value="{DynamicResource Accent}"/>
-    <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
   </Style>
   <Style x:Key="Button.Ghost" BasedOn="{StaticResource Button.Base}" TargetType="Button">
     <Setter Property="Background" Value="Transparent"/>
@@ -85,8 +86,8 @@
     <Setter Property="Padding" Value="{StaticResource Padding.None}"/>
   </Style>
   <Style x:Key="Button.Danger" BasedOn="{StaticResource Button.Base}" TargetType="Button">
-    <Setter Property="Foreground" Value="{DynamicResource Danger}"/>
-    <Setter Property="Background" Value="{DynamicResource DangerSurface}"/>
+    <Setter Property="Foreground" Value="{DynamicResource OnDanger}"/>
+    <Setter Property="Background" Value="{DynamicResource Danger}"/>
   </Style>
   <Style x:Key="Button.Row" BasedOn="{StaticResource Button.Ghost}" TargetType="Button">
     <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -132,6 +133,8 @@
     <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="FontSize" Value="{StaticResource Font.Body}"/>
+    <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+    <Setter Property="TextOptions.TextRenderingMode" Value="Auto"/>
     <Setter Property="UseLayoutRounding" Value="True"/>
     <Setter Property="SnapsToDevicePixels" Value="True"/>
     <Setter Property="Template">
@@ -192,7 +195,7 @@
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-              <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+              <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Field" Property="Opacity" Value=".4"/>
@@ -221,7 +224,7 @@
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-              <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+              <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Field" Property="Opacity" Value=".4"/>
@@ -438,7 +441,7 @@
                   </Border>
                   <ControlTemplate.Triggers>
                     <Trigger Property="IsMouseOver" Value="True">
-                      <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                      <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
                     </Trigger>
                   </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -454,7 +457,7 @@
           </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property="IsKeyboardFocusWithin" Value="True">
-              <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+              <Setter Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter Property="Opacity" Value=".4"/>
@@ -487,10 +490,10 @@
             </Trigger>
             <Trigger Property="IsKeyboardFocused" Value="True">
               <Setter TargetName="Box" Property="BorderThickness" Value="2"/>
-              <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+              <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
             </Trigger>
             <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentHover}"/>
+              <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter Property="Opacity" Value=".4"/>

@@ -147,6 +147,9 @@ func (s *store) data(w http.ResponseWriter, r *http.Request) {
 					m[id] = true
 				}
 				result = m
+			case "icon":
+				raw, v, e := s.getDocument(ctx, "communities/"+cid+"/icon")
+				result, version, err = raw, v, e
 			case "snapshot":
 				raw, _, e := s.getDocument(ctx, strings.Join(parts[:3], "/"))
 				if e != nil {
@@ -179,6 +182,22 @@ func (s *store) data(w http.ResponseWriter, r *http.Request) {
 				}
 				b, _ := json.Marshal(members)
 				doc["Members"] = b
+				roles := map[string]string{}
+				roleRows, e := s.db.Query(ctx, `SELECT m.user_id,CASE WHEN c.owner_id=m.user_id THEN 'owner' ELSE m.role END FROM wisp_members m JOIN wisp_communities c ON c.id=m.community_id WHERE m.community_id=$1`, cid)
+				if e != nil {
+					err = e
+					break
+				}
+				for roleRows.Next() {
+					var id, role string
+					if roleRows.Scan(&id, &role) != nil {
+						err = denied
+						break
+					}
+					roles[id] = role
+				}
+				roleRows.Close()
+				doc["Roles"], _ = json.Marshal(roles)
 				result = doc
 			case "messages", "files", "emojis", "sounds":
 				rootLen := documentRoot(parts)
@@ -243,6 +262,14 @@ func (s *store) data(w http.ResponseWriter, r *http.Request) {
 		s.presence[parts[1]][uid] = value
 		s.presenceMu.Unlock()
 		writeJSON(w, 200, true)
+		return
+	}
+	if parts[0] == "communities" && len(parts) == 3 && parts[2] == "management" {
+		if r.Method != "PUT" {
+			apiError(w, 405, "PUT required")
+			return
+		}
+		s.manageCommunity(w, r, ctx, uid, parts[1])
 		return
 	}
 	if r.Method == "DELETE" && parts[0] == "profiles" && len(parts) == 4 && parts[1] == uid && parts[2] == "Images" && (parts[3] == "avatar" || parts[3] == "banner") {
@@ -372,14 +399,14 @@ func (s *store) data(w http.ResponseWriter, r *http.Request) {
 }
 func (s *store) saveSnapshot(ctx context.Context, uid, cid string, data json.RawMessage) error {
 	var snap struct {
-		Community struct{ ID, Name, OwnerID string }
+		Community struct{ ID, Name, OwnerID, IconAssetID string }
 		Channels  []struct {
 			ID, CommunityID, Name string
 			IsVoice               bool
 		}
 	}
 	// Existing .NET property casing includes Id/OwnerId, handled case-insensitively by encoding/json.
-	if json.Unmarshal(data, &snap) != nil || snap.Community.ID != cid || snap.Community.OwnerID != uid || len(snap.Community.Name) < 1 || len(snap.Community.Name) > 100 || len(snap.Channels) > 500 {
+	if json.Unmarshal(data, &snap) != nil || snap.Community.ID != cid || !keyPattern.MatchString(snap.Community.OwnerID) || len(snap.Community.Name) < 1 || len(snap.Community.Name) > 100 || len(snap.Channels) > 500 {
 		return denied
 	}
 	ids := map[string]bool{}
@@ -393,7 +420,7 @@ func (s *store) saveSnapshot(ctx context.Context, uid, cid string, data json.Raw
 	for _, ch := range snap.Channels {
 		channels = append(channels, map[string]any{"Id": ch.ID, "CommunityId": cid, "Name": ch.Name, "IsVoice": ch.IsVoice})
 	}
-	data, _ = json.Marshal(map[string]any{"Community": map[string]any{"Id": cid, "OwnerId": uid, "Name": snap.Community.Name}, "Channels": channels, "Members": []any{}})
+	data, _ = json.Marshal(map[string]any{"Community": map[string]any{"Id": cid, "OwnerId": snap.Community.OwnerID, "Name": snap.Community.Name, "IconAssetId": snap.Community.IconAssetID}, "Channels": channels, "Members": []any{}})
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -404,7 +431,7 @@ func (s *store) saveSnapshot(ctx context.Context, uid, cid string, data json.Raw
 		return err
 	}
 	var owner string
-	if tx.QueryRow(ctx, `SELECT owner_id FROM wisp_communities WHERE id=$1 FOR UPDATE`, cid).Scan(&owner) != nil || owner != uid {
+	if tx.QueryRow(ctx, `SELECT owner_id FROM wisp_communities WHERE id=$1 FOR UPDATE`, cid).Scan(&owner) != nil || owner != snap.Community.OwnerID || (owner != uid && !s.manager(ctx, cid, uid)) {
 		return denied
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO wisp_members(community_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, cid, uid); err != nil {
@@ -460,9 +487,9 @@ func (s *store) validDocument(ctx context.Context, uid string, p []string, data 
 		}
 		return true
 	case "emojis":
-		return len(p) == 4 && hashPattern.MatchString(p[3]) && validateTransfer(data, cid, "emoji", 256*1024, p[3])
+		return s.manager(ctx, cid, uid) && len(p) == 4 && hashPattern.MatchString(p[3]) && validateTransfer(data, cid, "emoji", 256*1024, p[3])
 	case "sounds":
-		return len(p) == 4 && hashPattern.MatchString(p[3]) && validateTransfer(data, cid, "sound", 4*1024*1024, p[3])
+		return s.manager(ctx, cid, uid) && len(p) == 4 && hashPattern.MatchString(p[3]) && validateTransfer(data, cid, "sound", 4*1024*1024, p[3])
 	case "files":
 		if !hashPattern.MatchString(p[3]) {
 			return false
@@ -507,7 +534,7 @@ func validateTransfer(raw json.RawMessage, cid, kind string, max int, id string)
 	if id != "" && a.ID != id {
 		return false
 	}
-	if kind == "avatar" || kind == "banner" || kind == "emoji" {
+	if kind == "avatar" || kind == "banner" || kind == "emoji" || kind == "icon" {
 		config, _, err := image.DecodeConfig(bytes.NewReader(a.Data))
 		if err != nil || config.Width <= 0 || config.Height <= 0 || config.Width > 2048 || config.Height > 2048 {
 			return false

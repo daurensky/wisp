@@ -21,9 +21,9 @@ public sealed class VoiceParticipantRow : Grid
         muted = presence.Muted; deafened = presence.Deafened;
         Height = Ui.RowHeight; Margin = Ui.Insets(Ui.M, 0, Ui.S, 0);
         ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); ColumnDefinitions.Add(new ColumnDefinition()); ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Avatar = AvatarCatalog.Circle(avatarPath, Ui.Metric("Size.VoiceAvatar"), GifPlaybackMode.Speaking);
+        Avatar = AvatarCatalog.Circle(avatarPath, Ui.Metric("Size.VoiceAvatar"), GifPlaybackMode.Hover);
         ring = new Border { Width = Ui.Metric("Size.Avatar"), Height = Ui.Metric("Size.Avatar"), Child = Avatar, CornerRadius = new CornerRadius(Ui.L), BorderThickness = new Thickness(2), Margin = Ui.Insets(0, 0, Ui.S, 0), BorderBrush = Brushes.Transparent };
-        Children.Add(ring);
+        Children.Add(ring);GifPlayback.SetScope(Avatar,this);
         var name = Ui.Label(presence.Profile.Username, Ui.Caption, true); Grid.SetColumn(name, 1); Children.Add(name);
         var states = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         void State(string icon, string label)

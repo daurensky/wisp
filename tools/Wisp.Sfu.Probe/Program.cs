@@ -96,6 +96,37 @@ try
     foreach (var m in received.Values.Where(m => m.Type != "video-report")) if (m.SenderId != sourceId || m.ChannelId != "voice") throw new Exception("Forged identity accepted");
     if (!received["audio"].Payload.SequenceEqual(new byte[]{1,2,3}) || !received["screen-audio"].Payload.SequenceEqual(new byte[]{4,5,6}) || !received["asset"].Payload.SequenceEqual(bulk) || !received["screen-h264"].Payload.AsSpan().EndsWith(h264.AsSpan(4))) throw new Exception("Media payload changed");
     Console.WriteLine("PASS: six users, voice + independent share audio + H264 + events + fragmented control; bound source identity");
+    var viewerPresence=new StreamViewerPresence();viewerPresence.Start("view-session");
+    var viewCues=new System.Collections.Concurrent.ConcurrentQueue<SoundEvent>();int viewEvents=0;
+    void ObserveView(WireMessage message)
+    {
+        if(message.Type!="screen-state")return;
+        using var payload=JsonDocument.Parse(message.Payload);var state=payload.RootElement;
+        if(state.GetProperty("TargetId").GetString()!=sourceId)return;
+        lock(viewerPresence)
+        {
+            var cue=viewerPresence.Observe(state.GetProperty("SessionId").GetString()!,message.SenderId,state.GetProperty("Viewing").GetBoolean(),state.GetProperty("Restoring").GetBoolean());
+            if(cue is{} sound)viewCues.Enqueue(sound);
+        }
+        Interlocked.Increment(ref viewEvents);
+    }
+    a.MessageReceived+=ObserveView;
+    try
+    {
+        async Task View(SfuRoom viewer,bool watching,bool restoring=false)
+        {
+            int next=viewEvents+1;
+            await viewer.SendAsync(new("screen-state","forged","wrong",JsonSerializer.SerializeToUtf8Bytes(new{TargetId=sourceId,SessionId="view-session",Viewing=watching,Restoring=restoring})));
+            await Until(()=>viewEvents>=next,"viewer event arrival at broadcaster");
+        }
+        await View(b,true);await View(b,true);await View(clients[2],true);
+        await View(b,false);await View(b,false);await View(clients[2],true,true);
+        if(!viewCues.SequenceEqual(new[]{SoundEvent.VoiceJoined,SoundEvent.VoiceJoined,SoundEvent.VoiceLeft})||clients.Any(client=>!client.Joined))throw new Exception("Viewer presence duplicated a cue or stopped another media session");
+        int voiceBeforeViewExit=voice;await a.SendAsync(new("audio",sourceId,"voice",new byte[]{1,2,3}));
+        await Until(()=>voice>voiceBeforeViewExit,"voice remains connected after viewer leaves viewing");
+        Console.WriteLine("PASS: two viewers, explicit view join/leave, duplicate/recovery deduplication, voice survives viewer exit");
+    }
+    finally{a.MessageReceived-=ObserveView;}
     // A 2MB file must not starve microphone packets while sharing.
     received.TryRemove("asset", out _); int before = voice;
     var transfer = a.SendAsync(new("asset", "user0", null, new byte[2000000]));

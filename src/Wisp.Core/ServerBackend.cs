@@ -111,6 +111,7 @@ public sealed class ServerBackend:IDisposable
     }
     public async Task SaveProfileAsync(UserProfile profile){if(profile.Id!=Profile?.Id)throw new InvalidOperationException("Чужой профиль.");await PutAsync($"profiles/{profile.Id}/Info",profile with{AvatarPath=null,BannerPath=null});Profile=profile;}
     public Task CreateCommunityAsync(CommunitySnapshot snapshot)=>PutAsync($"communities/{snapshot.Community.Id}/snapshot",snapshot with{Members=snapshot.Members.Select(p=>p with{AvatarPath=null,BannerPath=null}).ToList()});
+    public Task ManageCommunityAsync(string communityId, CommunityManagement command) => PutAsync($"communities/{communityId}/management",command);
     private async Task<JsonDocument> ApiPost(string path,object value)
     {
         using var request=new HttpRequestMessage(HttpMethod.Post,path){Content=JsonContent.Create(value)};request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",await TokenAsync());using var response=await http.SendAsync(request);return await Read(response);

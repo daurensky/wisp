@@ -31,8 +31,6 @@
   <sys:Double x:Key="Width.Channels">252</sys:Double>
   <sys:Double x:Key="Width.Members">220</sys:Double>
   <sys:Double x:Key="Width.CompactBreakpoint">1050</sys:Double>
-  <sys:Double x:Key="Width.CallPanel">260</sys:Double>
-  <sys:Double x:Key="Width.CallBreakpoint">1200</sys:Double>
   <sys:Double x:Key="Width.SettingsSidebar">192</sys:Double>
   <sys:Double x:Key="Width.WindowMinimum">800</sys:Double>
   <sys:Double x:Key="Height.WindowMinimum">560</sys:Double>
@@ -53,6 +51,7 @@
   <sys:Double x:Key="Width.Seek">144</sys:Double>
   <sys:Double x:Key="Height.Multiline">96</sys:Double>
   <sys:Double x:Key="Height.Notifications">480</sys:Double>
+  <sys:Double x:Key="Border.Hairline">1</sys:Double>
   <Thickness x:Key="Padding.Control">12,4</Thickness>
   <Thickness x:Key="Padding.Row">12,8</Thickness>
   <Thickness x:Key="Padding.Dialog">24,16</Thickness>

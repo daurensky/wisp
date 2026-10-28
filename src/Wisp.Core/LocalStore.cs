@@ -71,7 +71,13 @@ public sealed class LocalStore : IDisposable
         var messageColumns = new HashSet<string>();
         using (var cmd = Command("PRAGMA table_info(messages)")) using (var reader = cmd.ExecuteReader()) while (reader.Read()) messageColumns.Add(reader.GetString(1));
         if (!messageColumns.Contains("emoji_map")) Execute("ALTER TABLE messages ADD COLUMN emoji_map TEXT");
-        Execute("PRAGMA user_version = 3");
+        var communityColumns = new HashSet<string>();
+        using (var cmd = Command("PRAGMA table_info(communities)")) using (var reader = cmd.ExecuteReader()) while (reader.Read()) communityColumns.Add(reader.GetString(1));
+        if (!communityColumns.Contains("icon_asset_id")) Execute("ALTER TABLE communities ADD COLUMN icon_asset_id TEXT");
+        var memberColumns = new HashSet<string>();
+        using (var cmd = Command("PRAGMA table_info(members)")) using (var reader = cmd.ExecuteReader()) while (reader.Read()) memberColumns.Add(reader.GetString(1));
+        if (!memberColumns.Contains("role")) Execute("ALTER TABLE members ADD COLUMN role TEXT NOT NULL DEFAULT 'member'");
+        Execute("PRAGMA user_version = 4");
     }
 
     public UserProfile Register(string username, string password)
@@ -168,10 +174,10 @@ public sealed class LocalStore : IDisposable
     {
         lock (gate)
         {
-            using var cmd = Command("SELECT id,name,owner_id FROM communities ORDER BY name,id");
+            using var cmd = Command("SELECT id,name,owner_id,icon_asset_id FROM communities ORDER BY name,id");
             using var reader = cmd.ExecuteReader();
             var result = new List<Community>();
-            while (reader.Read()) result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+            while (reader.Read()) result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3)));
             return result;
         }
     }
@@ -192,6 +198,22 @@ public sealed class LocalStore : IDisposable
         }
         return community;
     }
+
+    public string GetMemberRole(string communityId, string userId)
+    {
+        lock (gate)
+        {
+            using var cmd = Command("SELECT CASE WHEN c.owner_id=$uid THEN 'owner' ELSE m.role END FROM communities c JOIN members m ON m.community_id=c.id AND m.profile_id=$uid WHERE c.id=$cid", ("$cid",communityId), ("$uid",userId));
+            return cmd.ExecuteScalar() as string ?? "none";
+        }
+    }
+    public bool CanManageCommunity(string communityId, string userId) => GetMemberRole(communityId,userId) is "owner" or "admin";
+    public void RenameAsset(string id, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 200 || name != Path.GetFileName(name)) throw new ArgumentException("Некорректное имя.");
+        lock (gate) Execute("UPDATE assets SET name=$name WHERE id=$id", ("$name",name.Trim()), ("$id",id));
+    }
+    public void RemoveAsset(string id) { lock (gate) Execute("DELETE FROM assets WHERE id=$id", ("$id",id)); }
 
     public List<Channel> GetChannels(string communityId)
     {
@@ -217,6 +239,12 @@ public sealed class LocalStore : IDisposable
         return channel;
     }
 
+    public void RemoveCommunityMembership(string communityId,string userId)
+    {
+        ValidateId(communityId);ValidateId(userId);
+        lock(gate)Execute("DELETE FROM members WHERE community_id=$cid AND profile_id=$uid",("$cid",communityId),("$uid",userId));
+    }
+
     public void SaveSnapshot(CommunitySnapshot snapshot)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -233,12 +261,20 @@ public sealed class LocalStore : IDisposable
             using (var existing = Command("SELECT owner_id FROM communities WHERE id=$id", ("$id", snapshot.Community.Id)))
                 if (existing.ExecuteScalar() is string ownerId && ownerId != snapshot.Community.OwnerId)
                     throw new ArgumentException("Владелец существующего сообщества не может меняться через сетевой снимок.", nameof(snapshot));
-            Execute("INSERT INTO communities(id,name,owner_id) VALUES($id,$name,$owner) ON CONFLICT(id) DO UPDATE SET name=excluded.name",
-                ("$id", snapshot.Community.Id), ("$name", snapshot.Community.Name), ("$owner", snapshot.Community.OwnerId));
+            Execute("INSERT INTO communities(id,name,owner_id,icon_asset_id) VALUES($id,$name,$owner,$icon) ON CONFLICT(id) DO UPDATE SET name=excluded.name,icon_asset_id=excluded.icon_asset_id",
+                ("$id", snapshot.Community.Id), ("$name", snapshot.Community.Name), ("$owner", snapshot.Community.OwnerId), ("$icon", snapshot.Community.IconAssetId));
             foreach (var channel in snapshot.Channels)
                 Execute("INSERT INTO channels(id,community_id,name,is_voice) VALUES($id,$community,$name,$voice) ON CONFLICT(id) DO UPDATE SET name=excluded.name,is_voice=excluded.is_voice WHERE channels.community_id=excluded.community_id",
                     ("$id", channel.Id), ("$community", channel.CommunityId), ("$name", channel.Name), ("$voice", channel.IsVoice));
-            foreach (var member in snapshot.Members) UpsertMember(snapshot.Community.Id, member);
+            foreach (var member in snapshot.Members)
+            {
+                UpsertMember(snapshot.Community.Id, member);
+                var role = snapshot.Roles?.GetValueOrDefault(member.Id) == "admin" ? "admin" : "member";
+                Execute("UPDATE members SET role=$role WHERE community_id=$cid AND profile_id=$uid", ("$role", role), ("$cid", snapshot.Community.Id), ("$uid", member.Id));
+            }
+            var retained = snapshot.Members.Select(m => m.Id).ToHashSet();
+            foreach (var old in GetMembers(snapshot.Community.Id).Where(m => !retained.Contains(m.Id)))
+                Execute("DELETE FROM members WHERE community_id=$cid AND profile_id=$uid", ("$cid", snapshot.Community.Id), ("$uid", old.Id));
             transaction.Commit();
         }
     }
@@ -295,7 +331,7 @@ public sealed class LocalStore : IDisposable
     public MediaAsset ImportAsset(string communityId, string sourcePath, string kind, string? displayName = null)
     {
         ValidateId(communityId);
-        if (kind is not ("attachment" or "voice" or "emoji" or "sound" or "avatar" or "banner")) throw new ArgumentException("Неизвестный тип медиа.", nameof(kind));
+        if (kind is not ("attachment" or "voice" or "emoji" or "sound" or "avatar" or "banner" or "icon")) throw new ArgumentException("Неизвестный тип медиа.", nameof(kind));
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
         var name = displayName ?? Path.GetFileName(sourcePath);
         if (name.Length > 255 || string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Некорректное имя файла.", nameof(sourcePath));

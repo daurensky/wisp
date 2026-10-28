@@ -42,3 +42,17 @@ func (h *hub) rooms(community string) map[string]map[string]rtcSeat {
 	}
 	return rooms
 }
+
+func (h *hub) removeCommunityMember(community, uid string) {
+	h.mu.Lock()
+	var removed []*session
+	for s := range h.sessions {
+		if s.ident.Community == community && s.ident.UID == uid {
+			removed = append(removed, s)
+		}
+	}
+	h.mu.Unlock()
+	for _, s := range removed {
+		s.stop("community-membership-removed")
+	}
+}

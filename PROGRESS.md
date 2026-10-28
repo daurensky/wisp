@@ -1,8 +1,24 @@
+# Wisp — выполнение нового ТЗ улучшений (28.10.2026)
+
+Источник: [полный новый текст пользователя](docs/IMPROVEMENT_SPECIFICATION.md). Начальная точка: `5f5ec8d`, ветка `codex/postgres-backend`, рабочее дерево было чистым. Новые требования заменяют противоречащие им решения предыдущего Master; Onest и существующие данные PostgreSQL сохраняются.
+
+## Текущий этап — 2–8 реализованы, начата интеграционная проверка
+
+- Нейтральная палитра, Onest, четыре колонки с границами. Удалены поиск участников и отдельная панель звонка. Общая нижняя панель, скроллбар у края; повторный выбор сервера не перезагружает чат. Mute/deafen доступны вне звонка и сохраняются между запусками.
+- Объединены аккаунт/профиль; явный режим редактирования с preview/save/cancel/валидацией. Управление сервером: название/значок, owner/admin/member, роли, исключение с подтверждением, upload/rename/delete эмодзи/звуков с серверной проверкой прав. Миграции additive, данные сохранены.
+- Выбор экрана: вкладки приложение/экран, реальные ограниченные превью, выбор рамкой, обновление источников. Звук включён при поддержке. Просмотр по действию в центре; mini/full опциональны; «В ЭФИРЕ» в roster; локальный preview только при просмотре, до10fps. События зрителей через совместимые поля screen-state.
+- GIF: общий hover/reset первого кадра и lazy animator. Emoji popup +22/48px. Точное копирование текста/emoji и выделяемые уведомления. Системные эффекты×0.5, речь/демонстрация/Soundboard сохранены. Минимальная Home с конечной анимацией и двумя действиями.
+- Существенные файлы: `MainWindow*.cs`, `ProfileView.cs`, `SettingsView.cs`, `ScreenSourcePicker.cs`, `ScreenViewer.cs`, `EmojiPicker.cs`, `AvatarCatalog.cs`, `SelectableChatText.cs`, `NotificationArea.cs`, `VoiceParticipantRow.cs`, `Design/*`, `Theme.xaml`, `Media/{ScreenShareService,SoundService}.cs`; Core `{Models,LocalStore,ServerBackend,VoicePreferences,StreamViewerPresence,EmojiContent}.cs`; Go `{community_management,data,store,rooms}.go`; связанные тесты.
+- Исправлены integration compileошибки namespace ScreenStreamInfo и затенение Button тестовым helper. Сборка solution:0warnings/errors;93Core PASS;171WPFресурс валиден. Go real PostgreSQL/race:7PASS, nativeprobe покаSKIP до новой сборки. WindowsUI/снимки новых изменений ещё не проверены.
+- **Следующее конкретное действие:** собрать обновлённый multi-client viewerprobe, повторить сборку после membershiprefresh, опубликовать checkpoint и выполнить Windows CI/снимки. Cross-message selection требует отдельной проверки/доработки. Затем portable и итоговый отчёт. Не считать новое ТЗ завершённым по результатам предыдущего Master.
+
+---
+
 # Wisp — выполнение Master Implementation Specification
 
 Исходное ТЗ: пользовательский «WISP — MASTER IMPLEMENTATION SPECIFICATION», получен 27.10.2026; интерфейс по приложенному референсу. Рабочая ветка `codex/postgres-backend`. Исходный commit: `3bb11eff73337cdaf071e955b4204c26265ba0ff`.
 
-## Текущий итог — программная часть завершена (28.10.2026)
+## Предыдущий Master — программная часть завершена (28.10.2026)
 
 - Проверенный commit исходников и тестов: **68b4a2a**. Windows CI **76 Core +29 Desktop =105 PASS**,0 warnings/errors; Linux CI PostgreSQL/native/race/vet PASS. Все16 снимков основных экранов получены и просмотрены.
 - [Windows CI](https://github.com/daurensky/wisp/actions/runs/40649165988), [Linux CI](https://github.com/daurensky/wisp/actions/runs/40649165812), [portable](https://github.com/daurensky/wisp/actions/runs/40649165988/artifacts/12799600158), [снимки и TRX](https://github.com/daurensky/wisp/actions/runs/40649165988/artifacts/12798463431).

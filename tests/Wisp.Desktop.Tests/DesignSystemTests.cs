@@ -31,9 +31,12 @@ public sealed class DesignSystemTests
                     Assert.True(Contrast(Get("TextSecondary"),Get("Surface"))>=4.5,"Secondary text must remain readable in both themes.");
                     if(name=="Dark")
                     {
-                        Assert.Equal(Color.FromRgb(16,19,25),Get("Background"));
-                        Assert.Equal(Color.FromRgb(139,92,246),Get("Accent"));
-                        Assert.Equal(Color.FromRgb(33,133,255),Get("AccentBlue"));
+                        Assert.Equal(Color.FromRgb(16,16,16),Get("Background"));
+                        foreach(var key in new[]{"Background","Surface","SurfaceElevated","RailSurface","ChannelSurface","ChatSurface","AsideSurface","Border","Hover","Selected"})
+                        {
+                            var color=Get(key);Assert.Equal(color.R,color.G);Assert.Equal(color.G,color.B);
+                        }
+                        Assert.Equal(Color.FromRgb(228,228,231),Get("Accent"));
                     }
                 }
                 var theme=new ResourceDictionary{Source=new Uri("pack://application:,,,/Wisp;component/Theme.xaml")};
@@ -42,7 +45,8 @@ public sealed class DesignSystemTests
                 var border=Assert.IsType<Border>(template.LoadContent());
                 Assert.Equal(new CornerRadius(0),border.CornerRadius);
                 Assert.Equal(72d,(double)theme["Width.Rail"]);Assert.Equal(252d,(double)theme["Width.Channels"]);Assert.Equal(220d,(double)theme["Width.Members"]);
-                Assert.Equal(1050d,(double)theme["Width.CompactBreakpoint"]);Assert.Equal(1200d,(double)theme["Width.CallBreakpoint"]);
+                Assert.Equal(1050d,(double)theme["Width.CompactBreakpoint"]);
+                Assert.False(theme.Contains("Width.CallBreakpoint"));Assert.False(theme.Contains("Width.CallPanel"));
             }
             catch(Exception ex){failure=ex;}
         }){IsBackground=true};

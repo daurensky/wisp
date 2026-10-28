@@ -12,6 +12,9 @@ public sealed class ScreenShareService : IDisposable
     private int keyRequested, desiredBitrate, desiredFps;
     private VideoRateController? adaptation;
     public event Action<byte[]>? FrameReady;
+    public event Action<byte[], int, int>? PreviewReady;
+    private volatile bool previewEnabled;
+    public bool PreviewEnabled { get => previewEnabled; set => previewEnabled = value; }
     public event Action<string>? Error;
     public event Action<string>? Status;
     public event Action<bool>? PauseChanged;
@@ -60,7 +63,7 @@ public sealed class ScreenShareService : IDisposable
             Status?.Invoke("Захват: " + capture.BackendName + "; " + encoder.RateControlStatus);
             var pixels = new byte[info.Width * info.Height * 4];
             var clock = Stopwatch.StartNew();
-            bool paused = false;
+            bool paused = false;long previewAt = -Stopwatch.Frequency;
             int bitrate = info.Bitrate, fps = info.FramesPerSecond;
             while (!token.IsCancellationRequested)
             {
@@ -79,6 +82,8 @@ public sealed class ScreenShareService : IDisposable
                     Status?.Invoke(accepted ? $"Сеть: поток снижен до {bitrate / 1000000d:0.0} Мбит/с × число зрителей; {fps} FPS." : "Кодировщик не принял изменение битрейта: частота снижена до 15 FPS.");
                 }
                 if (Interlocked.Exchange(ref keyRequested, 0) != 0) encoder.RequestKeyFrame();
+                if(previewEnabled&&PreviewReady is{} preview&&clock.ElapsedTicks-previewAt>=Stopwatch.Frequency/10)
+                {previewAt=clock.ElapsedTicks;preview((byte[])pixels.Clone(),info.Width,info.Height);}
                 var encoded = encoder.Encode(pixels, clock.Elapsed);
                 if (encoded is not null && !token.IsCancellationRequested) FrameReady?.Invoke(H264Frame.Pack(info.FramesPerSecond, encoded));
                 double spent = (clock.ElapsedTicks - started) * 1000d / Stopwatch.Frequency;
@@ -95,6 +100,7 @@ public sealed class ScreenShareService : IDisposable
     }
     public void Stop()
     {
+        previewEnabled = false;
         lock (gate) { cancellation?.Cancel(); cancellation = null; CurrentInfo = null; adaptation = null; }
     }
     public void Dispose() => Stop();

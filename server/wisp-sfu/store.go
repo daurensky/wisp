@@ -33,6 +33,7 @@ ALTER TABLE wisp_sessions ADD COLUMN IF NOT EXISTS previous_access_until timesta
 CREATE TABLE IF NOT EXISTS wisp_communities (id text PRIMARY KEY, owner_id text NOT NULL REFERENCES wisp_users(id));
 CREATE TABLE IF NOT EXISTS wisp_members (community_id text NOT NULL REFERENCES wisp_communities(id) ON DELETE CASCADE,
  user_id text NOT NULL REFERENCES wisp_users(id), PRIMARY KEY(community_id,user_id));
+ALTER TABLE wisp_members ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'member';
 CREATE SEQUENCE IF NOT EXISTS wisp_doc_version;
 CREATE TABLE IF NOT EXISTS wisp_documents (path text PRIMARY KEY, author_id text NOT NULL REFERENCES wisp_users(id),
  data jsonb NOT NULL, version bigint NOT NULL DEFAULT nextval('wisp_doc_version'), created_at timestamptz NOT NULL DEFAULT now());
@@ -143,6 +144,11 @@ func (s *store) member(ctx context.Context, community, uid string) bool {
 func (s *store) owner(ctx context.Context, community, uid string) bool {
 	var yes bool
 	err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM wisp_communities WHERE id=$1 AND owner_id=$2)`, community, uid).Scan(&yes)
+	return err == nil && yes
+}
+func (s *store) manager(ctx context.Context, community, uid string) bool {
+	var yes bool
+	err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM wisp_members m JOIN wisp_communities c ON c.id=m.community_id WHERE c.id=$1 AND m.user_id=$2 AND (c.owner_id=$2 OR m.role='admin'))`, community, uid).Scan(&yes)
 	return err == nil && yes
 }
 func (s *store) isVoice(ctx context.Context, cid, channel string) bool {

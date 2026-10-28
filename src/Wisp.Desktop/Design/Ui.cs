@@ -20,6 +20,7 @@ public static class Ui
     public static double Heading => Metric("Font.Heading");
     public static double ControlHeight => Metric("Size.Control");
     public static double RowHeight => Metric("Size.Row");
+    public static double DividerWidth => Metric("Border.Hairline");
     public static Thickness Insets(double all) => new(all);
     public static Thickness Insets(double horizontal, double vertical) => new(horizontal, vertical, horizontal, vertical);
     public static Thickness Insets(double left, double top, double right, double bottom) => new(left, top, right, bottom);
@@ -35,7 +36,9 @@ public static class Ui
     }
     public static Border Panel(UIElement child, string color = "Surface", bool divider = true)
     {
-        var panel = new Border { Child = child, BorderThickness = new Thickness(0, 0, divider ? Metric("Size.Hairline") : 0, 0) };
+        // The leading panel owns each shared edge; adjacent panels do not add a
+        // second left border, keeping the workspace divider exactly one pixel.
+        var panel = new Border { Child = child, BorderThickness = new Thickness(0, 0, divider ? DividerWidth : 0, 0) };
         panel.SetResourceReference(Border.BackgroundProperty, color);
         panel.SetResourceReference(Border.BorderBrushProperty, "Border");
         return panel;
