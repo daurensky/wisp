@@ -21,15 +21,15 @@
 
 Ошибка emoji403 была вызвана повторным PUT существующего emoji перед отправкой. Клиент проверяет immutable bytes/hash через доступный участнику GET и не выполняет upload. API по-прежнему запрещает обычному участнику загрузку нового emoji или управление сервером. Удалён также повторный upload того же файла в цепочке SendMessage.
 
-## Проверка текущего этапа
+## Проверка
 
-Локальная solution cross-build: **0 warnings/errors**, Core **96PASS**, WPF **188** именованных ресурсов без brokenreferences/duplicatekeys; проверяются и новые корневые XAMLкомпоненты.
+Проверенное дерево **451cb92**: [Windows40782081082](https://github.com/daurensky/wisp/actions/runs/40782081082) и [Linux40782081241](https://github.com/daurensky/wisp/actions/runs/40782081241) **PASS**. **96Core +45Desktop =141тест**, C#0warnings/errors; RNNoise/build/publish/portable PASS. [25снимков и TRX](https://github.com/daurensky/wisp/actions/runs/40782081082/artifacts/12857472781) получены и просмотрены. Проверяются реальные модальные editor save/cancel/zoom/GIFcover, livePCMwave, Grayscale в detachedcontrols/popup/tooltip, роли/gain/каналы, miniповерхsettings/drag/aspect/close, host-authorized snapshots, аватар уже отправленного сообщения без потери строк/выделения/прокрутки.
 
-Реальный PostgreSQL/API + Go race: **10PASS**, `go vet` PASS. Nativeprobe6клиентов/30downlinks: Opusmic+отдельное shareaudio+H264,2МБфайл одновременно с медиа, token/invites/takeover/rejoin. В probe отдельно проверены ownerupload → memberreuse → messageaccepted и membernewupload403, а в APIтестах — managerGET, права каналов, удаление активногоvoiceканала, cover/gainmetadata.
+[Windowsportable](https://github.com/daurensky/wisp/actions/runs/40782081082/artifacts/12858165749): **90,162,400байт,522файла**, SHA256 `0639d2dc52f0dd8a8c7aa01b1ac8275477fef21c1128874fcfb431ce5ae975ee`. Внешний artifactdigest сверён; Wisp.exe/DLL/RNNoise, лицензии Onest/RNNoise и8исходныхWAV проверены. Локальный файл `artifacts/Wisp-native-v4-win-x64.zip`. [LinuxSFU](https://github.com/daurensky/wisp/actions/runs/40782081241/artifacts/12858210126): ELFamd64 и SHA256 также проверены.
 
-Независимые Linuxпроверки: PCM/waveforms/60s/subscriptionretry/gain **6/6PASS**; GIFcodec — Pillow **36файлов/180кадров**, disposal1/2/3, отдельная interlacefixture, transparency/delays/loop. WPFeditor/controls дополнены Windowsтестами; до завершения нового WindowsCI они не объявляются прошедшими.
+Реальный PostgreSQL/API + Go race: **10PASS**, `go vet` PASS. Nativeprobe6клиентов/30downlinks: Opusmic+отдельное shareaudio+H264,2МБфайл одновременно с медиа, token/invites/takeover/rejoin. Отдельно ownerupload → memberreuse → messageaccepted и membernewupload403; managerGET, права каналов, удаление активногоvoiceканала, cover/gainmetadata. Новый paged audience state дополнительно проверен UIharness на фактическом serializer/receiver с ограничением512байт, forged/stale/partial/replayedсостояниями.
 
-Первый checkpoint `77f1546`: [Linux CI40780946869](https://github.com/daurensky/wisp/actions/runs/40780946869) PASS; [Windows40780946705](https://github.com/daurensky/wisp/actions/runs/40780946705)96Core/42Desktop PASS,3FAIL. Исправлены устаревшие проверки ширины, имени кнопки запуска и типа исключения; сценарии сохранены. Шесть снимков editor/Home/recording/picker получены и просмотрены. Follow-up исходников `dd7ab22` также обновляет уже показанные аватары без сброса чата и показывает coverFrame при паузе с сохранением позиции анимации. Его solutionсборка0warnings/errors; следующий WindowsCI проверяет полное дерево.
+Локально solution0warnings/errors; **188** именованных WPFресурсов без brokenreferences/duplicatekeys. Независимые Linuxпроверки: PCM/waveforms/60s/subscriptionretry/gain **6/6PASS**; GIFcodec — Pillow **36файлов/180кадров**, disposal1/2/3, interlacefixture, transparency/delays/loop. Ручной ASCIIсилуэт существующего логотипа проверен моноширинным шрифтом. Первая CIитерация выявила3устаревших assertions; они исправлены, сценарии сохранены, повторный полный проход прошёл.
 
 ## Обновление
 
@@ -52,6 +52,7 @@ PROGRESS.md
 README.md
 docs/NATIVE_EXPANSION.md
 docs/NATIVE_EXPANSION_SPECIFICATION.md
+docs/SERVER.md
 docs/TESTING.md
 server/wisp-sfu/community_management.go
 server/wisp-sfu/data.go

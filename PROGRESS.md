@@ -1,8 +1,26 @@
-# Wisp — комплексная доработка WPF, голоса и демонстрации (28.10.2026)
+# Wisp — комплексная доработка WPF, голоса и демонстрации (29.10.2026)
 
 Новое пользовательское [ТЗ](docs/NATIVE_EXPANSION_SPECIFICATION.md), дополнение к предыдущим требованиям. Исходный commit `4058b21`, ветка `codex/postgres-backend`, исходное дерево было чистым. Шрифт **Onest** сохраняется.
 
-## Актуальный этап — backend и независимые компоненты реализованы, интеграция/проверка (29.10.2026)
+## Итог — программная часть завершена и проверена (29.10.2026)
+
+- Проверенное дерево **451cb920ce2eaa8f97fb5460a7198295064cda5b** (последние функциональные изменения dd7ab22). [Windows40782081082](https://github.com/daurensky/wisp/actions/runs/40782081082): **96Core +45Desktop =141PASS**, C#0warnings/errors, RNNoise/applicationbuild/publish/package PASS. [Linux40782081241](https://github.com/daurensky/wisp/actions/runs/40782081241):10Go/API/PostgreSQL/native/race/vet/staticSFU PASS.
+- [Готовый Windowsportable](https://github.com/daurensky/wisp/actions/runs/40782081082/artifacts/12858165749), [25снимков/TRX](https://github.com/daurensky/wisp/actions/runs/40782081082/artifacts/12857472781), [LinuxSFU](https://github.com/daurensky/wisp/actions/runs/40782081241/artifacts/12858210126). Все получены;25снимков просмотрены, дополнительные полноразмерные проверки picker/settings/profile и моноширинный ASCII выполнены. Проверки sourcepreview используют явно заданные fixtures.
+- Portable `/workspace/wisp/artifacts/Wisp-native-v4-win-x64.zip`: **90,162,400байт,522файла**, SHA256 **0639d2dc52f0dd8a8c7aa01b1ac8275477fef21c1128874fcfb431ce5ae975ee**. Проверены внешний artifactdigest, Wisp.exe/DLL/RNNoise, Onest/RNNoiseлицензии и побайтовое соответствие8WAV. LinuxELF amd64 SHA256 **5869391214e59ea53ceabe074faf4f92d22a2783eb46e7d8670d0d38f76a3010**.
+- Выполнены Grayscale+Onest, права emoji reuse/upload, rail/channelactions/managerAPI, общая полнооконная SettingsShell, headerlessprofile, реальный editor crop/GIF/staticcover, GIFfocus/hover, waveform/совместная запись, composer/медиа, SoundboardPopup/реальные gain, новый sharepicker/autoownmini/globaloverlay/drag/aspect/зрители/независимая громкость, startupHome/ASCII. Обновление аватара не сбрасывает чат/selection/scroll; selectedcover на паузе сохраняет позицию animator.
+- Все файлы/поведение/результаты: [docs/NATIVE_EXPANSION.md](docs/NATIVE_EXPANSION.md). PR https://github.com/daurensky/wisp/pull/8 . Следующие commits после451cb92 меняют только отчёты/инструкции, исполняемый код не меняется.
+- **Осталось:** обновить существующий VPS и проверить физические Windowsмикрофоны/драйверы/GPU/GraphicsCaptureразрешения/мониторы/DPI и маршрут КЗ—Корея. В сессии productionVPS не менялся; регистрации заново не требуется, PostgreSQLv2/файлы/сертификат сохраняются.
+- **Следующее конкретное действие:** выполнить команды ниже на VPS, полностью закрыть старый Wisp через трей и заменить portable. Затем два пользователя проверяют голос+запись одновременно, shareсо звуком/60FPS/mini, mute/streamgain/зрителей, profileGIFeditor/cover, emojiотправку участником и запрет загрузки новогоemoji. При новом сбое продолжать с логом, не переписывать завершённые этапы.
+
+```bash
+cd /opt/wisp-server-v2-src
+git pull --ff-only
+bash server/wisp-sfu/deploy/install.sh 89.126.195.20
+```
+
+### История текущего ТЗ — завершённые этапы
+
+#### Аудит, backend и интеграция (историческая запись)
 
 - **Backend:** отправка существующих emoji участником больше не выполняет запрещённый повторный PUT; новые emoji по-прежнему доступны только owner/admin. Добавлены manager-only GET, создание/переименование/удаление каналов, громкость Soundboard и static coverFrame профиля/иконки. Миграции additive, v2-данные сохраняются.
 - **Пройдены:** Core **96 PASS**; реальный PostgreSQL/API/Go race **10 PASS**, включая native SFU шести клиентов/30 downlinks, голос+отдельное audio+H264+2MBфайл, token/takeover/rejoin, фактическое owner-upload → member-reuse/send и member-new-upload403. Полный лог `/workspace/v4-backend-native.log`. Реальные PCM/waveform/60s/подписки/gain: **6/6 PASS** Linux-smoke. GIFcodec независимо проверен Pillow на disposal1/2/3, transparency, timing/loop. Это не проверка физических Windows-устройств.
@@ -13,7 +31,8 @@
 - **Checkpoint опубликован:** `9a61fc45ac5402a2869c0e11bbfbc375b13176b1` в `codex/postgres-backend`,83изменённых/новых файла. Последняя solutionсборка14.13с:0warnings/errors. В harness включены реальные ImageEditor save/cancel/cover/zoom и livePCM recordingwave; UIисполнение ещё ожидается.
 - **Первый CI77f1546:** [Linux40780946869](https://github.com/daurensky/wisp/actions/runs/40780946869) PASS (PostgreSQL/native/race/vet/staticSFU). [Windows40780946705](https://github.com/daurensky/wisp/actions/runs/40780946705):96Core PASS,42Desktop PASS/3FAIL. Исправлены именно устаревшие assertions ширины252→288, имени кнопки «Запустить» и типа InvalidDataException для обрезанного GIF; сценарии не удалялись. Реальный editor save/cancel/cover/livewave и ранние права/Grayscale/streamchecks уже выполнены,6снимков получены/просмотрены.
 - **Follow-up:** выбранная coverFrame показывается также на паузе AlwaysGIF без перемотки внутреннего animator; после редактирования профиля существующие аватары чата обновляются через weakhosts без сброса строк/scroll/selection, voiceavatars обновляются сразу. Добавлены регрессии blur/resume и изменения уже отправленного аватара. Файлы `AvatarCatalog.cs`, `MainWindow.Avatars.cs`, `MainWindow.Profile.cs`, `MainWindow.cs`, Design/UI/imageтесты.
-- **Следующее конкретное действие:** опубликовать follow-up, выполнить его WindowsCI, разобрать оставшиеся ошибки/TRX/полные снимки, проверить финальный portable, обновить итоговый отчёт/журнал/git. ProductionVPS не менялся.
+- **Follow-up `451cb92` проверен:** Windows [40782081082](https://github.com/daurensky/wisp/actions/runs/40782081082) прошёл Core/DesktopUI и applicationbuild; portable пока собирается. Linux [40782081241](https://github.com/daurensky/wisp/actions/runs/40782081241) PASS:10Go/native/race/vet/staticSFU. Исправления ранних тестов и новые cover/avatarрегрессии включены в этот проход.
+- Portable/TRX/25снимков получены и проверены; финальные результаты и точка продолжения указаны выше. ProductionVPS не менялся.
 
 ---
 
