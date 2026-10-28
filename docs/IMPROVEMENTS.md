@@ -22,9 +22,13 @@
 
 ## Проверка
 
-Первый checkpoint `da9de59`: [Windows](https://github.com/daurensky/wisp/actions/runs/40684614634), [Linux](https://github.com/daurensky/wisp/actions/runs/40684614770) PASS.93Core+29Desktop=122PASS,17снимков. Follow-up `fd4d420` с cross-message selection и picker/GIF regression: [Windows](https://github.com/daurensky/wisp/actions/runs/40685705915), [Linux](https://github.com/daurensky/wisp/actions/runs/40685705917) PASS. Последние небольшие исправления preview/motion/deafen проходят финальный CI; актуальные ссылки будут добавлены в PROGRESS.
+Последние проверенные исходники/тесты **a466347**: [Windows CI](https://github.com/daurensky/wisp/actions/runs/40688202550) и [Linux CI](https://github.com/daurensky/wisp/actions/runs/40688202551) PASS. **93Core+29Desktop=122PASS**,0warnings/errors; RNNoise/portable/staticSFU PASS. [18снимков/TRX](https://github.com/daurensky/wisp/actions/runs/40688202550/artifacts/12815718466) получены и просмотрены, включая исправленный контраст входа/регистрации. Отдельные assertions проверяют wide/compactразметку: физический desktop CI ограничен примерно1044px.
+
+[Windows portable](https://github.com/daurensky/wisp/actions/runs/40688202550/artifacts/12815199083):90,049,093байта,522файла, SHA256 `37e203f39febab567043cb790bca024cd4c23410c69e16454539f390df9f8fc5`. Проверены состав, лицензии, RNNoise и8исходныхWAV без изменения байтов. [SFU Linux binary](https://github.com/daurensky/wisp/actions/runs/40688202551/artifacts/12815518708).
 
 Локально: solution0warnings/errors,171ресурс WPF,93Core PASS; реальный PostgreSQL/API,8Go/race tests и go vet. Nativeprobe:6клиентов/30downlinks, отдельные Opus mic/shareaudio/H264,2MB вложение во время медиа,2зрителя и дедупликация событий, mute/deafen, обновление токена, инвайты в обе стороны, takeover и rejoin. Один старый локальный проход получил таймаут takeover; обновлённый probe и два независимых LinuxCI прошли. Точная причина единичного таймаута не установлена.
+
+В заключительном review также исправлены сохранение обновлённого токена на Home, защита создаваемого сообщества от преждевременного отзыва доступа и читаемость основных кнопок входа/регистрации; рекламные формулировки убраны.
 
 ## Ограничения проверки
 
@@ -36,7 +40,12 @@ Cross-message selection действует на реализованные ви�
 
 ```text
 PROGRESS.md
+README.md
+docs/IMPROVEMENTS.md
 docs/IMPROVEMENT_SPECIFICATION.md
+docs/MASTER_IMPLEMENTATION.md
+docs/SERVER.md
+docs/TESTING.md
 server/wisp-sfu/community_management.go
 server/wisp-sfu/community_management_test.go
 server/wisp-sfu/data.go
@@ -51,10 +60,12 @@ src/Wisp.Core/VoicePreferences.cs
 src/Wisp.Desktop/AvatarCatalog.cs
 src/Wisp.Desktop/ChatTextSelection.cs
 src/Wisp.Desktop/Design/GifPlayback.cs
+src/Wisp.Desktop/Design/Motion.cs
 src/Wisp.Desktop/Design/Palette.Dark.xaml
 src/Wisp.Desktop/Design/Palette.Light.xaml
 src/Wisp.Desktop/Design/Tokens.xaml
 src/Wisp.Desktop/Design/Ui.cs
+src/Wisp.Desktop/Dialogs.cs
 src/Wisp.Desktop/EmojiPicker.cs
 src/Wisp.Desktop/MainWindow.CommunitySettings.cs
 src/Wisp.Desktop/MainWindow.Profile.cs
@@ -76,8 +87,4 @@ tests/Wisp.Core.Tests/VoicePreferencesTests.cs
 tests/Wisp.Desktop.Tests/DesignSystemTests.cs
 tests/Wisp.Desktop.Tests/ThemeTests.cs
 tools/Wisp.Sfu.Probe/Program.cs
-src/Wisp.Desktop/Design/Motion.cs
-README.md
-docs/SERVER.md
-docs/IMPROVEMENTS.md
 ```
