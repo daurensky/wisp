@@ -34,4 +34,12 @@ The database role must be able to create/drop test schemas; each test cleans up 
 
 Keep the PR draft until physical audio/capture and the real Astana VPS routes are validated. A first local six-client test hit a publishing-connect timeout; a subsequent diagnostic run passed. Preserve diagnostic output and investigate if CI or real machines reproduce it rather than attributing it to the database without evidence.
 
-Master implementation: test navigation between communities/Home during voice+share, the independent call panel, selected audio output for simultaneous call/message/notification/soundboard/share streams, original semantic sound delivery, neutral idle status, tray state priority/handle disposal, Onest, rectangular captions and redesigned settings/profile screenshots. See MASTER_IMPLEMENTATION.md.
+Master implementation: test navigation between communities/Home during voice+share, the unified bottom voice controls and central stream surface, selected audio output for simultaneous call/message/notification/soundboard/share streams, original semantic sound delivery, neutral idle status, tray state priority/handle disposal, Onest, rectangular captions and redesigned settings/profile screenshots. See MASTER_IMPLEMENTATION.md.
+
+## UI/UX improvement regressions
+
+The current suite also checks neutral palettes, four-column layout with no extra call panel/member search, same-community clicks preserving row identity/history, mute/deafen intent outside calls and on disk, embedded stream loading/mini/full/ended states, source-picker tabs and removed windows, shared hover GIF/reset, unified profile view/edit/cancel/save/status,22/48px emoji classification, and exact single/multi-message clipboard text. Source-picker screenshots use deterministic preview fixtures; physical Graphics Capture remains a manual check.
+
+Real PostgreSQL tests exercise owner/admin/member authorization, metadata/icon updates, role grant/revocation, media rename/delete, outsider rejection and kicked-member access. Native integration includes two viewers sending explicit join/leave/replay events, verifies cue deduplication and confirms that voice remains connected after leaving viewing.
+
+After updating server and clients, check hover GIFs on message/member/voice/profile, the emoji popup at window edges, actual app/monitor previews and source disappearance, host-only viewer cues, and that leaving a voice channel ends its broadcast while a viewer closing playback does not.
