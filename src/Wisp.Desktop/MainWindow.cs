@@ -27,7 +27,7 @@ public sealed partial class MainWindow : ThemedWindow
     private readonly HashSet<string> publishedFiles = new(), unavailableFiles = new();
     private readonly HashSet<string> dismissedScreens = new();
     private readonly Dictionary<string,byte[]> remoteScreens = new();
-    private readonly Button notificationButton, cancelRecordButton;
+    private readonly Button notificationButton, cancelRecordButton,inviteButton,createChannelButton;
     private readonly Button sendButton;
     private ModalHandle? notificationPopup;
     private string memberRenderKey = "";
@@ -161,8 +161,8 @@ public sealed partial class MainWindow : ThemedWindow
         var side = new DockPanel();
         var heading = new DockPanel { Height = Ui.Metric("Size.SectionHeader"), Margin = Ui.Insets(Ui.M, 0) };
         var channelActions = new StackPanel { Orientation = Orientation.Horizontal };
-        channelActions.Children.Add(Tool("users", "Пригласить в сообщество", HostCommunity));
-        channelActions.Children.Add(Tool("plus", "Создать канал", CreateChannel));
+        channelActions.Children.Add(inviteButton=Tool("users", "Пригласить в сообщество", HostCommunity));
+        channelActions.Children.Add(createChannelButton=Tool("plus", "Создать канал", CreateChannel));
         DockPanel.SetDock(channelActions, Dock.Right); heading.Children.Add(channelActions);
         serverTitle.TextTrimming = TextTrimming.CharacterEllipsis; serverTitle.VerticalAlignment = VerticalAlignment.Center;
         heading.Children.Add(serverTitle); DockPanel.SetDock(heading, Dock.Top); side.Children.Add(heading);
@@ -174,6 +174,7 @@ public sealed partial class MainWindow : ThemedWindow
         connectionButton.Click += (_, _) => ConnectionDetails();
         messages.SetResourceReference(ItemsControl.ItemContainerStyleProperty, "ListItem.Chat");
         servers.SetResourceReference(ItemsControl.ItemContainerStyleProperty, "ListItem.Chat");
+        channels.SetResourceReference(ItemsControl.ItemContainerStyleProperty,"ListItem.Chat");
         self.Children.Add(connectionButton);var identity=new DockPanel();identityAvatar=Btn("Мой профиль",()=>ViewProfile(this.profile));identityAvatar.Padding=Ui.Insets(0);identityAvatar.Margin=Ui.Insets(0,0,Ui.S,0);identityAvatar.Width=identityAvatar.Height=36;Ui.Style(identityAvatar,"Button.Ghost");DockPanel.SetDock(identityAvatar,Dock.Left);identity.Children.Add(identityAvatar);userName.VerticalAlignment=VerticalAlignment.Center;identity.Children.Add(userName);self.Children.Add(identity);
         var controls = new StackPanel { Orientation = Orientation.Horizontal };
         micButton = VoiceToggle("mic", "mic-off", "Выключить микрофон", "Включить микрофон", ToggleMic);
@@ -438,6 +439,7 @@ public sealed partial class MainWindow : ThemedWindow
     private void UpdateStatus()
     {
         bool inVoice = voiceChannelId is not null;
+        inviteButton.IsEnabled=community is not null&&cloud is not null;createChannelButton.IsEnabled=community?.OwnerId==profile.Id;
         leaveButton.Visibility = inVoice || cloudChannelId is not null || activeVoiceFailed&&voiceCommunity is not null ? Visibility.Visible : Visibility.Collapsed;
         foreach (var button in new[] { micButton, deafenButton, shareButton }) button.Visibility = inVoice ? Visibility.Visible : Visibility.Collapsed;
         connection.Text = voiceIntent.Connecting ? "Соединение" : voiceChannelId is not null ? "В канале: " + (community is null ? "" : store.GetChannels((voiceCommunity??community).Id).FirstOrDefault(c => c.Id == voiceChannelId)?.Name) + (rtc is null ? "" : $" · {rtc.TransportName}: {rtc.ConnectedCount} соединений") : cloudChannelId is not null ? "В канале · голос ещё не подключён" : cloud is not null ? "Сервер подключён" : "Локальный режим";
