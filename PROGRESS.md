@@ -19,6 +19,13 @@
 - Добавлены cross-message selection (новый `ChatTextSelection.cs`), regression точного копирования нескольких сообщений, lazyGIF/reset, выбор источников с удалением закрытого источника, cleanupпри синхронном отказе захвата. Эти последние изменения собираются локально, но требуют нового WindowsCI перед завершением.
 - **Продолжить:** опубликовать follow-up, выполнить его WindowsCI, разобрать реальные ошибки/снимки (включая source picker), скачать финальный portable, обновить итоговый отчёт/PROGRESS и сохранить всё вgit.
 
+### Follow-up fd4d420 проверен
+
+- Windows40685705915 и Linux40685705917:PASS; cross-message selection, picker/tab/закрытый источник, GIF reset и fallbackcapture cleanup включены в прошедшие UIпроверки.122теста и portable собраны.
+- Визуальная проверка выявила обрезку текста навигации настроек; ширина увеличена. Профиль позволяет менять статус. Последний review уменьшил decode первого кадра до displayразмера, включил popupmotion через его anchor и учёл deafen в previewSoundboard. Новая локальная сборка:0warnings/errors,171ресурс.
+- Добавлен [отчёт нового ТЗ](docs/IMPROVEMENTS.md), README и инструкция сервера уточняют сохранение существующих данных v2 и новый доступ owner/admin/member.
+- **Следующее конкретное действие:** опубликовать этот последний review, дождаться его WindowsCI, посмотреть source-picker/emoji/profile снимки, скачать финальный portable и зафиксировать итог. Последние4небольших productionправки пока не объявляются прошедшими Windows.
+
 ---
 
 # Wisp — выполнение Master Implementation Specification

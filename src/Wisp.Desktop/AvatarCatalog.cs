@@ -62,7 +62,7 @@ public sealed class AvatarCatalog(string root, string localId)
             BitmapSource first;
             using(var encoded=new MemoryStream(bytes,false))
             {
-                first=BitmapDecoder.Create(encoded,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad).Frames[0];first.Freeze();
+                var frame=new BitmapImage();frame.BeginInit();frame.CacheOption=BitmapCacheOption.OnLoad;frame.DecodePixelWidth=Math.Max(32,(int)size*2);frame.StreamSource=encoded;frame.EndInit();frame.Freeze();first=frame;
             }
             image.Source=first;
             BitmapSource? animatedSource=null;

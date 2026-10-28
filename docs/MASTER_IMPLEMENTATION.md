@@ -1,3 +1,5 @@
+> Исторический отчёт предыдущего Master. Палитра, панель звонка, поиск участников и настройки изменены новым ТЗ: актуальный итог в [IMPROVEMENTS.md](IMPROVEMENTS.md).
+
 # Native Wisp master implementation
 
 ## Scope and architecture

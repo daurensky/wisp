@@ -56,12 +56,12 @@ public static class Motion
     public static Duration Duration(FrameworkElement element, string speed = "Fast") =>
         Allowed(element) ? (Duration)Application.Current.FindResource("Motion." + speed) : new Duration(TimeSpan.Zero);
 
-    public static void Fade(FrameworkElement element, double from, double to, string speed = "Fast", Action? completed = null)
+    public static void Fade(FrameworkElement element, double from, double to, string speed = "Fast", Action? completed = null, FrameworkElement? scope = null)
     {
         if (completions.TryGetValue(element, out var previous)) { completions.Remove(element); previous.Finish(); }
         element.BeginAnimation(UIElement.OpacityProperty, null);
         element.Opacity = to;
-        var duration = Duration(element, speed);
+        var duration = Duration(scope ?? element, speed);
         if (duration.TimeSpan == TimeSpan.Zero) { completed?.Invoke(); return; }
         var animation = new DoubleAnimation(from, to, duration)
         {

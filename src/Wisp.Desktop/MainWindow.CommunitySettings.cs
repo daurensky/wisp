@@ -150,7 +150,7 @@ public sealed partial class MainWindow
         {
             var row = new DockPanel { Margin = Ui.Insets(0, Ui.S) };
             var actions = new StackPanel { Orientation = Orientation.Horizontal }; DockPanel.SetDock(actions, Dock.Right); row.Children.Add(actions);
-            if (kind == "sound") actions.Children.Add(Btn("Прослушать", () => Run(async () => { var local = await EnsureSoundAsync(target.Id, asset.Id); if (local is not null) sounds.PlayFile(local.LocalPath); })));
+            if (kind == "sound") actions.Children.Add(Btn("Прослушать", () => Run(async () => { var local = await EnsureSoundAsync(target.Id, asset.Id); if (local is not null&&!deafened) sounds.PlayFile(local.LocalPath); })));
             if (manager)
             {
                 actions.Children.Add(Btn("Переименовать", () =>
@@ -179,7 +179,7 @@ public sealed partial class MainWindow
             var preview = new FormDialog(this, "Предварительный просмотр");
             var name = preview.Field("Название", Path.GetFileName(pick.FileName));
             if (kind == "emoji") preview.Add(AvatarCatalog.Image(pick.FileName, 96));
-            else preview.Action("Прослушать", () => sounds.PlayFile(pick.FileName));
+            else preview.Action("Прослушать", () => {if(!deafened)sounds.PlayFile(pick.FileName);});
             preview.Accept("Загрузить");
             if (preview.ShowDialog() != true) return;
             Run(async () =>

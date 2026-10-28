@@ -70,7 +70,7 @@ public sealed class EmojiPicker
             if (args.Key != Key.Escape) return;
             args.Handled = true; Close(); anchor.Focus();
         };
-        popup.Opened += (_, _) => { Motion.Fade(surface, 0, 1); grid.Children.OfType<Button>().FirstOrDefault()?.Focus(); };
+        popup.Opened += (_, _) => { Motion.Fade(surface, 0, 1, scope: anchor); grid.Children.OfType<Button>().FirstOrDefault()?.Focus(); };
         popup.Closed += (_, _) => { Motion.Stop(surface); anchor.Unloaded -= AnchorUnloaded; };
     }
 
