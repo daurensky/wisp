@@ -4,6 +4,8 @@ on:
   push:
     branches: ['codex/postgres-backend']
     paths: ['src/**', 'tools/Wisp.Ui.Benchmark/**', '.github/workflows/ui-performance.yml']
+  pull_request:
+    paths: ['src/**', 'tools/Wisp.Ui.Benchmark/**', '.github/workflows/ui-performance.yml']
   workflow_dispatch:
     inputs:
       baseline_ref:
