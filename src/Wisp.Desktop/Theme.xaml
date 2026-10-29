@@ -563,10 +563,12 @@
                 <RepeatButton Command="Slider.IncreaseLarge" Background="Transparent" Opacity="0"/>
               </Track.IncreaseRepeatButton>
             </Track>
+            <Border x:Name="FocusRing" BorderBrush="{DynamicResource FocusRing}" BorderThickness="1" CornerRadius="{StaticResource Radius.Control}" Opacity="0" IsHitTestVisible="False"/>
           </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property="local:PointerFocus.KeyboardFocus" Value="True">
               <Setter Property="Foreground" Value="{DynamicResource AccentHover}"/>
+              <Setter TargetName="FocusRing" Property="Opacity" Value="1"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter Property="Opacity" Value="0.4"/>

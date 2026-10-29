@@ -172,9 +172,18 @@ internal static class ModalLifecycleChecks
                 oldCard.BeginAnimation(UIElement.OpacityProperty,new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(200)));
                 oldShade.BeginAnimation(UIElement.OpacityProperty,new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(200)));
             }
-            var point = oldCard.TranslatePoint(new Point(200, 100), layer);
-            Assert.Equal(Colors.White, Pixel(layer, point));
-            Assert.True(oldShade.Opacity < 1); Assert.True(oldCard.Opacity < 1);
+            // A newly attached clock starts on the next composition tick, not
+            // synchronously in BeginAnimation. Measure the running legacy path.
+            int samples=0,peakRed=0;bool partialOpacity=false;
+            CollectFrames(owner,()=>
+            {
+                var point=oldCard.TranslatePoint(new Point(200,100),layer);
+                var observed=Pixel(layer,point);samples++;
+                if(oldShade.Opacity<1&&oldCard.Opacity<1){partialOpacity=true;peakRed=Math.Max(peakRed,observed.R);}
+            },110);
+            UiCheckEvidence.Write("legacy_modal_white_peak_red",peakRed);
+            UiCheckEvidence.Write("legacy_modal_sampled_frames",samples);
+            Assert.True(samples>0&&partialOpacity&&peakRed>128,$"No bright legacy frame: samples={samples},partial={partialOpacity},peak={peakRed}");
             LegacyTransparencyReproduced = true;
             UiCheckEvidence.Write("legacy_modal_opacity_white_frame_reproduced",LegacyTransparencyReproduced);
             UiCheckEvidence.Write("legacy_modal_animation_allowed",animated);
