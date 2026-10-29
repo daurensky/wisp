@@ -45,3 +45,5 @@ dotnet test tests/Wisp.Desktop.Tests -c Release
 [Новые UI/UX-улучшения и проверка](docs/IMPROVEMENTS.md) · [ТЗ](docs/IMPROVEMENT_SPECIFICATION.md)
 
 [Нативные компоненты, Grayscale и GIF-редактор](docs/NATIVE_EXPANSION.md) · [Комплексное ТЗ](docs/NATIVE_EXPANSION_SPECIFICATION.md)
+
+[Последние UI/UX-исправления: настройки, профиль, каналы и фокус](docs/UI_UX_FIXES.md) · [ТЗ](docs/UI_UX_FIXES_SPECIFICATION.md)

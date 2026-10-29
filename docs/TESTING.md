@@ -45,3 +45,14 @@ Real PostgreSQL tests exercise owner/admin/member authorization, metadata/icon u
 After updating server and clients, check hover GIFs on message/member/voice/profile, the emoji popup at window edges, actual app/monitor previews and source disappearance, host-only viewer cues, and that leaving a voice channel ends its broadcast while a viewer closing playback does not.
 
 Native expansion: Grayscale inheritance in controls/popups/tooltips, 4-section full settings, headerless profile/Always GIF, selected composited GIF covers, actual image crop/disposal/interlace/timing/loop/cleanup, borrowed call PCM/real waveforms/60s, media preview/seek/deafen, Soundboard gain permissions/persistence, global mini over modals, host-authorized paged audience snapshots and independent stream gain. See NATIVE_EXPANSION.md and the latest PROGRESS.md for measured results.
+
+
+## Settings, rail, profile and input regressions (29 October)
+
+The STA desktop harness shows actual WPF windows in Windows CI. It tests both palettes at 800×560 and 1040×780; screenshots and `ui-evidence.txt` are included in the test-results artifact. Native Win32 cursor movement/clicks reproduce the former channel-row hover gap and verify that clicking its gear opens settings without joining/selecting the channel. Native focus changes exercise mouse, Tab traversal, Alt, deactivation/reactivation, context menus, tooltips and the volume slider.
+
+`ModalLifecycleChecks` samples complete RenderTargetBitmap frames during CompositionTarget.Rendering. A controlled reproduction of the previous card/container opacity clocks over a white underlay demonstrates the white frame; the replacement must keep the card's Surface opaque on open, section switch and close. When OS animations are disabled in CI, equivalent local managed WPF clocks run on test visuals; OS settings are unchanged. This verifies a rendering path, not a particular physical GPU driver.
+
+Rail checks retain control/artwork identity and animation clock across repeated render and settings-section changes. Profile checks cover 400×140/20:7 display/edit/crop/animated output, top-aligned scrolling About and removal of status editing while preserving the stored status. Home checks inspect the rendered graphic ASCII, rather than its startup log. Voice checks retain microphone/deafen outside calls, hide the complete extra block when disconnected, verify equal button cells with physical-pixel rounding, and render optimistic connection/cancellation while admission is deliberately held pending.
+
+These checks extend the previous media/audio/backend regressions. They do not replace checks of physical microphones, multiple monitors, capture drivers or real Internet routes.
