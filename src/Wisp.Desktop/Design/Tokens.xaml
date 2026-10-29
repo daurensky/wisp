@@ -34,11 +34,9 @@
   <sys:Double x:Key="Width.SettingsSidebar">192</sys:Double>
   <sys:Double x:Key="Width.WindowMinimum">800</sys:Double>
   <sys:Double x:Key="Height.WindowMinimum">560</sys:Double>
-  <sys:Double x:Key="Width.DialogSmall">400</sys:Double>
   <sys:Double x:Key="Width.DialogMedium">480</sys:Double>
   <sys:Double x:Key="Width.DialogLarge">560</sys:Double>
   <sys:Double x:Key="Width.PictureInPicture">384</sys:Double>
-  <sys:Double x:Key="Height.PictureInPicture">248</sys:Double>
   <sys:Double x:Key="Height.ComposerMaximum">144</sys:Double>
   <sys:Double x:Key="Width.Window">1360</sys:Double>
   <sys:Double x:Key="Height.Window">864</sys:Double>
@@ -46,7 +44,6 @@
   <sys:Double x:Key="Height.MediaPreview">112</sys:Double>
   <sys:Double x:Key="Height.Media">256</sys:Double>
   <sys:Double x:Key="Width.Media">512</sys:Double>
-  <sys:Double x:Key="Height.Banner">128</sys:Double>
   <sys:Double x:Key="Width.Player">416</sys:Double>
   <sys:Double x:Key="Width.Seek">144</sys:Double>
   <sys:Double x:Key="Height.Multiline">96</sys:Double>
@@ -54,13 +51,11 @@
   <sys:Double x:Key="Border.Hairline">1</sys:Double>
   <Thickness x:Key="Padding.Control">12,4</Thickness>
   <Thickness x:Key="Padding.Row">12,8</Thickness>
-  <Thickness x:Key="Padding.Dialog">24,16</Thickness>
   <Thickness x:Key="Margin.Field">0,4,0,12</Thickness>
   <Thickness x:Key="Margin.Button">4,0</Thickness>
   <Thickness x:Key="Margin.Section">12,16,12,8</Thickness>
   <Thickness x:Key="Margin.Check">0,8</Thickness>
   <Thickness x:Key="Margin.SettingsModal">48</Thickness>
-  <Thickness x:Key="Margin.Icon">0,0,8,0</Thickness>
   <CornerRadius x:Key="Radius.Small">4</CornerRadius>
   <CornerRadius x:Key="Radius.Control">8</CornerRadius>
   <CornerRadius x:Key="Radius.Dialog">12</CornerRadius>

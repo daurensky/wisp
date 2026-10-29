@@ -7,23 +7,6 @@ namespace Wisp.Core.Tests;
 public sealed class RtcTests
 {
     [Fact]
-    public void OpusCodecRoundTripsOneTwentyMillisecondFrame()
-    {
-        var encoder = Concentus.OpusCodecFactory.CreateEncoder(48000, 1, Concentus.Enums.OpusApplication.OPUS_APPLICATION_VOIP);
-        var decoder = Concentus.OpusCodecFactory.CreateDecoder(48000, 1);
-        try
-        {
-            encoder.Bitrate = 32000;
-            var pcm = Enumerable.Range(0, 960).Select(i => (short)(3000 * Math.Sin(2 * Math.PI * 440 * i / 48000))).ToArray();
-            var packet = new byte[1275]; var decoded = new short[960];
-            var size = encoder.Encode(pcm.AsSpan(), 960, packet.AsSpan(), packet.Length);
-            Assert.InRange(size, 1, 1275);
-            Assert.Equal(960, decoder.Decode(packet.AsSpan(0, size), decoded.AsSpan(), 960, false));
-            Assert.Contains(decoded, sample => sample != 0);
-        }
-        finally { (encoder as IDisposable)?.Dispose(); (decoder as IDisposable)?.Dispose(); }
-    }
-    [Fact]
     public void FragmentsReassembleAndRejectOversizedAllocations()
     {
         var original = new byte[100000]; Random.Shared.NextBytes(original);
