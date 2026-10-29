@@ -10,7 +10,8 @@
 - Изменены этот журнал и копия ТЗ; компоненты в работе. Новые результаты не выдаются за предыдущие141PASS.
 - **Этап реализации завершён:** общий48px inset и headerseparator/opaque modal lifecycle; key-preserved rail/channelrows; serveravatars40px/radius8; banner400×140/20:7/единые16pxinsets/TopAbout/безstatuseditor; focus-visible/cleanupactivation; voiceactionsCollapsed/UniformGrid; HomeASCII. Изменены `ModalHost`, `Settings*`, `Design/{PointerFocus,Motion,Tokens,VirtualRows,Palette*}`, `ServerRailItem*`, `ChannelRow*`, `ProfileLayout/ProfileView/ImageEditor/ImageEditingService`, `HomeBrandView*`, `MainWindow*` и UItests. Сборка solution **0warnings/errors**,195WPFресурсов/diffcheckPASS. При интеграции исправлен missingSystem.IO в новом тесте.
 - Новые checks выполняют настоящие pointermove/click, native activation/focus/keyboard, counterfactual старого whiteopacity/hovergap, кадры CompositionTarget.Rendering сконтрастной подложкой, обе темы/800×560 иобычныйразмер. Пока только скомпилированы: **WindowsUIисполнение ещё не подтверждено**.
-- **Следующее конкретное действие:** опубликовать checkpoint и выполнить WindowsCI; разобрать реальные ошибки/TRX/ui-evidence/snapshots, исправить обнаруженное, затем проверитьportable и отдельно описать подтверждённые4причины. ProductionVPS не меняется; backendвэтомТЗнепереписывается.
+- **Checkpoint опубликован:** `8ba4db3c34a3cb864c9fa9326035bc64b96312f9`,38изменённых/новыхфайлов; cross-buildDesktopTestsпослеevidence5.15с,0warnings/errors.
+- **Следующее конкретное действие:** выполнить WindowsCI опубликованного дерева; разобрать реальные ошибки/TRX/ui-evidence/snapshots, исправить обнаруженное, затем проверитьportable и отдельно описать подтверждённые4причины. ProductionVPS не меняется; backendвэтомТЗнепереписывается.
 
 ---
 
