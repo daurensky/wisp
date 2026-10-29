@@ -11,6 +11,8 @@ series = {label: [json.loads(p.read_text(encoding="utf-8-sig"))
 for label, samples in series.items():
     if not samples or any(item.get("status") != "success" for item in samples):
         raise SystemExit(f"Missing/failed measurements: {label}")
+    if any(item.get("schema") != 2 or item.get("idle_settling_ms") != 1500 for item in samples):
+        raise SystemExit(f"Expected schema-2 measurements with 1500 ms idle settling: {label}")
 
 
 def read(item, path):
@@ -23,7 +25,7 @@ metrics = [
     ("First process to Home ready", "process_start_to_home_ready_ms", "ms", "first"),
     ("Repeated process to Home ready", "process_start_to_home_ready_ms", "ms", "repeat"),
     ("Main construction", "main_construction_ms", "ms", "all"),
-    ("Home idle CPU (one logical core)", "home_idle.cpu_percent_one_logical_core", "%", "all"),
+    ("Settled cached Home CPU on hosted runner (one logical core)", "home_idle.cpu_percent_one_logical_core", "%", "all"),
     ("Home idle private memory", "home_idle.memory.private_bytes", "MiB", "all"),
     ("Home idle working set", "home_idle.memory.working_set_bytes", "MiB", "all"),
     ("Server switch median", "server_switch.median_ms", "ms", "all"),
@@ -42,9 +44,9 @@ metrics = [
     ("History retained rows", "history_retained_count", "rows", "all"),
     ("History maximum realized presenters", "history_max_realized_presenters", "rows", "all"),
     ("After 20 server switches private memory", "after_20_server_switches_memory.private_bytes", "MiB", "all"),
-    ("Chat idle CPU (one logical core)", "chat_idle.cpu_percent_one_logical_core", "%", "all"),
+    ("Settled cached chat CPU on hosted runner (one logical core)", "chat_idle.cpu_percent_one_logical_core", "%", "all"),
 ]
-summary = {"schema": 1, "baseline_revision": series["baseline"][0]["revision"],
+summary = {"schema": 2, "baseline_revision": series["baseline"][0]["revision"],
            "current_revision": series["current"][0]["revision"], "metrics": [],
            "limits": series["current"][0]["unavailable"],
            "interpretation": "Descriptive same-runner samples, not statistical proof of speedup. No forced GC or OS-cache flush."}
@@ -55,7 +57,11 @@ lines = ["# Wisp cached-UI measurements", "",
          "This is a cached local-UI probe, not online login or an OS cold-cache launch. "
          "Latency includes action, layout and dispatcher work through ApplicationIdle, not physical presentation latency. "
          "Long history supplies 1000 messages to the application's existing bounded list; retained and realized counts are reported. "
-         "Managed allocation/GC counters and process CPU/private/working-set counters are sampled without GC.Collect().", "",
+         "Managed allocation/GC counters and process CPU/private/working-set counters are sampled without GC.Collect(). "
+         "CPU intervals follow 1500 ms without navigation so the 800 ms scroll-chrome timer can settle; "
+         "these hosted-runner observations do not establish physical-device idle CPU. "
+         "Raw idle samples include window/focus state and OS-thread CPU snapshots bracketing each interval. "
+         "Thread deltas include snapshot overhead and cannot fully attribute CPU from new/exited/unreadable threads; they contain no stack profiling.", "",
          "| Metric | Baseline | Current | Unit |",
          "|---|---:|---:|---|"]
 for title, path, unit, selection in metrics:

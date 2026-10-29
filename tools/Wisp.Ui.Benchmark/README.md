@@ -1,6 +1,8 @@
 # Native cached-UI performance probe
 
-This developer tool shows the actual WPF MainWindow with an isolated SQLite fixture: two servers, ten channels per server, twelve members, and 100 cached messages per text channel. It records process-first/repeated startup to Home, construction, two-second Home/chat idle CPU, private/working-set/managed memory, allocations and GC counts, server/channel dispatcher responsiveness, repeated unchanged online-roster UI refreshes, and long-history load/scroll with realized controls.
+This developer tool shows the actual WPF MainWindow with an isolated SQLite fixture: two servers, ten channels per server, twelve members, and 100 cached messages per text channel. It records process-first/repeated startup to Home, construction, two-second settled cached Home/chat CPU on the hosted runner, private/working-set/managed memory, allocations and GC counts, server/channel dispatcher responsiveness, repeated unchanged online-roster UI refreshes, and long-history load/scroll with realized controls.
+
+Each CPU interval follows 1500 ms without navigation, exceeding the 800 ms scroll-chrome timer. Raw schema-2 results record the native UI thread ID, window activation and focused-control type/name without changing focus. OS-thread lifetime CPU snapshots bracket each timed interval; deltas include snapshot overhead, can omit CPU from new/exited/unreadable threads, and can be affected by thread-ID reuse. They help locate CPU activity but do not replace native/managed stack profiling. The probe does not subscribe to `CompositionTarget.Rendering`, which could alter idle rendering behavior.
 
 The long-history input contains 1000 messages. Current production retains at most 200 visual rows; the probe reports both input and actual retained/realized counts instead of claiming that 1000 controls are rendered.
 

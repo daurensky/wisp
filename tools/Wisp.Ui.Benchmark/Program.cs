@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Wisp.Core;
@@ -16,6 +18,7 @@ internal static class Program
 {
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
     private const int InputHistoryCount = 1000;
+    private const int IdleSettlingMilliseconds = 1500;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static readonly UserProfile Profile = new("00000000000000000000000000000001", "Benchmark");
 
@@ -34,7 +37,7 @@ internal static class Program
         string output = Required(options, "output");
         var result = new Dictionary<string, object?>
         {
-            ["schema"] = 1,
+            ["schema"] = 2,
             ["label"] = options.GetValueOrDefault("label", "unknown"),
             ["revision"] = options.GetValueOrDefault("revision", "unknown"),
             ["process_run"] = int.Parse(options.GetValueOrDefault("run", "0")),
@@ -43,6 +46,8 @@ internal static class Program
             ["logical_processors"] = Environment.ProcessorCount,
             ["window_width_dip"] = 1280,
             ["window_height_dip"] = 800,
+            ["ui_os_thread_id"] = GetCurrentThreadId(),
+            ["idle_settling_ms"] = IdleSettlingMilliseconds,
             ["scope"] = "Cached local UI; no authentication/network or physical audio/video capture.",
             ["cold_cache_controlled"] = false,
             ["startup_definition"] = "First/repeated process in series; OS file/assembly caches are uncontrolled. Fixture preparation is excluded.",
@@ -242,21 +247,114 @@ internal static class Program
 
     private static Dictionary<string, object> MeasureIdle(Window window, Process process)
     {
-        PumpFor(window, TimeSpan.FromMilliseconds(250));
+        PumpFor(window, TimeSpan.FromMilliseconds(IdleSettlingMilliseconds));
+        var uiBefore = UiState(window);
+        var threadsBefore = SampleThreadCpu(process);
         var cpu = process.TotalProcessorTime;
         var watch = Stopwatch.StartNew();
         PumpFor(window, TimeSpan.FromSeconds(2));
         double elapsed = watch.Elapsed.TotalMilliseconds;
         double cpuMilliseconds = (process.TotalProcessorTime - cpu).TotalMilliseconds;
+        var threadsAfter = SampleThreadCpu(process);
+        uint uiThreadId = GetCurrentThreadId();
+        var threadDeltas = threadsBefore.CpuByThread.Keys.Union(threadsAfter.CpuByThread.Keys).Select(threadId =>
+        {
+            double? before = threadsBefore.CpuByThread.TryGetValue(threadId, out var first) ? first : null;
+            double? after = threadsAfter.CpuByThread.TryGetValue(threadId, out var last) ? last : null;
+            return new Dictionary<string, object?>
+            {
+                ["os_thread_id"] = threadId,
+                ["is_ui_thread"] = threadId == uiThreadId,
+                ["before_lifetime_cpu_ms"] = before,
+                ["after_lifetime_cpu_ms"] = after,
+                ["cpu_ms"] = before.HasValue && after.HasValue ? Math.Max(0, after.Value - before.Value) : null,
+                ["observation"] = before.HasValue && after.HasValue ? "both_boundaries" : before.HasValue ? "missing_after" : "missing_before"
+            };
+        }).OrderByDescending(item => (double?)item["cpu_ms"] ?? -1).ToArray();
         return new()
         {
+            ["definition"] = "Settled cached UI on the hosted runner after 1500 ms without navigation; not physical-device idle CPU.",
+            ["settling_ms"] = IdleSettlingMilliseconds,
             ["duration_ms"] = elapsed,
             ["process_cpu_ms"] = cpuMilliseconds,
             ["cpu_percent_one_logical_core"] = cpuMilliseconds / elapsed * 100,
             ["cpu_percent_machine"] = cpuMilliseconds / elapsed / Environment.ProcessorCount * 100,
+            ["ui_state_before"] = uiBefore,
+            ["ui_state_after"] = UiState(window),
+            ["os_thread_cpu"] = new Dictionary<string, object>
+            {
+                ["definition"] = "Lifetime CPU snapshots bracket the timed interval and include snapshot overhead. Only threads observed at both boundaries receive a delta; exited/new/unreadable threads can prevent attribution of all process CPU. Thread IDs can be reused. No stack profiling is performed.",
+                ["before"] = threadsBefore.Output,
+                ["after"] = threadsAfter.Output,
+                ["deltas"] = threadDeltas
+            },
             ["memory"] = Memory(process)
         };
     }
+
+    private static Dictionary<string, object?> UiState(Window window)
+    {
+        var focused = Keyboard.FocusedElement;
+        return new()
+        {
+            ["window_active"] = window.IsActive,
+            ["window_visible"] = window.IsVisible,
+            ["keyboard_focus_within_window"] = window.IsKeyboardFocusWithin,
+            ["focused_control_type"] = focused?.GetType().FullName,
+            ["focused_control_name"] = focused switch
+            {
+                FrameworkElement element => element.Name,
+                FrameworkContentElement content => content.Name,
+                _ => null
+            }
+        };
+    }
+
+    private static (Dictionary<int, double> CpuByThread, Dictionary<string, object> Output) SampleThreadCpu(Process process)
+    {
+        var captured = DateTimeOffset.UtcNow;
+        var watch = Stopwatch.StartNew();
+        var cpuByThread = new Dictionary<int, double>();
+        var unavailable = new List<Dictionary<string, object?>>();
+        try
+        {
+            process.Refresh();
+            foreach (ProcessThread thread in process.Threads)
+            {
+                using (thread)
+                {
+                    int? threadId = null;
+                    try
+                    {
+                        threadId = thread.Id;
+                        cpuByThread[threadId.Value] = thread.TotalProcessorTime.TotalMilliseconds;
+                    }
+                    catch (Exception error) when (error is Win32Exception or InvalidOperationException or NotSupportedException)
+                    {
+                        unavailable.Add(new() { ["os_thread_id"] = threadId, ["error"] = error.GetType().Name + ": " + error.Message });
+                    }
+                }
+            }
+        }
+        catch (Exception error) when (error is Win32Exception or InvalidOperationException or NotSupportedException)
+        {
+            unavailable.Add(new() { ["os_thread_id"] = null, ["error"] = error.GetType().Name + ": " + error.Message });
+        }
+        return (cpuByThread, new()
+        {
+            ["captured_at_utc"] = captured,
+            ["capture_duration_ms"] = watch.Elapsed.TotalMilliseconds,
+            ["threads"] = cpuByThread.OrderBy(pair => pair.Key).Select(pair => new Dictionary<string, object>
+            {
+                ["os_thread_id"] = pair.Key,
+                ["lifetime_cpu_ms"] = pair.Value
+            }).ToArray(),
+            ["unavailable"] = unavailable
+        });
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
 
     private static Dictionary<string, object> Memory(Process process)
     {
