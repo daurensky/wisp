@@ -53,5 +53,9 @@ internal sealed class AudioDeviceWatcher(Action changed) : IMMNotificationClient
     public void OnDeviceRemoved(string id) => changed();
     public void OnDefaultDeviceChanged(DataFlow flow, Role role, string id) { if (role == Role.Multimedia) changed(); }
     public void OnPropertyValueChanged(string id, PropertyKey key) { }
-    public void Dispose() { catalog.UnregisterEndpointNotificationCallback(this); catalog.Dispose(); }
+    public void Dispose()
+    {
+        try { catalog.UnregisterEndpointNotificationCallback(this); }
+        finally { catalog.Dispose(); }
+    }
 }

@@ -1,4 +1,3 @@
-using System.Windows;
 using System.Windows.Controls;
 using Wisp.Core;
 
@@ -10,11 +9,6 @@ public sealed partial class MainWindow
     {
         if(!store.CanManageCommunity(target.Id,profile.Id))return null;
         var menu=new ContextMenu();var item=new MenuItem{Header="Настройки сервера"};item.Click+=(_,_)=>OpenCommunitySettings(target);menu.Items.Add(item);return menu;
-    }
-    private FrameworkElement CommunityIcon(Community target,FrameworkElement hoverScope)
-    {
-        var asset=target.IconAssetId is null?null:store.GetAsset(target.IconAssetId);
-        return ServerRailItem.CreateAvatar(target.Name,asset?.LocalPath,Ui.Metric("Size.RailItem")-8,hoverScope,target.IconCoverFrame);
     }
     private async Task RefreshCommunityIcon(Community target)
     {

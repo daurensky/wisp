@@ -47,7 +47,7 @@ public sealed class VoiceMessagePlayer : UserControl, IDisposable
         Loaded+=(_,_)=>{if(!subscribed){SessionChanged+=OnSessionChanged;subscribed=true;}Refresh();if(!waveformLoaded)_=LoadWaveformAsync();};
         // Virtualization/navigation detaches only this view; it does not stop audio.
         Unloaded+=(_,_)=>Dispose();
-        try { using var metadata = new AudioFileReader(path);duration=metadata.TotalTime;seek.Maximum=Math.Max(.01,duration.TotalSeconds);Refresh(); } catch (Exception ex) { error(ex.Message); }
+        Refresh();
     }
     private async Task LoadWaveformAsync()
     {
@@ -56,36 +56,51 @@ public sealed class VoiceMessagePlayer : UserControl, IDisposable
         {
             var data=await AudioWaveform.LoadAsync(path,lifetime.Token);
             if(lifetime.IsCancellationRequested)return;
-            waveform.Peaks=data.Peaks;waveform.ToolTip="Нажмите на волну для перемотки";waveformLoaded=true;
+            duration=data.Duration;waveform.Peaks=data.Peaks;waveform.ToolTip="Нажмите на волну для перемотки";waveformLoaded=true;Refresh();
         }
         catch(OperationCanceledException)when(lifetime.IsCancellationRequested){}
-        catch(Exception ex){if(!lifetime.IsCancellationRequested)waveform.ToolTip="Волна недоступна: "+ex.Message;}
+        catch(Exception ex)
+        {
+            if(lifetime.IsCancellationRequested)return;
+            waveform.ToolTip="Волна недоступна: "+ex.Message;
+            try
+            {
+                // Long recordings can still play and seek when preview analysis rejects them.
+                var length=IsCurrent?session!.Duration:await Task.Run(()=>
+                {
+                    using var metadata=new AudioFileReader(path);return metadata.TotalTime;
+                },lifetime.Token);
+                if(!lifetime.IsCancellationRequested){duration=length;Refresh();}
+            }
+            catch(OperationCanceledException)when(lifetime.IsCancellationRequested){}
+            catch(Exception metadataError){if(!lifetime.IsCancellationRequested)error(metadataError.Message);}
+        }
         finally{if(ReferenceEquals(waveformLoad,lifetime))waveformLoad=null;lifetime.Dispose();}
     }
     private bool IsCurrent=>session is not null&&StringComparer.OrdinalIgnoreCase.Equals(session.Path,path);
-    private void EnsureSession(bool playAfterOpen)
+    private void EnsureSession()
     {
         if(IsCurrent)return;
         session?.Dispose();session=null;
         var next=new FilePlaybackSession(path,outputId);session=next;
         next.Seek(pendingPosition);
+        var dispatcher=Dispatcher;var reportError=error;
         next.PlaybackStopped+=(_,args)=>
         {
-            if(Dispatcher.HasShutdownStarted)return;
-            Dispatcher.BeginInvoke(()=>
+            if(dispatcher.HasShutdownStarted)return;
+            dispatcher.BeginInvoke(()=>
             {
                 if(!ReferenceEquals(session,next))return;
-                if(args.Exception is not null)error("Голосовое сообщение: "+args.Exception.Message);
+                if(args.Exception is not null)reportError("Голосовое сообщение: "+args.Exception.Message);
                 SessionChanged?.Invoke();
             });
         };
-        if(playAfterOpen)next.Play();
     }
     private void Toggle()
     {
         if (!allowed()) { error("Звук выключен. Включи наушники для прослушивания."); return; }
         if(IsCurrent&&session!.State==PlaybackState.Playing)session.Pause();
-        else {EnsureSession(false);session!.Play();}
+        else {EnsureSession();session!.Play();}
         SessionChanged?.Invoke();Refresh();
     }
     public static void ConfigureOutput(string? id)
@@ -104,7 +119,10 @@ public sealed class VoiceMessagePlayer : UserControl, IDisposable
         bool current=IsCurrent;
         var position=current?session!.Position:pendingPosition;
         var length=current?session!.Duration:duration;
-        updating=true;seek.Value=Math.Clamp(position.TotalSeconds,seek.Minimum,seek.Maximum);updating=false;
+        if(current)duration=length;
+        updating=true;
+        try{seek.Maximum=Math.Max(.01,length.TotalSeconds);seek.Value=Math.Clamp(position.TotalSeconds,seek.Minimum,seek.Maximum);}
+        finally{updating=false;}
         time.Text=$"{position:m\\:ss} / {length:m\\:ss}";
         waveform.Progress=length.TotalSeconds>0?Math.Clamp(position.TotalSeconds/length.TotalSeconds,0,1):0;
         bool playing=current&&session!.State==PlaybackState.Playing;play.IsChecked=playing;

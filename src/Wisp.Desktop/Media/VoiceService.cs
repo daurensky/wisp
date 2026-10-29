@@ -7,11 +7,12 @@ using Wisp.Core;
 namespace Wisp.Desktop.Media;
 
 /// <summary>Independent WASAPI microphone, per-user Opus decoders and one mixed communications output.</summary>
-public sealed class VoiceService : IDisposable
+public sealed class VoiceService : IDisposable, IAsyncDisposable
 {
     private const int FrameSamples = 960;
     private readonly object gate = new();
     private readonly SemaphoreSlim deviceSwitch = new(1);
+    private Task stopping = Task.CompletedTask;
     private readonly Dictionary<string, PlaybackPeer> peers = new(StringComparer.Ordinal);
     private readonly short[] captureFrame = new short[FrameSamples];
     private IWaveIn? input;
@@ -219,7 +220,7 @@ public sealed class VoiceService : IDisposable
         if (deafened || packet.Length is 0 or > 1275) return;
         lock (gate)
         {
-            if (mixer is null) return;
+            if (!running || mixer is null) return;
             if (!peers.TryGetValue(peerId, out var peer))
             {
                 peer = new PlaybackPeer { Gain = GetPeerVolume(peerId) }; peers.Add(peerId, peer); mixer.AddMixerInput(peer);
@@ -242,36 +243,80 @@ public sealed class VoiceService : IDisposable
     }
     private void CloseDevices()
     {
-        IWaveIn? previous;
-        lock (gate) { previous = input; input = null; }
-        if (previous is not null) { previous.DataAvailable -= Capture; previous.StopRecording(); previous.Dispose(); }
-        output?.Stop(); output?.Dispose(); output = null;
-        inputDevice?.Dispose(); inputDevice = null;
+        IWaveIn? previousInput;
+        SharedAudioOutput? previousOutput;
+        MMDevice? previousDevice;
+        lock (gate)
+        {
+            previousInput = input; input = null;
+            previousOutput = output; output = null;
+            previousDevice = inputDevice; inputDevice = null;
+            captureCount = 0;
+        }
+        if (previousInput is not null)
+        {
+            Cleanup("voice-input-unsubscribe", () => previousInput.DataAvailable -= Capture);
+            Cleanup("voice-input-stop", previousInput.StopRecording);
+            Cleanup("voice-input-dispose", previousInput.Dispose);
+        }
+        if (previousOutput is not null)
+        {
+            Cleanup("voice-output-stop", previousOutput.Stop);
+            Cleanup("voice-output-dispose", previousOutput.Dispose);
+        }
+        if (previousDevice is not null) Cleanup("voice-input-device-dispose", previousDevice.Dispose);
     }
-    public void Stop()
+    public Task StopAsync()
     {
-        running = false;
-        Interlocked.Exchange(ref activityTimer, null)?.Dispose();
-        var pending = Interlocked.Exchange(ref debounce, null);
-        try { pending?.Cancel(); } catch (ObjectDisposedException) { }
-        watcher?.Dispose(); watcher = null;
-        deviceSwitch.Wait();
+        lock (gate)
+        {
+            running = false;
+            Interlocked.Exchange(ref activityTimer, null)?.Dispose();
+            var pending = Interlocked.Exchange(ref debounce, null);
+            try { pending?.Cancel(); } catch (ObjectDisposedException) { }
+            if (!stopping.IsCompleted) return stopping;
+            if (watcher is null && input is null && output is null && inputDevice is null &&
+                encoder is null && mixer is null && peers.Count == 0 && speakers.Count == 0) return stopping;
+            var previousWatcher = watcher; watcher = null;
+            return stopping = StopDevicesAsync(previousWatcher);
+        }
+    }
+    private async Task StopDevicesAsync(AudioDeviceWatcher? previousWatcher)
+    {
+        await deviceSwitch.WaitAsync().ConfigureAwait(false);
         try
         {
-            CloseDevices();
-            lock (gate)
+            await Task.Run(() =>
             {
-                (encoder as IDisposable)?.Dispose(); encoder = null; mixer = null;
-                foreach (var peer in peers.Values) peer.Decoder.Dispose(); peers.Clear();
-                foreach (var id in speakers.Keys.ToArray()) ClearSpeech(id);
-            }
+                if (previousWatcher is not null) Cleanup("voice-watcher-dispose", previousWatcher.Dispose);
+                CloseDevices();
+                IDisposable? previousEncoder;
+                PlaybackPeer[] previousPeers;
+                lock (gate)
+                {
+                    previousEncoder = encoder as IDisposable; encoder = null; mixer = null;
+                    previousPeers = peers.Values.ToArray(); peers.Clear();
+                    foreach (var id in speakers.Keys.ToArray()) Cleanup("voice-speaking-reset", () => ClearSpeech(id));
+                }
+                if (previousEncoder is not null) Cleanup("voice-encoder-dispose", previousEncoder.Dispose);
+                foreach (var peer in previousPeers) Cleanup("voice-decoder-dispose", peer.Decoder.Dispose);
+            }).ConfigureAwait(false);
         }
         finally { deviceSwitch.Release(); }
     }
-    public void Dispose()
+    public void Stop() => StopAsync().GetAwaiter().GetResult();
+    public async ValueTask DisposeAsync()
     {
-        Stop();
-        lock (gate) { micProcessing?.Dispose(); micProcessing = null; denoiser = null; }
+        await StopAsync().ConfigureAwait(false);
+        MicProcessingChain? previousProcessing;
+        lock (gate) { previousProcessing = micProcessing; micProcessing = null; denoiser = null; }
+        if (previousProcessing is not null) Cleanup("voice-processing-dispose", previousProcessing.Dispose);
+    }
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+    private static void Cleanup(string source, Action action)
+    {
+        try { action(); }
+        catch (Exception error) { DiagnosticLog.Write(source, error); }
     }
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string,float> gains = new(StringComparer.Ordinal);
     private string? volumePath;

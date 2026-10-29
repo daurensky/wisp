@@ -58,6 +58,7 @@ public sealed class SoundServiceTests
         public int Stops;
         public bool Disposed;
         public bool FailInitialization;
+        public bool FailStop;
         public PlaybackState PlaybackState{get;private set;}
         public WaveFormat OutputWaveFormat=>Source?.WaveFormat??WaveFormat.CreateIeeeFloatWaveFormat(48000,2);
         public float Volume{get;set;}=1;
@@ -65,7 +66,7 @@ public sealed class SoundServiceTests
         public void Init(IWaveProvider provider){if(FailInitialization)throw new IOException("Render endpoint unavailable");Source=provider;Initialized.TrySetResult();}
         public void Play()=>PlaybackState=PlaybackState.Playing;
         public void Pause()=>PlaybackState=PlaybackState.Paused;
-        public void Stop(){Stops++;PlaybackState=PlaybackState.Stopped;PlaybackStopped?.Invoke(this,new StoppedEventArgs());}
+        public void Stop(){Stops++;if(FailStop)throw new IOException("Render endpoint failed while stopping");PlaybackState=PlaybackState.Stopped;PlaybackStopped?.Invoke(this,new StoppedEventArgs());}
         public void Dispose(){Disposed=true;}
     }
 
@@ -80,6 +81,51 @@ public sealed class SoundServiceTests
         Assert.Throws<IOException>(()=>sounds.ConfigureOutput("missing-endpoint"));
         Assert.True(oldOutput.Disposed);Assert.True(rejected.Disposed);
         sounds.PlayFile(path);Assert.Equal(PlaybackState.Playing,replacement.PlaybackState);
+    }
+
+    [Fact]
+    public void FailedSoundboardStopDisposesOutputAndReaderAndAllowsReplay()
+    {
+        string path=CopyOriginalWave();
+        var failed=new FakeOutput{FailStop=true};var replacement=new FakeOutput();
+        int created=0;
+        try
+        {
+            using var sounds=new SoundService(_=>created++==0?failed:replacement);
+            sounds.PlayFile(path);
+            Assert.Throws<IOException>(sounds.StopFile);
+            Assert.True(failed.Disposed);
+            using(var exclusive=new FileStream(path,FileMode.Open,FileAccess.ReadWrite,FileShare.None)){}
+            sounds.PlayFile(path);
+            Assert.Equal(PlaybackState.Playing,replacement.PlaybackState);
+        }
+        finally{File.Delete(path);}
+    }
+
+    [Fact]
+    public async Task FailedNotificationStopStillDisposesSoundboardAndReleasesReader()
+    {
+        string path=CopyOriginalWave();
+        var board=new FakeOutput{FailStop=true};var notification=new FakeOutput{FailStop=true};
+        int created=0;
+        var sounds=new SoundService(_=>Interlocked.Increment(ref created)==1?board:notification);
+        try
+        {
+            sounds.PlayFile(path);sounds.Play(SoundEvent.MessageReceived);
+            await notification.Initialized.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Throws<IOException>(sounds.Dispose);
+            Assert.True(board.Disposed);Assert.True(notification.Disposed);
+            using(var exclusive=new FileStream(path,FileMode.Open,FileAccess.ReadWrite,FileShare.None)){}
+            sounds.Dispose();
+        }
+        finally{sounds.Dispose();File.Delete(path);}
+    }
+
+    private static string CopyOriginalWave()
+    {
+        string path=Path.Combine(Path.GetTempPath(),"wisp-sound-stop-"+Guid.NewGuid().ToString("N")+".wav");
+        File.Copy(Path.Combine(AppContext.BaseDirectory,"Assets","Sounds","voice-join.wav"),path);
+        return path;
     }
 
     [Fact]

@@ -145,15 +145,34 @@ public sealed class SoundService : IDisposable
         output.PlaybackStopped+=(_,args)=>{if(!disposed&&args.Exception is{} error)Error?.Invoke("Воспроизведение звука остановлено: "+error.Message);};
         return output;
     }
-    private void StopFileCore() { soundboard?.Stop(); soundboard?.Dispose(); soundboard = null; file?.Dispose(); file = null;playingFilePath=null; }
+    private void StopFileCore()
+    {
+        var previousOutput=soundboard;var previousFile=file;
+        soundboard=null;file=null;playingFilePath=null;
+        try
+        {
+            if(previousOutput is not null)
+                try{previousOutput.Stop();}finally{previousOutput.Dispose();}
+        }
+        finally{previousFile?.Dispose();}
+    }
     public void Dispose()
     {
         lock (gate)
         {
             if (disposed) return; disposed = true; stop.Cancel(); pending.Writer.TryComplete();
-            notifications?.Stop(); notifications?.Dispose(); notifications = null; mixer = null; StopFileCore(); samples.Clear();
+            _ = worker.ContinueWith(_ => stop.Dispose(), TaskScheduler.Default);
+            var previousNotifications=notifications;notifications=null;mixer=null;
+            try
+            {
+                if(previousNotifications is not null)
+                    try{previousNotifications.Stop();}finally{previousNotifications.Dispose();}
+            }
+            finally
+            {
+                try{StopFileCore();}finally{samples.Clear();}
+            }
         }
-        _ = worker.ContinueWith(_ => stop.Dispose(), TaskScheduler.Default);
     }
     private sealed class CueSamples(float[] data, float gain) : ISampleProvider
     {

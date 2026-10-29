@@ -181,12 +181,51 @@ public sealed class ThemeTests
         }
         var errors = new List<string>();
         phase("voice seek");
-        using (var player = new VoiceMessagePlayer(wave, errors.Add))
+        VoiceMessagePlayer player;
+        using (var exclusive = new FileStream(wave, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
-            var slider = Assert.Single(Descendants(player).OfType<Slider>());
-            Assert.Equal(2, slider.Maximum); slider.Value = 1;
-            Assert.Contains(Descendants(player).OfType<TextBlock>(), text => text.Text == "0:01 / 0:02");
+            player = new VoiceMessagePlayer(wave, errors.Add);
+            // Constructing an off-screen chat row must not open or decode its attachment.
             Assert.Empty(errors);
+        }
+        using (player)
+        {
+            var probe = new Window { Content = player, Width = 400, Height = 100, ShowInTaskbar = false };
+            try
+            {
+                probe.Show();
+                var slider = Assert.Single(Descendants(player).OfType<Slider>());
+                PumpUntil(probe, () => slider.Maximum == 2, "Voice duration should arrive with the asynchronous waveform.");
+                slider.Value = 1;
+                Assert.Contains(Descendants(player).OfType<TextBlock>(), text => text.Text == "0:01 / 0:02");
+                Assert.Empty(errors);
+            }
+            finally { probe.Close(); }
+        }
+        var longWave = Path.Combine(root, "long-voice.wav");
+        const int longSeconds = 601, longBytes = longSeconds * 24000 * 2;
+        using (var writer = new BinaryWriter(File.Create(longWave)))
+        {
+            writer.Write("RIFF"u8); writer.Write(longBytes + 36); writer.Write("WAVEfmt "u8); writer.Write(16);
+            writer.Write((short)1); writer.Write((short)1); writer.Write(24000); writer.Write(48000);
+            writer.Write((short)2); writer.Write((short)16); writer.Write("data"u8); writer.Write(longBytes);
+            writer.BaseStream.SetLength(longBytes + 44);
+        }
+        using (var longPlayer = new VoiceMessagePlayer(longWave, errors.Add))
+        {
+            var probe = new Window { Content = longPlayer, Width = 400, Height = 100, ShowInTaskbar = false };
+            try
+            {
+                probe.Show();
+                var slider = Assert.Single(Descendants(longPlayer).OfType<Slider>());
+                PumpUntil(probe, () => slider.Maximum == longSeconds, "Long recordings should retain duration and seeking when waveform analysis is rejected.");
+                var waveView = Assert.Single(Descendants(longPlayer).OfType<WaveformView>());
+                Assert.Null(waveView.Peaks); Assert.StartsWith("Волна недоступна:", Assert.IsType<string>(waveView.ToolTip));
+                slider.Value = 600;
+                Assert.Contains(Descendants(longPlayer).OfType<TextBlock>(), text => text.Text == "10:00 / 10:01");
+                Assert.Empty(errors);
+            }
+            finally { probe.Close(); }
         }
         var profile = store.Register("UiTester", "correct horse battery");
         var community = store.CreateCommunity("UI checks", profile.Id);
@@ -721,7 +760,7 @@ public sealed class ThemeTests
         var intent=(VoiceJoinIntent)typeof(MainWindow).GetField("voiceIntent",flags)!.GetValue(main)!;
         Assert.True(intent.Connecting);
         var leaving=(Task)typeof(MainWindow).GetMethod("LeaveVoice",flags)!.Invoke(main,null)!;
-        PumpLayout(main);Assert.True(leaving.IsCompletedSuccessfully);
+        PumpUntil(main,()=>leaving.IsCompleted,"voice disconnection completion");Assert.True(leaving.IsCompletedSuccessfully);
         Assert.False(intent.Connecting);Assert.Null(intent.ChannelId);
         Assert.Null(typeof(MainWindow).GetField("reconnect",flags)!.GetValue(main));
         var status=(TextBlock)typeof(MainWindow).GetField("connection",flags)!.GetValue(main)!;
@@ -760,6 +799,12 @@ public sealed class ThemeTests
         object? Get(string name)=>type.GetField(name,flags)!.GetValue(main);
         void Set(string name,object? value)=>type.GetField(name,flags)!.SetValue(main,value);
         void Invoke(string name,params object[] arguments)=>type.GetMethod(name,flags)!.Invoke(main,arguments);
+        void CheckLocalPresence(string? expectedChannel)
+        {
+            var visible=(IReadOnlyList<PeerPresence>)type.GetProperty("DisplayPresence",flags)!.GetValue(main)!;
+            var local=Assert.Single(visible,person=>person.Profile.Id==profile.Id);
+            Assert.Equal(new PeerPresence((UserProfile)Get("profile")!,expectedChannel,(bool)Get("muted")!||(bool)Get("deafened")!,(bool)Get("deafened")!),local);
+        }
         var originalRoom=Get("rtc");var originalVoice=Get("voiceCommunity");var originalChannel=Get("voiceChannelId");
         var originalSharing=Get("sharing");var originalFailed=Get("activeVoiceFailed");var originalSelected=Get("selectedChannel");
         var voiceChannel=store.GetChannels(original.Id).First(c=>c.IsVoice);
@@ -782,6 +827,11 @@ public sealed class ThemeTests
         {
             Set("rtc",room);Set("voiceCommunity",original);Set("voiceChannelId",voiceChannel.Id);Set("activeVoiceFailed",false);Set("sharing",true);
             Invoke("UpdateStatus");Invoke("RenderServers");PumpLayout(main);CheckVoiceActionLayout(main,true);
+            CheckLocalPresence(voiceChannel.Id);
+            Invoke("CaptureError", "stale capture failure");
+            Set("shareGeneration", (int)Get("shareGeneration")! + 1);
+            PumpLayout(main);
+            Assert.True((bool)Get("sharing")!);
             var originalSource=(Wisp.Desktop.Media.ScreenShareService)Get("screen")!;
             var originalGeneration=Get("shareGeneration");
             var rail=(VirtualRows)Get("servers")!;
@@ -791,6 +841,8 @@ public sealed class ThemeTests
             Assert.Same(room,Get("rtc"));Assert.Same(original,Get("voiceCommunity"));Assert.Equal(voiceChannel.Id,Get("voiceChannelId"));
             Assert.True(Assert.IsType<bool>(Get("sharing")));Assert.Equal(originalGeneration,Get("shareGeneration"));Assert.Same(originalSource,Get("screen"));
             Assert.Equal(0,room.EnterCalls);Assert.Equal(0,room.LeaveCalls);
+            var oldDeafened=Get("deafened");Set("deafened",true);
+            try{CheckLocalPresence(null);}finally{Set("deafened",oldDeafened);}
             Invoke("SelectChannel",secondText);PumpLayout(main);
             Assert.Equal(secondText.Id,Assert.IsType<Channel>(Get("selectedChannel")).Id);
             Assert.Equal(voiceChannel.Id,Get("voiceChannelId"));Assert.Equal(0,room.LeaveCalls);Assert.Equal(0,room.EnterCalls);
@@ -818,6 +870,7 @@ public sealed class ThemeTests
             CheckGlobalMini(main,video,center,profile);
             video.SetUnavailable();SaveSnapshot(main,"central-stream-dark");video.Close();Assert.Empty(center.Children.Cast<UIElement>());
             main.Width=Ui.Metric("Width.Window");Invoke("SetCommunity",original);Invoke("SelectChannel",voiceChannel);PumpLayout(main);
+            CheckLocalPresence(voiceChannel.Id);
             var channelRows=(VirtualRows)Get("channels")!;
             var voiceButton=Assert.Single(Descendants(channelRows).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)==voiceChannel.Name);
             Assert.NotEqual(BrushColor((Brush)Application.Current.FindResource("Selected")),BrushColor(voiceButton.Background));
@@ -827,6 +880,7 @@ public sealed class ThemeTests
             Assert.Equal(Colors.Transparent,BrushColor(Assert.IsType<Border>(voiceContainer.Template.FindName("Item",voiceContainer)).Background));
             voiceContainer.IsSelected=false;
             Invoke("ShowHome");PumpLayout(main);
+            CheckLocalPresence(null);
             Assert.True(((ScrollViewer)Get("homeWorkspace")!).IsVisible);Assert.Equal(Visibility.Collapsed,((DockPanel)Get("chatWorkspace")!).Visibility);
             Assert.False(Assert.IsType<Button>(Get("inviteButton")).IsEnabled);
             Assert.Equal(Visibility.Collapsed,Assert.IsType<Button>(Get("serverSettingsButton")).Visibility);

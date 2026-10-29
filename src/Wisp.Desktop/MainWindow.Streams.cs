@@ -23,7 +23,7 @@ public sealed partial class MainWindow
         public readonly HashSet<string> Visible = new(StringComparer.Ordinal);
     }
     private readonly Dictionary<string, AudienceSnapshot> remoteAudiences = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, float> previousStreamVolumes = new(StringComparer.Ordinal);
+    private readonly HashSet<Task> retiringVideoWorkers = new();
     private long audienceRevision;
     private bool streamPresentationHooks;
     private string audienceRosterKey = "";
@@ -200,8 +200,32 @@ public sealed partial class MainWindow
     private void StopSharing()
     {
         Interlocked.Increment(ref shareGeneration);
-        notice.Text="";notice.Visibility=Visibility.Collapsed;streamViewers.Stop();shareAudio.Stop();screen.Stop();sharedPeers="";if(viewers.Remove(profile.Id,out var localView))localView.Close();
+        notice.Text = "";
+        notice.Visibility = Visibility.Collapsed;
+        streamViewers.Stop();
+        CleanupStep("share-audio-stop", shareAudio.Stop);
+        CleanupStep("screen-stop", screen.Stop);
+        sharedPeers = "";
+        if (viewers.Remove(profile.Id, out var localView)) CleanupStep("local-view-close", localView.Close);
         if (!sharing) return; sharing = false; ((ToggleIconButton)shareButton).IsChecked = false; SendRealtime("screen-stop", Array.Empty<byte>());  Notify("Демонстрация остановлена.");RenderChannels();
+    }
+    private void CaptureStatus(string text)
+    {
+        long generation = Volatile.Read(ref shareGeneration);
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!closing && sharing && generation == Volatile.Read(ref shareGeneration)) Notify(text);
+        });
+    }
+    private void CaptureError(string text)
+    {
+        long generation = Volatile.Read(ref shareGeneration);
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (closing || !sharing || generation != Volatile.Read(ref shareGeneration)) return;
+            StopSharing();
+            Notify(text, true);
+        });
     }
     private ScreenViewer CreateViewer(string peerId)
     {
@@ -219,13 +243,8 @@ public sealed partial class MainWindow
         if (peerId != profile.Id) CloseOtherCentralViewers(peerId);
         var viewer = new ScreenViewer(this, $"{name} · Демонстрация", streamWorkspace, ownStream: peerId == profile.Id);
         viewers[peerId] = viewer; sharePlayback.SetMuted(peerId, false);
-        viewer.SetVolume(previousStreamVolumes.GetValueOrDefault(peerId, 1));
         viewer.SetVolume(sharePlayback.GetVolume(peerId));
-        viewer.VolumeChanged += value =>
-        {
-            if (value > 0) previousStreamVolumes[peerId] = value;
-            sharePlayback.SetVolume(peerId, value);
-        };
+        viewer.VolumeChanged += value => sharePlayback.SetVolume(peerId, value);
         if (peerId == profile.Id)
         {
             viewer.StopRequested += StopSharing;
@@ -244,7 +263,7 @@ public sealed partial class MainWindow
         {
             if(peerId==profile.Id)screen.PreviewEnabled=false;
             AnnounceView(peerId,false);viewers.Remove(peerId); dismissedScreens.Add(peerId);
-            if (videoReceivers.TryRemove(peerId, out var receiver)) receiver.Dispose();
+            if (videoReceivers.TryRemove(peerId, out var receiver)) RetireVideoReceiver(receiver);
             videoFrames.TryRemove(peerId, out _); sharePlayback.SetMuted(peerId, true);
         };
         RefreshViewerAvatars();
@@ -260,11 +279,33 @@ public sealed partial class MainWindow
             QueueVideoFrame(peerId,info,pixels);
         }, error => Dispatcher.BeginInvoke(() => { if (!closing) Notify(error, true); }),
             () => SendRealtime("screen-keyframe", JsonSerializer.SerializeToUtf8Bytes(new ScreenCommand(peerId, info.SessionId))));
-        if (!videoReceivers.TryAdd(peerId, receiver)) receiver.Dispose();else { AnnounceView(peerId,true); RefreshViewerAvatars(); }
+        if (!videoReceivers.TryAdd(peerId, receiver)) RetireVideoReceiver(receiver);else { AnnounceView(peerId,true); RefreshViewerAvatars(); }
+    }
+    private void RetireVideoReceiver(ScreenVideoReceiver receiver)
+    {
+        var cleanup = ObserveVideoRetirementAsync(receiver);
+        retiringVideoWorkers.Add(cleanup);
+        _ = ForgetVideoRetirementAsync(cleanup);
+    }
+    private static async Task ObserveVideoRetirementAsync(ScreenVideoReceiver receiver)
+    {
+        try { await receiver.DisposeAsync(); }
+        catch (Exception ex) { DiagnosticLog.Write("video-receiver-cleanup", ex); }
+    }
+    private async Task ForgetVideoRetirementAsync(Task cleanup)
+    {
+        await cleanup;
+        retiringVideoWorkers.Remove(cleanup);
+    }
+    private async Task DrainVideoReceiversAsync()
+    {
+        foreach (var peerId in videoReceivers.Keys.ToArray())
+            if (videoReceivers.TryRemove(peerId, out var receiver)) RetireVideoReceiver(receiver);
+        await Task.WhenAll(retiringVideoWorkers.ToArray());
     }
     private void StopVideoPeer(string peerId,bool ended=false)
     {
-        if (videoReceivers.TryRemove(peerId, out var receiver)) receiver.Dispose(); videoFrames.TryRemove(peerId, out _);
+        if (videoReceivers.TryRemove(peerId, out var receiver)) RetireVideoReceiver(receiver); videoFrames.TryRemove(peerId, out _);
         if(viewers.Remove(peerId,out var viewer)) viewer.Close();
         sharePlayback.Remove(peerId); remoteStreams.Remove(peerId); remoteAudiences.Remove(peerId); dismissedScreens.Remove(peerId);
     }
