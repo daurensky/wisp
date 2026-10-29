@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Wisp.Core;
 using Wisp.Desktop;
@@ -52,13 +53,16 @@ internal static class ModalLifecycleChecks
                     var modal = ModalHost.Open(owner, "Настройки", view, options: new ModalOptions(FullWindow: true));
                     var shade = Assert.IsType<Grid>(layer.Children[layer.Children.Count - 1]);
                     var card = Assert.Single(shade.Children.OfType<Border>(), border => border.Name == "ModalCard");
+                    AnimateScrimWhenSystemMotionIsDisabled(shade,card);
                     void Sample()
                     {
                         if (!ReferenceEquals(shade.Parent, layer) || !ReferenceEquals(card.Parent, shade) || card.ActualWidth <= 24 || card.ActualHeight <= 24) return;
                         Assert.Equal(1, shade.Opacity); Assert.Equal(1, card.Opacity);
                         var expected = Assert.IsType<SolidColorBrush>(Application.Current.FindResource("Surface")).Color;
                         var point = card.TranslatePoint(new Point(card.ActualWidth - 12, card.ActualHeight - 12), layer);
-                        Assert.Equal(expected, Pixel(layer, point)); captured++;
+                        var observed=Pixel(layer,point);
+                        if(observed!=expected){UiCheckEvidence.Write("modal_pixel_mismatch",$"point={point},card={card.ActualWidth}x{card.ActualHeight},layer={layer.ActualWidth}x{layer.ActualHeight},actual={observed},expected={expected}");snapshot?.Invoke("modal-pixel-mismatch");}
+                        Assert.Equal(expected, observed); captured++;
                     }
                     try
                     {
@@ -122,13 +126,16 @@ internal static class ModalLifecycleChecks
         var modal = ModalHost.Open(owner, "Настройки сервера", view, options: new ModalOptions(FullWindow: true));
         var layer = ModalHost.Surface(owner); var shade = Assert.IsType<Grid>(layer.Children[layer.Children.Count - 1]);
         var card = Assert.Single(shade.Children.OfType<Border>(), border => border.Name == "ModalCard");
+        AnimateScrimWhenSystemMotionIsDisabled(shade,card);
         void Sample()
         {
             if (!ReferenceEquals(shade.Parent, layer) || card.ActualWidth <= 24 || card.ActualHeight <= 24) return;
             Assert.Equal(1, shade.Opacity); Assert.Equal(1, card.Opacity);
             var expected = Assert.IsType<SolidColorBrush>(Application.Current.FindResource("Surface")).Color;
             var point = card.TranslatePoint(new Point(card.ActualWidth - 12, card.ActualHeight - 12), layer);
-            Assert.Equal(expected, Pixel(layer, point));
+            var observed=Pixel(layer,point);
+            if(observed!=expected){UiCheckEvidence.Write("server_modal_pixel_mismatch",$"point={point},card={card.ActualWidth}x{card.ActualHeight},actual={observed},expected={expected}");snapshot?.Invoke("server-modal-pixel-mismatch");}
+            Assert.Equal(expected, observed);
         }
         try
         {
@@ -158,30 +165,39 @@ internal static class ModalLifecycleChecks
             // The brush is already correct; parent opacity alone leaks white.
             bool animated = Motion.Allowed(oldShade);
             Motion.Enter(oldCard); Motion.Fade(oldShade, 0, 1, "Normal");
-            if (animated)
+            // Hosted Windows can disable system animations. Exercise the same
+            // two managed opacity clocks locally without changing any OS setting.
+            if(!animated)
             {
-                var point = oldCard.TranslatePoint(new Point(200, 100), layer);
-                Assert.Equal(Colors.White, Pixel(layer, point));
-                Assert.True(oldShade.Opacity < 1); Assert.True(oldCard.Opacity < 1);
-                LegacyTransparencyReproduced = true;
+                oldCard.BeginAnimation(UIElement.OpacityProperty,new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(200)));
+                oldShade.BeginAnimation(UIElement.OpacityProperty,new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(200)));
             }
+            var point = oldCard.TranslatePoint(new Point(200, 100), layer);
+            Assert.Equal(Colors.White, Pixel(layer, point));
+            Assert.True(oldShade.Opacity < 1); Assert.True(oldCard.Opacity < 1);
+            LegacyTransparencyReproduced = true;
             UiCheckEvidence.Write("legacy_modal_opacity_white_frame_reproduced",LegacyTransparencyReproduced);
             UiCheckEvidence.Write("legacy_modal_animation_allowed",animated);
         }
         finally { Motion.Stop(oldCard); Motion.Stop(oldShade); layer.Children.Remove(oldShade); }
     }
 
+    private static void AnimateScrimWhenSystemMotionIsDisabled(Grid shade,Border card)
+    {
+        if(Motion.Allowed(card))return;
+        var scrim=Assert.Single(shade.Children.OfType<Border>(),border=>border.Name=="ModalScrim");
+        scrim.BeginAnimation(UIElement.OpacityProperty,new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(200)));
+    }
+
     private static Color Pixel(FrameworkElement visual, Point point)
     {
-        var sample = new DrawingVisual();
-        using (var drawing = sample.RenderOpen())
-        {
-            drawing.PushTransform(new TranslateTransform(-Math.Floor(point.X), -Math.Floor(point.Y)));
-            drawing.DrawRectangle(new VisualBrush(visual), null, new Rect(0, 0, visual.ActualWidth, visual.ActualHeight));
-            drawing.Pop();
-        }
-        var bitmap = new RenderTargetBitmap(1, 1, 96, 96, PixelFormats.Pbgra32); bitmap.Render(sample);
-        var pixel = new byte[4]; bitmap.CopyPixels(pixel, 4, 0);
+        // VisualBrush normalizes to its descendant drawing bounds, which can
+        // differ from layout bounds during a transition. Sample actual layer
+        // pixels in the same coordinates as TranslatePoint instead.
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(visual.ActualWidth),(int)Math.Ceiling(visual.ActualHeight),96,96,PixelFormats.Pbgra32);
+        bitmap.Render(visual);
+        int x=Math.Clamp((int)Math.Floor(point.X),0,bitmap.PixelWidth-1),y=Math.Clamp((int)Math.Floor(point.Y),0,bitmap.PixelHeight-1);
+        var pixel = new byte[4]; bitmap.CopyPixels(new Int32Rect(x,y,1,1),pixel,4,0);
         return Color.FromArgb(pixel[3], pixel[2], pixel[1], pixel[0]);
     }
 

@@ -23,7 +23,7 @@ internal static class FocusVisibleChecks
         var content=new StackPanel{Margin=new Thickness(24),Children={navigation,settings,voice}};
         KeyboardNavigation.SetTabNavigation(content,KeyboardNavigationMode.Cycle);
         var probe=new ThemedWindow{Title="Focus-visible lifecycle",Width=400,Height=320,Owner=owner,Content=content};
-        var other=new ThemedWindow{Title="Activation transfer",Width=220,Height=140,Owner=probe,Content=new Button{Content="Another active window"}};
+        var other=new ThemedWindow{Title="Activation transfer",Width=220,Height=140,Content=new Button{Content="Another active window"}};
         var tip=new ToolTip{PlacementTarget=settings,Content="Settings help"};settings.ToolTip=tip;
         var gain=new Slider{Minimum=0,Maximum=100,Value=50,Width=180};
         var action=new MenuItem{Header="Settings action"};
@@ -31,7 +31,7 @@ internal static class FocusVisibleChecks
         var menu=new ContextMenu{PlacementTarget=settings,Items={action,volume}};
         try
         {
-            probe.Show();probe.Activate();PumpUntil(probe,()=>probe.IsActive,"probe activation");
+            probe.Show();other.Owner=probe;probe.Activate();PumpUntil(probe,()=>probe.IsActive,"probe activation");
             navigation.Focus();PointerDown(navigation);Pump(probe);
             Assert.True(navigation.IsKeyboardFocused);Assert.False(PointerFocus.GetKeyboardFocus(navigation));Assert.Equal(0,Ring(navigation).Opacity);
             // The old handler marked *any* preview key as keyboard focus. Alt
