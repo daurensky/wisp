@@ -415,8 +415,16 @@ func (s *store) saveSnapshot(ctx context.Context, uid, cid string, data json.Raw
 		return err
 	}
 	var owner string
-	if tx.QueryRow(ctx, `SELECT owner_id FROM wisp_communities WHERE id=$1 FOR UPDATE`, cid).Scan(&owner) != nil || owner != snap.Community.OwnerID || (owner != uid && !s.manager(ctx, cid, uid)) {
+	if tx.QueryRow(ctx, `SELECT owner_id FROM wisp_communities WHERE id=$1 FOR UPDATE`, cid).Scan(&owner) != nil || owner != snap.Community.OwnerID {
 		return denied
+	}
+	if owner != uid {
+		// Reuse the transaction's connection: borrowing another here can exhaust
+		// the pool while other snapshot writes wait for the community row lock.
+		var role string
+		if tx.QueryRow(ctx, `SELECT role FROM wisp_members WHERE community_id=$1 AND user_id=$2`, cid, uid).Scan(&role) != nil || role != "admin" {
+			return denied
+		}
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO wisp_members(community_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, cid, uid); err != nil {
 		return err

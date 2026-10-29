@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -68,7 +69,11 @@ func apiCall(t *testing.T, srv *httptest.Server, method, path, token string, val
 	if value == nil {
 		r, err = http.NewRequest(method, srv.URL+path, nil)
 	} else {
-		r, err = http.NewRequest(method, srv.URL+path, jsonReader(value))
+		data, marshalErr := json.Marshal(value)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		r, err = http.NewRequest(method, srv.URL+path, bytes.NewReader(data))
 	}
 	if err != nil {
 		t.Fatal(err)

@@ -141,11 +141,6 @@ func (s *store) member(ctx context.Context, community, uid string) bool {
 	err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM wisp_members WHERE community_id=$1 AND user_id=$2)`, community, uid).Scan(&yes)
 	return err == nil && yes
 }
-func (s *store) owner(ctx context.Context, community, uid string) bool {
-	var yes bool
-	err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM wisp_communities WHERE id=$1 AND owner_id=$2)`, community, uid).Scan(&yes)
-	return err == nil && yes
-}
 func (s *store) manager(ctx context.Context, community, uid string) bool {
 	var yes bool
 	err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM wisp_members m JOIN wisp_communities c ON c.id=m.community_id WHERE c.id=$1 AND m.user_id=$2 AND (c.owner_id=$2 OR m.role='admin'))`, community, uid).Scan(&yes)
@@ -183,22 +178,24 @@ func (s *store) authRate(key string) bool {
 	s.rateMu.Lock()
 	defer s.rateMu.Unlock()
 	now := time.Now()
-	v := s.attempts[key]
-	if now.Sub(v.start) > time.Minute {
-		v = rateWindow{start: now}
-	}
-	v.count++
-	s.attempts[key] = v
-	if len(s.attempts) > 4096 {
+	v, known := s.attempts[key]
+	// Refuse new entries before insertion when all retained windows are live.
+	// Existing clients still receive their normal per-minute allowance.
+	if !known && len(s.attempts) >= 4096 {
 		for k, x := range s.attempts {
 			if now.Sub(x.start) > time.Minute {
 				delete(s.attempts, k)
 			}
 		}
-		if len(s.attempts) > 4096 {
+		if len(s.attempts) >= 4096 {
 			return false
 		}
 	}
+	if now.Sub(v.start) > time.Minute {
+		v = rateWindow{start: now}
+	}
+	v.count++
+	s.attempts[key] = v
 	return v.count <= 12
 }
 func (s *store) profile(ctx context.Context, uid string) (json.RawMessage, error) {
