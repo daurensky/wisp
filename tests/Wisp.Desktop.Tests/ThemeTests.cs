@@ -542,21 +542,25 @@ public sealed class ThemeTests
         var grid=Assert.Single(Descendants(block).OfType<System.Windows.Controls.Primitives.UniformGrid>(),element=>element.Name=="VoiceActionsGrid");
         Assert.Equal(4,grid.Columns);Assert.Equal(1,grid.Rows);
         var buttons=grid.Children.OfType<Button>().ToArray();Assert.Equal(4,buttons.Length);
+        var dpi=VisualTreeHelper.GetDpi(grid);double pixelX=1/dpi.DpiScaleX,pixelY=1/dpi.DpiScaleY;
         double width=buttons[0].ActualWidth,height=buttons[0].ActualHeight;
         Assert.True(width>24);Assert.True(height>24);
         var positions=new List<Rect>();
         foreach(var button in buttons)
         {
-            Assert.InRange(button.ActualWidth,width-.05,width+.05);Assert.InRange(button.ActualHeight,height-.05,height+.05);
+            Assert.Equal(new Thickness(Ui.Xs,0,Ui.Xs,0),button.Margin);
+            Assert.InRange(button.ActualWidth,width-pixelX,width+pixelX);Assert.InRange(button.ActualHeight,height-pixelY,height+pixelY);
             var content=Assert.IsAssignableFrom<FrameworkElement>(button.Content);
             var iconCenter=content.TranslatePoint(new Point(content.ActualWidth/2,content.ActualHeight/2),button);
             Assert.InRange(iconCenter.X,button.ActualWidth/2-1,button.ActualWidth/2+1);
             Assert.InRange(iconCenter.Y,button.ActualHeight/2-1,button.ActualHeight/2+1);
             positions.Add(new Rect(button.TranslatePoint(new Point(),grid),new Size(button.ActualWidth,button.ActualHeight)));
         }
-        Assert.InRange(positions[0].Left-(grid.ActualWidth-positions[^1].Right),-.1,.1);
+        Assert.InRange(positions[0].Left-(grid.ActualWidth-positions[^1].Right),-pixelX,pixelX);
         double gap=positions[1].Left-positions[0].Right;
-        for(int index=2;index<positions.Count;index++)Assert.InRange(positions[index].Left-positions[index-1].Right,gap-.1,gap+.1);
+        // UniformGrid gives equal logical cells. Layout rounding can allocate a
+        // leftover physical pixel to a gap at widths not divisible by four.
+        for(int index=2;index<positions.Count;index++)Assert.InRange(positions[index].Left-positions[index-1].Right,gap-pixelX-.01,gap+pixelX+.01);
     }
 
     private static void CheckComposerState(MainWindow main,Channel channel)
