@@ -1,0 +1,10 @@
+<UserControl x:Class="Wisp.Desktop.RecordingWaveformView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Wisp.Desktop">
+  <Grid MinHeight="40" Background="{DynamicResource SurfaceElevated}">
+    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <local:WaveformBars x:Name="Bars" Margin="12,4" Foreground="{DynamicResource TextPrimary}"/>
+    <TextBlock x:Name="Elapsed" Grid.Column="1" Margin="8" VerticalAlignment="Center" Text="0:00" Foreground="{DynamicResource TextSecondary}"/>
+  </Grid>
+</UserControl>

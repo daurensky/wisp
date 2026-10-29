@@ -2,7 +2,7 @@
 
 Branch: `codex/ui-refactor`, based on the current `codex/noise-suppression`
 (`69f9dcc`). Draft PR: https://github.com/daurensky/wisp/pull/4.
-The WPF/.NET 8 stack, Firebase contracts, SQLite schema, codecs and media pipeline
+The WPF/.NET 8 stack, backend contracts, SQLite schema, codecs and media pipeline
 are retained. No WebView, browser renderer, UI framework or icon NuGet was added.
 
 ## Discovery and iterations
@@ -97,7 +97,7 @@ logic and is outside this visual refactor. Existing online/game presence remains
 
 ## Screen and dialog coverage
 
-Main messenger, local/Firebase authentication, community creation, invitations,
+Main messenger, local/backend authentication, community creation, invitations,
 joining, channel creation, own profile/settings, member profile, audio devices,
 RNNoise preference, STUN settings, screen-source/quality/audio selection, active
 screen list, fullscreen/mini viewing, emoji picker/upload, sound panel/upload,

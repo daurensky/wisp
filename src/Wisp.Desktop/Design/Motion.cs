@@ -56,12 +56,12 @@ public static class Motion
     public static Duration Duration(FrameworkElement element, string speed = "Fast") =>
         Allowed(element) ? (Duration)Application.Current.FindResource("Motion." + speed) : new Duration(TimeSpan.Zero);
 
-    public static void Fade(FrameworkElement element, double from, double to, string speed = "Fast", Action? completed = null)
+    public static void Fade(FrameworkElement element, double from, double to, string speed = "Fast", Action? completed = null, FrameworkElement? scope = null)
     {
         if (completions.TryGetValue(element, out var previous)) { completions.Remove(element); previous.Finish(); }
         element.BeginAnimation(UIElement.OpacityProperty, null);
         element.Opacity = to;
-        var duration = Duration(element, speed);
+        var duration = Duration(scope ?? element, speed);
         if (duration.TimeSpan == TimeSpan.Zero) { completed?.Invoke(); return; }
         var animation = new DoubleAnimation(from, to, duration)
         {
@@ -107,29 +107,51 @@ public static class Motion
     public static void Interactive(Button button)
     {
         FrameworkElement? root = null;
-        FrameworkElement? hover = null;
         ScaleTransform? scale = null;
+        Window? owner = null;
+        void Reset()
+        {
+            if (scale is null) return;
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            scale.ScaleX = scale.ScaleY = 1;
+        }
+        void Deactivated(object? sender, EventArgs args) => Reset();
         button.Loaded += (_, _) =>
         {
             root = button.Template.FindName("Root", button) as FrameworkElement;
             scale = root?.RenderTransform as ScaleTransform;
             if (scale?.IsFrozen == true && root is not null) { scale = scale.Clone(); root.RenderTransform = scale; }
-            hover = button.Template.FindName("HoverSurface", button) as FrameworkElement;
+            if (owner is not null) owner.Deactivated -= Deactivated;
+            owner = PointerFocus.Owner(button);
+            if (owner is not null) owner.Deactivated += Deactivated;
+            Reset();
         };
         void Press(bool pressed)
         {
             if (scale is null) return;
-            double to = pressed ? .94 : 1;
-            var duration = Duration(button);
-            if (hover is not null) Fade(hover, hover.Opacity, pressed ? 1 : button.IsMouseOver ? .7 : 0);
+            if (!PointerFocus.GetIsWindowActive(button)) { Reset(); return; }
+            double from = scale.ScaleX, to = pressed ? .94 : 1;
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
             scale.ScaleX = scale.ScaleY = to;
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(to, duration) { FillBehavior = FillBehavior.Stop });
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(to, duration) { FillBehavior = FillBehavior.Stop });
+            var duration = Duration(button);
+            if (duration.TimeSpan == TimeSpan.Zero) return;
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(from, to, duration) { FillBehavior = FillBehavior.Stop });
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(from, to, duration) { FillBehavior = FillBehavior.Stop });
         }
+        // Hover opacity belongs to the template alone. Mixing property-trigger
+        // setters and retained local Fade values caused stale hover after reentry.
         button.PreviewMouseLeftButtonDown += (_, _) => Press(true);
         button.PreviewMouseLeftButtonUp += (_, _) => Press(false);
         button.MouseLeave += (_, _) => Press(false);
-        button.MouseEnter += (_, _) => { if (hover is not null) Fade(hover, hover.Opacity, .7); };
-        button.Unloaded += (_, _) => { if (root is not null) Stop(root); root = null; scale = null; };
+        button.LostMouseCapture += (_, _) => Reset();
+        button.IsEnabledChanged += (_, _) => { if (!button.IsEnabled) Reset(); };
+        button.Unloaded += (_, _) =>
+        {
+            Reset(); if (root is not null) Stop(root);
+            if (owner is not null) owner.Deactivated -= Deactivated;
+            owner = null; root = null; scale = null;
+        };
     }
 }

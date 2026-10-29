@@ -11,7 +11,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
@@ -27,28 +26,31 @@ import (
 )
 
 type config struct {
-	Listen      string `json:"listen"`
-	PublicIP    string `json:"publicIp"`
-	UDPPort     int    `json:"udpPort"`
-	Certificate string `json:"certificate"`
-	PrivateKey  string `json:"privateKey"`
-	APIKey      string `json:"apiKey"`
-	DatabaseURL string `json:"databaseUrl"`
-	MaxSessions int    `json:"maxSessions"`
+	DatabaseDSN      string `json:"databaseDsn"`
+	RegistrationOpen bool   `json:"registrationOpen"`
+	Listen           string `json:"listen"`
+	PublicIP         string `json:"publicIp"`
+	UDPPort          int    `json:"udpPort"`
+	Certificate      string `json:"certificate"`
+	PrivateKey       string `json:"privateKey"`
+	MaxSessions      int    `json:"maxSessions"`
 }
 type message struct {
-	Type      string                   `json:"type"`
-	Version   int                      `json:"version,omitempty"`
-	ID        string                   `json:"id,omitempty"`
-	Peer      string                   `json:"peer,omitempty"`
-	Token     string                   `json:"token,omitempty"`
-	Community string                   `json:"community,omitempty"`
-	Channel   string                   `json:"channel,omitempty"`
-	Session   string                   `json:"session,omitempty"`
-	SDP       string                   `json:"sdp,omitempty"`
-	Candidate *webrtc.ICECandidateInit `json:"candidate,omitempty"`
-	Loss      float64                  `json:"loss,omitempty"`
-	Jitter    float64                  `json:"jitter,omitempty"`
+	Muted        bool                     `json:"muted,omitempty"`
+	Deafened     bool                     `json:"deafened,omitempty"`
+	Participants []rtcSeat                `json:"participants,omitempty"`
+	Type         string                   `json:"type"`
+	Version      int                      `json:"version,omitempty"`
+	ID           string                   `json:"id,omitempty"`
+	Peer         string                   `json:"peer,omitempty"`
+	Token        string                   `json:"token,omitempty"`
+	Community    string                   `json:"community,omitempty"`
+	Channel      string                   `json:"channel,omitempty"`
+	Session      string                   `json:"session,omitempty"`
+	SDP          string                   `json:"sdp,omitempty"`
+	Candidate    *webrtc.ICECandidateInit `json:"candidate,omitempty"`
+	Loss         float64                  `json:"loss,omitempty"`
+	Jitter       float64                  `json:"jitter,omitempty"`
 }
 type identity struct{ UID, Community, Channel, Session string }
 type authenticate func(context.Context, message) (identity, error)
@@ -56,72 +58,6 @@ type authenticate func(context.Context, message) (identity, error)
 var keyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var sessionPattern = regexp.MustCompile(`^[a-fA-F0-9]{32}$`)
 var denied = errors.New("access denied")
-
-// Google verifies the ID token. RTDB rules verify membership; a fresh owned seat
-// and a real voice channel are checked independently. No admin credential exists.
-func firebaseAuth(c config) authenticate {
-	client := &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	return firebaseAuthWithClient(c, client)
-}
-func firebaseAuthWithClient(c config, client *http.Client) authenticate {
-	return func(ctx context.Context, m message) (identity, error) {
-		if len(m.Token) == 0 || len(m.Token) > 8192 || !keyPattern.MatchString(m.Community) || !keyPattern.MatchString(m.Channel) || !sessionPattern.MatchString(m.Session) {
-			return identity{}, denied
-		}
-		req, _ := http.NewRequestWithContext(ctx, "POST", "https://identitytoolkit.googleapis.com/v1/accounts:lookup?key="+url.QueryEscape(c.APIKey), jsonReader(map[string]string{"idToken": m.Token}))
-		req.Header.Set("Content-Type", "application/json")
-		var account struct {
-			Users []struct {
-				LocalID  string `json:"localId"`
-				Disabled bool   `json:"disabled"`
-			} `json:"users"`
-		}
-		if err := fetchJSON(client, req, &account); err != nil || len(account.Users) != 1 || account.Users[0].Disabled || !keyPattern.MatchString(account.Users[0].LocalID) {
-			return identity{}, denied
-		}
-		uid := account.Users[0].LocalID
-		get := func(path string, out any) error {
-			r, _ := http.NewRequestWithContext(ctx, "GET", c.DatabaseURL+"/communities/"+m.Community+"/"+path+".json?auth="+url.QueryEscape(m.Token), nil)
-			return fetchJSON(client, r, out)
-		}
-		var member bool
-		if get("members/"+uid, &member) != nil || !member {
-			return identity{}, denied
-		}
-		var channels []struct {
-			ID      string `json:"Id"`
-			IsVoice bool   `json:"IsVoice"`
-		}
-		if get("snapshot/Channels", &channels) != nil {
-			return identity{}, denied
-		}
-		voice := false
-		for _, ch := range channels {
-			if ch.ID == m.Channel && ch.IsVoice {
-				voice = true
-			}
-		}
-		if !voice {
-			return identity{}, denied
-		}
-		var slots map[string]struct {
-			UserID    string `json:"UserId"`
-			SessionID string `json:"SessionId"`
-			SeenAt    int64  `json:"SeenAt"`
-		}
-		if get("rtcRooms/"+m.Channel, &slots) != nil {
-			return identity{}, denied
-		}
-		now := time.Now().UnixMilli()
-		for i := 0; i < 5; i++ {
-			s := slots[fmt.Sprintf("s%d", i)]
-			if s.UserID == uid && s.SessionID == m.Session && now-s.SeenAt < 45000 && s.SeenAt <= now+10000 {
-				return identity{uid, m.Community, m.Channel, m.Session}, nil
-			}
-		}
-		return identity{}, denied
-	}
-}
 
 type link struct {
 	pending    []webrtc.ICECandidateInit
@@ -133,23 +69,24 @@ type link struct {
 	answer     bool
 }
 type session struct {
-	retired      map[string]bool
-	retiredOrder []string
-	hub          *hub
-	ident        identity
-	authMessage  message
-	ctx          context.Context
-	cancel       context.CancelFunc
-	ws           *websocket.Conn
-	out          chan message
-	mu           sync.Mutex
-	links        map[string]*link
-	tracks       [3]*webrtc.TrackLocalStaticRTP
-	targets      map[*link]bool
-	once         sync.Once
-	ready        bool // guarded by hub.mu
-	dataStart    time.Time
-	dataBytes    int
+	muted, deafened bool
+	retired         map[string]bool
+	retiredOrder    []string
+	hub             *hub
+	ident           identity
+	authMessage     message
+	ctx             context.Context
+	cancel          context.CancelFunc
+	ws              *websocket.Conn
+	out             chan message
+	mu              sync.Mutex
+	links           map[string]*link
+	tracks          [3]*webrtc.TrackLocalStaticRTP
+	targets         map[*link]bool
+	once            sync.Once
+	ready           bool // guarded by hub.mu
+	dataStart       time.Time
+	dataBytes       int
 }
 type hub struct {
 	api        *webrtc.API
@@ -168,16 +105,22 @@ func (s *session) send(m message) {
 	case <-s.ctx.Done():
 	case s.out <- m:
 	default:
-		go s.stop()
+		go s.stop("signaling queue full")
 	}
 }
-func (s *session) stop() {
+func (s *session) stop(reasons ...string) {
 	s.once.Do(func() {
+		reason := "transport closed"
+		if len(reasons) > 0 {
+			reason = reasons[0]
+		}
+		log.Printf("voice session ended user=%s reason=%s", s.ident.UID, reason)
 		s.cancel()
 		s.ws.CloseNow()
 		h := s.hub
 		h.mu.Lock()
 		delete(h.sessions, s)
+		h.broadcastRosterLocked(s.ident.Community, s.ident.Channel)
 		var closing []*webrtc.PeerConnection
 		for other := range h.sessions {
 			other.mu.Lock()
@@ -227,7 +170,7 @@ func (s *session) newPC() (*webrtc.PeerConnection, error) {
 	}
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
 		if st == webrtc.PeerConnectionStateFailed {
-			go s.stop()
+			go s.stop("media transport failed")
 		}
 	})
 	return pc, nil
@@ -266,7 +209,7 @@ func (s *session) relay(data []byte, label string) {
 			continue
 		}
 		if dc.BufferedAmount() > 1024*1024 {
-			go l.owner.stop()
+			go l.owner.stop("control receiver backlog")
 			continue
 		}
 		if err := dc.Send(data); err != nil {
@@ -489,14 +432,24 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 	joinCtx, joinCancel := context.WithTimeout(ctx, 12*time.Second)
 	_, data, err := ws.Read(joinCtx)
 	var m message
-	if err != nil || json.Unmarshal(data, &m) != nil || m.Type != "join" || m.Version != 1 {
+	if err != nil {
 		joinCancel()
+		return
+	}
+	if json.Unmarshal(data, &m) != nil || m.Type != "join" {
+		joinCancel()
+		_ = ws.Close(websocket.StatusProtocolError, "join message required")
+		return
+	}
+	if m.Version != 2 {
+		joinCancel()
+		_ = ws.Close(websocket.StatusProtocolError, "protocol version 2 required")
 		return
 	}
 	ident, err := h.auth(joinCtx, m)
 	joinCancel()
 	if err != nil {
-		_ = ws.Close(websocket.StatusPolicyViolation, "Firebase access denied")
+		_ = ws.Close(websocket.StatusPolicyViolation, "Account or community access denied")
 		return
 	}
 	s := &session{hub: h, ident: ident, authMessage: m, ctx: ctx, cancel: cancel, ws: ws, out: make(chan message, 32), links: map[string]*link{}, retired: map[string]bool{}, targets: map[*link]bool{}}
@@ -509,26 +462,31 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 		s.tracks[i] = t
 	}
 	h.mu.Lock()
-	allowed := len(h.sessions) < h.max
-	roomCount := 0
+	var replaced []*session
 	for old := range h.sessions {
 		if old.ident.UID == ident.UID {
-			allowed = false
-		}
-		if old.ident.Community == ident.Community && old.ident.Channel == ident.Channel {
-			roomCount++
+			replaced = append(replaced, old)
 		}
 	}
-	if roomCount >= 5 {
-		allowed = false
-	}
+	allowed := h.max == 0 || len(h.sessions)-len(replaced) < h.max
 	if allowed {
+		for _, old := range replaced {
+			delete(h.sessions, old)
+		}
 		h.sessions[s] = true
+		s.muted = m.Muted
+		s.deafened = m.Deafened
+		h.broadcastRosterLocked(ident.Community, ident.Channel)
 	}
 	h.mu.Unlock()
 	if !allowed {
-		_ = ws.Close(websocket.StatusPolicyViolation, "room or server full; duplicate login")
+		_ = ws.Close(websocket.StatusPolicyViolation, "server full")
 		return
+	}
+	// A freshly authenticated connection takes over its account's stale socket.
+	// Close outside hub.mu: stop also acquires that lock and removes source links.
+	for _, old := range replaced {
+		old.stop("replaced by authenticated reconnect")
 	}
 	<-h.handshakes
 	released = true
@@ -544,14 +502,15 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 				err := ws.Write(wc, websocket.MessageText, b)
 				cc()
 				if err != nil {
-					s.stop()
+					s.stop("signaling write failed")
 					return
 				}
 			}
 		}
 	}()
-	s.send(message{Type: "ready", Version: 1})
-	// Auth refresh is received in-band, then checked every 20s with the seat lease.
+	s.send(message{Type: "ready", Version: 2})
+	// Auth refresh is received in-band. Ping bounds stale transport lifetime even
+	// when a vanished client still has an unexpired access token.
 	go func() {
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
@@ -560,19 +519,26 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				pc, pingCancel := context.WithTimeout(ctx, 8*time.Second)
+				err := ws.Ping(pc)
+				pingCancel()
+				if err != nil {
+					s.stop("signaling heartbeat failed")
+					return
+				}
 				s.mu.Lock()
 				a := s.authMessage
 				pub := s.links["pub"]
 				s.mu.Unlock()
 				if pub == nil {
-					s.stop()
+					s.stop("uplink negotiation timed out")
 					return
 				}
 				ac, cc := context.WithTimeout(ctx, 10*time.Second)
 				id, err := h.auth(ac, a)
 				cc()
 				if err != nil || id != s.ident {
-					s.stop()
+					s.stop("session authorization expired or revoked")
 					return
 				}
 			}
@@ -642,6 +608,12 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 			} else if l.pc.AddICECandidate(*in.Candidate) != nil {
 				return
 			}
+		case "mute":
+			h.mu.Lock()
+			s.muted = in.Muted
+			s.deafened = in.Deafened
+			h.broadcastRosterLocked(s.ident.Community, s.ident.Channel)
+			h.mu.Unlock()
 		case "auth":
 			if len(in.Token) == 0 || len(in.Token) > 8192 {
 				return
@@ -650,6 +622,7 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 			s.authMessage.Token = in.Token
 			s.mu.Unlock()
 		default:
+			_ = ws.Close(websocket.StatusProtocolError, "unsupported protocol message")
 			return
 		}
 	}
@@ -677,7 +650,7 @@ func mediaAPI(publicIP string, port int) (*webrtc.API, func(), error) {
 		settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
 		closeFn = func() { _ = mux.Close() }
 	}
-	settings.SetICETimeouts(10*time.Second, 20*time.Second, 2*time.Second)
+	settings.SetICETimeouts(15*time.Second, 45*time.Second, 2*time.Second)
 	engine := &webrtc.MediaEngine{}
 	for i, c := range trackCodecs() {
 		kind := webrtc.RTPCodecTypeAudio
@@ -705,24 +678,31 @@ func main() {
 	if json.Unmarshal(b, &c) != nil {
 		log.Fatal("invalid configuration")
 	}
-	db, err := url.Parse(c.DatabaseURL)
-	if err != nil || db.Scheme != "https" || db.Host != "wisp-dd1ec-default-rtdb.asia-southeast1.firebasedatabase.app" || db.RawQuery != "" || db.Path != "" {
-		log.Fatal("unexpected Firebase database")
+	if net.ParseIP(c.PublicIP) == nil || c.UDPPort < 1024 || c.UDPPort > 65535 || c.MaxSessions < 0 || c.DatabaseDSN == "" {
+		log.Fatal("invalid server configuration; install PostgreSQL backend v2")
 	}
-	if net.ParseIP(c.PublicIP) == nil || c.UDPPort < 1024 || c.UDPPort > 65535 || c.MaxSessions < 1 || c.MaxSessions > 20 || c.APIKey == "" {
-		log.Fatal("invalid media configuration")
+	startup, cancelStartup := context.WithTimeout(context.Background(), 15*time.Second)
+	db, err := openStore(startup, c.DatabaseDSN, c.RegistrationOpen)
+	cancelStartup()
+	if err != nil {
+		log.Fatal("PostgreSQL is unavailable or schema initialization failed")
 	}
+	defer db.db.Close()
 	api, closeFn, err := mediaAPI(c.PublicIP, c.UDPPort)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer closeFn()
-	h := newHub(api, firebaseAuth(c), c.MaxSessions)
+	h := newHub(api, db.authenticate, c.MaxSessions)
+	db.hub = h
 	mux := http.NewServeMux()
 	mux.HandleFunc("/rtc", h.serve)
+	mux.HandleFunc("/v1/auth/", db.auth)
+	mux.HandleFunc("/v1/data/", db.data)
+	mux.HandleFunc("/v1/invites/", db.invites)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, "wisp-sfu protocol=1")
+		fmt.Fprintln(w, "wisp-sfu protocol=2")
 	})
 	srv := &http.Server{Addr: c.Listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 	stop := make(chan os.Signal, 1)
@@ -742,7 +722,7 @@ func main() {
 		defer cancel()
 		_ = srv.Shutdown(ctx)
 	}()
-	log.Print("Wisp SFU protocol 1 started (no media recording)")
+	log.Print("Wisp server protocol 2 started (PostgreSQL) (no media recording)")
 	if err := srv.ListenAndServeTLS(c.Certificate, c.PrivateKey); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal("HTTPS listener failed: ", err)
 	}

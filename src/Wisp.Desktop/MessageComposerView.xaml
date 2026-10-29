@@ -1,0 +1,18 @@
+<UserControl x:Class="Wisp.Desktop.MessageComposerView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <Grid>
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <ContentControl x:Name="Attachments" HorizontalContentAlignment="Stretch"/>
+  <Grid Grid.Row="1">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <ContentControl x:Name="Tools" VerticalAlignment="Bottom"/>
+   <Grid Grid.Column="1" Margin="8,0">
+    <ContentControl x:Name="TextEditorHost" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+    <TextBlock x:Name="PlaceholderText" Margin="12,0" VerticalAlignment="Center" IsHitTestVisible="False" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis"/>
+    <ContentControl x:Name="Recording" Visibility="Collapsed" HorizontalContentAlignment="Stretch"/>
+   </Grid>
+   <ContentControl x:Name="Actions" Grid.Column="2" VerticalAlignment="Bottom"/>
+  </Grid>
+ </Grid>
+</UserControl>

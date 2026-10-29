@@ -41,7 +41,7 @@ type testHandler struct{ h *hub }
 
 func (h *testHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/healthz" {
-		fmt.Fprintln(w, "wisp-sfu protocol=1")
+		fmt.Fprintln(w, "wisp-sfu protocol=2")
 		return
 	}
 	h.h.serve(w, r)
@@ -55,33 +55,75 @@ func joinTest(t *testing.T, srv *httptest.Server, uid, token string) (*websocket
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ws.CloseNow() })
-	b, _ := json.Marshal(message{Type: "join", Version: 1, Peer: uid, Token: token, Community: "community", Channel: "voice", Session: strings.Repeat("a", 32)})
+	b, _ := json.Marshal(message{Type: "join", Version: 2, Peer: uid, Token: token, Community: "community", Channel: "voice", Session: strings.Repeat("a", 32)})
 	if err = ws.Write(ctx, websocket.MessageText, b); err != nil {
 		t.Fatal(err)
 	}
-	_, data, err := ws.Read(ctx)
-	if err != nil {
-		return ws, message{Type: "rejected"}
+	for {
+		_, data, err := ws.Read(ctx)
+		if err != nil {
+			return ws, message{Type: "rejected"}
+		}
+		var m message
+		_ = json.Unmarshal(data, &m)
+		if m.Type == "ready" {
+			return ws, m
+		}
 	}
-	var m message
-	_ = json.Unmarshal(data, &m)
-	return ws, m
 }
 func TestAdmission(t *testing.T) {
-	_, srv := testHub(t, 10)
+	h, srv := testHub(t, 0)
 	if _, m := joinTest(t, srv, "denied", "bad"); m.Type != "rejected" {
 		t.Fatal("invalid auth accepted")
 	}
-	for _, uid := range []string{"a", "b", "c", "d", "e"} {
+	for _, uid := range []string{"a", "b", "c", "d", "e", "f", "g"} {
 		if _, m := joinTest(t, srv, uid, "fixture"); m.Type != "ready" {
-			t.Fatal("join failed", uid, m)
+			t.Fatal("unlimited room rejected participant", uid)
 		}
 	}
-	if _, m := joinTest(t, srv, "f", "fixture"); m.Type != "rejected" {
-		t.Fatal("sixth participant admitted")
+	if _, m := joinTest(t, srv, "a", "fixture"); m.Type != "ready" {
+		t.Fatal("authenticated reconnect rejected by stale login")
 	}
-	if _, m := joinTest(t, srv, "a", "fixture"); m.Type != "rejected" {
-		t.Fatal("duplicate identity admitted")
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.sessions) != 7 {
+		t.Fatal("takeover leaked duplicate sessions", len(h.sessions))
+	}
+}
+func TestTakeoverPreservesCapacityAndRequiresAuthentication(t *testing.T) {
+	h, srv := testHub(t, 1)
+	if _, m := joinTest(t, srv, "a", "fixture"); m.Type != "ready" {
+		t.Fatal("first login rejected")
+	}
+	h.mu.Lock()
+	var original *session
+	for s := range h.sessions {
+		original = s
+	}
+	h.mu.Unlock()
+	if _, m := joinTest(t, srv, "a", "bad"); m.Type != "rejected" {
+		t.Fatal("invalid takeover admitted")
+	}
+	select {
+	case <-original.ctx.Done():
+		t.Fatal("invalid token kicked legitimate user")
+	default:
+	}
+	if _, m := joinTest(t, srv, "b", "fixture"); m.Type != "rejected" {
+		t.Fatal("capacity ignored")
+	}
+	if _, m := joinTest(t, srv, "a", "fixture"); m.Type != "ready" {
+		t.Fatal("capacity blocked own reconnect")
+	}
+	select {
+	case <-original.ctx.Done():
+	default:
+		t.Fatal("takeover left old transport alive")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.sessions) != 1 {
+		t.Fatal("takeover leaked session")
 	}
 }
 func TestNativeInterop(t *testing.T) {
@@ -89,19 +131,15 @@ func TestNativeInterop(t *testing.T) {
 	if probe == "" {
 		t.Skip("build tools/Wisp.Sfu.Probe, set WISP_SFU_PROBE to its DLL and DOTNET to dotnet")
 	}
+	db := testStore(t)
 	api, closeFn, err := mediaAPI("127.0.0.1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeFn()
-	h := newHub(api, func(_ context.Context, m message) (identity, error) {
-		if !strings.HasPrefix(m.Token, "fixture-user") {
-			return identity{}, denied
-		}
-		return identity{strings.TrimPrefix(m.Token, "fixture-"), m.Community, m.Channel, m.Session}, nil
-	}, 5)
-	srv := httptest.NewTLSServer(httpHandler(h))
-	defer srv.Close()
+	h := newHub(api, db.authenticate, 0)
+	db.hub = h
+	srv := testAPI(t, db)
 	pin := sha256.Sum256(srv.Certificate().Raw)
 	dotnet := os.Getenv("DOTNET")
 	if dotnet == "" {

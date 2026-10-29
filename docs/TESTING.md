@@ -1,333 +1,58 @@
-# Проверка Wisp
+# Validation
 
-Ветка `codex/hardening`: Linux — **62/62 core**, **17/17 RTDB emulator**, cross-build решения без предупреждений/ошибок. CI фазы 6: [Linux rules](https://github.com/daurensky/wisp/actions/runs/40330936246) — успешно; [Windows](https://github.com/daurensky/wisp/actions/runs/40330936194) — core 56/56, Desktop 4/4, build/publish успешно. Итоговый статус последнего коммита — в PR #2 и HARDENING.md. **Физические аудиоустройства, WGC/GDI-захват, смена сети, эхо, DPI и CPU/RAM не проверены на Windows**. Успешные codec/STA-тесты не заменяют эти сценарии.
+## Automated
 
-## Автоматическая проверка
+- `dotnet build Wisp.sln -c Release`: client/core build.
+- `dotnet test tests/Wisp.Core.Tests -c Release`: codec/recovery/timing, local cache, input intent, certificate pinning, server HTTP routes/token headers/cache isolation and dynamic rosters beyond five.
+- Windows-only desktop tests: WPF themes, overlays, selected-message appearance, icon resources, virtualization, relative wheel input, codec/RNNoise and saved per-user PCM attenuation. Native RNNoise is built and required in CI.
+- `python tools/check_ui_resources.py`: design-resource consistency.
+- Connection recovery: bounded old-token overlap, account takeover, abrupt signaling loss/reentry, cancellation of desktop retry, and microphone-thread shutdown error handling. See [RECOVERY.md](RECOVERY.md).
+- Go with a real isolated PostgreSQL schema: accounts/password hashing/login, token rotation, membership/invitations, ownership, chat, attachment hashes/immutability and cross-community isolation.
+- Native .NET/Go integration: six signed-in clients register through the actual API, join via invitations, create 30 downlinks, exchange microphone/share audio/H.264/events/files through one UDP mux, measure pinned HTTPS RTT, update mute/deafen, leave during delayed SDP and rejoin. No production auth bypass exists. `go test -race` checks Go data races.
 
-На Windows с .NET 8 SDK:
-
-```powershell
-dotnet restore Wisp.sln
-dotnet test tests/Wisp.Core.Tests/Wisp.Core.Tests.csproj -c Release --no-restore
-dotnet test tests/Wisp.Desktop.Tests/Wisp.Desktop.Tests.csproj -c Release --no-restore
-dotnet build src/Wisp.Desktop/Wisp.Desktop.csproj -c Release --no-restore
+```bash
+dotnet build tools/Wisp.Sfu.Probe -c Release
+export WISP_TEST_DATABASE_URL='postgresql://testuser@127.0.0.1:5432/testdb?sslmode=disable'
+export WISP_SFU_PROBE="$PWD/tools/Wisp.Sfu.Probe/bin/Release/net8.0/Wisp.Sfu.Probe.dll"
+cd server/wisp-sfu
+go test -race -count=1 -v -timeout 180s ./...
+go vet ./...
 ```
 
-`build.ps1` выполняет эти шаги и публикует переносимую сборку. Workflow `Windows build` делает то же на `windows-latest`, сохраняет результаты тестов и ZIP. Статус выполнения нужно смотреть у конкретного запуска GitHub Actions.
+The database role must be able to create/drop test schemas; each test cleans up its own schema. Never point this test command at a production database. CI starts an isolated loopback PostgreSQL service. Old provider-specific rules/lease/mesh tests were removed with their implementation; the PostgreSQL/API tests replace them.
 
-`Wisp.Desktop.Tests` выполняется только на Windows: STA-тест создаёт производное окно и настоящий экран входа, проверяет тёмный фон и читаемый текст, переключение палитры уже открытых окон, восстановление сохранённого выбора и тёмную тему при отсутствии/повреждении настройки.
+## Manual Windows/VPS checks
 
-Из Linux можно собрать проект Windows с `EnableWindowsTargeting`, но нельзя подтвердить работу WPF-интерфейса, драйверов NAudio и захвата окон. Результаты сборки сами по себе не означают успешное прохождение следующих проверок.
+1. Upgrade the VPS using SERVER.md; confirm `/healthz` reports protocol2. For an existing v2 deployment preserve accounts/data; new registration is needed only for the initial migration from the old external backend. Relaunch and verify session restore.
+2. Create a community and invitation. Join from another PC; confirm text, uploaded file, GIF avatar/banner, custom emoji and sound-panel persistence outside a voice call.
+3. Join a voice channel from six PCs. Verify visible membership, speaking rings, mute/deafen, exit/rejoin and that counts have no `/5` cap.
+4. Click another voice participant, set 25%, confirm only that voice becomes quieter and the setting survives a restart. Check 0% and unchanged other users.
+5. Play music in another application, join voice, change devices. Wisp must not lower the other application's volume. Check the shared Multimedia endpoint and neutral microphone capture; no category warning should be shown on successful capture. Driver/Windows and Bluetooth profile behavior cannot be established by software-only tests.
+6. Scroll rapidly over text, avatars and lists; there must be no trailing 150ms easing backlog. Drag scrollbars and select/copy chat text. Hover rail icons and confirm the gap below remains unchanged.
+7. Share an app/monitor with audio, compare 1080p/60 load and blocked/occluded/minimized sources; check borderless consent or GDI fallback, viewer fullscreen/mini, multiple monitors and continued microphone audio.
+8. Close to tray and continue talking. Fully quit via tray before replacing a portable build.
 
-## Ручная приёмка на Windows
+Keep the PR draft until physical audio/capture and the real Astana VPS routes are validated. A first local six-client test hit a publishing-connect timeout; a subsequent diagnostic run passed. Preserve diagnostic output and investigate if CI or real machines reproduce it rather than attributing it to the database without evidence.
 
-Понадобятся два компьютера с Windows 10 build 19041+/Windows 11 в одной сети; для лимита канала — ещё четыре экземпляра с отдельными идентичностями, желательно на разных ПК. Пока каждый пункт не выполнен и не записан результат, считать его **не проверенным**.
+Master implementation: test navigation between communities/Home during voice+share, the unified bottom voice controls and central stream surface, selected audio output for simultaneous call/message/notification/soundboard/share streams, original semantic sound delivery, neutral idle status, tray state priority/handle disposal, Onest, rectangular captions and redesigned settings/profile screenshots. See MASTER_IMPLEMENTATION.md.
 
-| Сценарий | Ожидаемый результат |
-|---|---|
-| Регистрация, перезапуск, правильный/неправильный пароль | Firebase-вход восстанавливается после перезапуска, неверный пароль отклоняется; локальный режим проверяется отдельно |
-| Повторное имя с разным регистром | Второй локальный аккаунт не создаётся |
-| Изменение имени, описания, аватара, баннера | Профиль сохраняется после перезапуска; путь не отправляется как удалённый локальный путь |
-| Светлая/тёмная тема | Читаемы поля, списки, диалоги, кнопки; тёмный фон чёрный |
-| Создание сообщества и каналов | Сущности остаются после перезапуска |
-| Открытие сессии, подключение второго ПК | Видны оба участника, текст доставляется один раз |
-| Повреждённый секрет или отпечаток приглашения | Соединение отклоняется |
-| Голос на 2 и 5 участниках | Слышны участники своего канала, задержка остаётся стабильной |
-| Попытка шестого участника войти в канал | Вход отклоняется, состав канала остаётся 5 |
-| Переход в другой голосовой канал | Звук и демонстрация прежнего канала не доставляются |
-| Выключение микрофона | Исходящая речь не передаётся, входящая слышна |
-| Отключение прослушивания | Не слышно входящую речь, микрофон также отключён |
-| Звуковые действия | Подключение, отключение, mute/deafen и демонстрация дают различимый сигнал |
-| Вложения и голосовое сообщение | Файлы доставляются в разрешённых пределах и сохраняются локально |
-| Превышение лимита вложения/записи | Операция ограничивается; интерфейс остаётся отзывчивым |
-| Эмодзи сообщества | Загруженное изображение доступно для чата |
-| Звуковая панель | Загруженный звук воспроизводится у участников соответствующего канала |
-| Монитор 1, монитор 2, окно приложения | Выбранный источник соответствует кадрам; не захватывается другой экран |
-| Остановка демонстрации, выход из канала | Захват прекращается; получатель перестаёт показывать поток |
-| Свёрнутое/закрытое окно источника | Сворачивание: последний кадр с пометкой паузы; разворачивание: продолжение; закрытие: остановка |
-| Отключение владельца | Остальные получают отключение; нет видимости продолжающейся сессии |
-| Длительный разговор и повторные входы | Нет растущей задержки/памяти и исчерпания устройств |
+## UI/UX improvement regressions
 
-## Производительность
+The current suite also checks neutral palettes, four-column layout with no extra call panel/member search, same-community clicks preserving row identity/history, mute/deafen intent outside calls and on disk, embedded stream loading/mini/full/ended states, source-picker tabs and removed windows, shared hover GIF/reset, unified profile view/edit/cancel/save/status,22/48px emoji classification, and exact single/multi-message clipboard text. Source-picker screenshots use deterministic preview fixtures; physical Graphics Capture remains a manual check.
 
-Запишите модель CPU, RAM, версию Windows, устройства ввода/вывода и тип подключения. Измерьте в диспетчере задач CPU, private working set и сеть в течение 5–10 минут для следующих режимов: без сессии, подключённый текстовый чат, 2 участника, 5 участников, затем 5 участников с демонстрацией. Снимайте показатели отдельно для хоста и клиента. Проверьте восстановление после потерь связи и перегрузки исходящего канала.
+Real PostgreSQL tests exercise owner/admin/member authorization, metadata/icon updates, role grant/revocation, media rename/delete, outsider rejection and kicked-member access. Native integration includes two viewers sending explicit join/leave/replay events, verifies cue deduplication and confirms that voice remains connected after leaving viewing.
 
-Не задавайте численные обещания «лёгкости» приложения до этих замеров. Для оценки качества разговора дополнительно сравните слышимость тихой речи, clipping при одновременном разговоре, задержку и эхо при гарнитуре и колонках. Категория WASAPI Communications запрашивается, но AEC/NS/AGC зависят от драйвера: эффект пока не измерен, внешняя DSP-библиотека не включена.
+After updating server and clients, check hover GIFs on message/member/voice/profile, the emoji popup at window edges, actual app/monitor previews and source disappearance, host-only viewer cues, and that leaving a voice channel ends its broadcast while a viewer closing playback does not.
 
-## WebRTC без TURN
+Native expansion: Grayscale inheritance in controls/popups/tooltips, 4-section full settings, headerless profile/Always GIF, selected composited GIF covers, actual image crop/disposal/interlace/timing/loop/cleanup, borrowed call PCM/real waveforms/60s, media preview/seek/deafen, Soundboard gain permissions/persistence, global mini over modals, host-authorized paged audience snapshots and independent stream gain. See NATIVE_EXPANSION.md and the latest PROGRESS.md for measured results.
 
-Тест `TwoPeersConnectDirectlyAndTransferOpusScreenAndFragmentedControl` соединяет два настоящих WebRTC-пира на одной машине без внешнего STUN, проверяет DTLS/SCTP, привязку отправителя и передачу аудиопакетов, кадра и фрагментированного файла. Отдельный тест проверяет реальное кодирование/декодирование Opus 48kHz/20ms. Тесты фрагментации проверяют потерю частей и отказ от чрезмерного выделения памяти.
 
-Ручная проверка: два Windows-ПК в разных домашних сетях, Google STUN включён, TURN отсутствует. Оба участника должны обновиться и опубликовать новые правила RTDB. Проверить вход без владельца, выход владельца без обрыва остальных, шесть одновременных попыток входа (одна должна отклоняться), mute/deafen, демонстрацию, звук в трее и повторный вход после ошибки. В сети с заблокированным UDP/симметричным NAT должны наблюдаться ограниченные повторы 2/5/15/30 секунд и окончательный отказ без накопления кадров или скрытой ретрансляции. Результат loopback-теста не гарантирует проходимость NAT между реальными сетями.
+## Settings, rail, profile and input regressions (29 October)
 
-## Исправления чата и интерфейса
+The STA desktop harness shows actual WPF windows in Windows CI. It tests both palettes at 800×560 and 1040×780; screenshots and `ui-evidence.txt` are included in the test-results artifact. Native Win32 cursor movement/clicks reproduce the former channel-row hover gap and verify that clicking its gear opens settings without joining/selecting the channel. Native focus changes exercise mouse, Tab traversal, Alt, deactivation/reactivation, context menus, tooltips and the volume slider.
 
-Windows STA-тест дополнительно проверяет реальный обработчик PreviewKeyDown и сохранение сообщения по Enter, вставку эмодзи в текст, круглую аватарку по умолчанию, настройку бесконечного повтора GIF, читаемый ToolTip, перемотку WAV без открытия аудиоустройства, повторное открытие уведомлений, модальные формы без создания дополнительных Window и скрытую кнопку отмены записи в исходном состоянии. Тест ядра проверяет сохранение ревизии аватара и карты эмодзи после перезапуска; тест облачных файлов — загрузку по частям и отклонение повреждённого содержимого до записи в кэш.
+`ModalLifecycleChecks` samples complete RenderTargetBitmap frames during CompositionTarget.Rendering. A controlled reproduction of the previous card/container opacity clocks over a white underlay demonstrates the white frame; the replacement must keep the card's Surface opaque on open, section switch and close. When OS animations are disabled in CI, equivalent local managed WPF clocks run on test visuals; OS settings are unchanged. This verifies a rendering path, not a particular physical GPU driver.
 
-Ручная проверка на Windows (пока не выполнена):
+Rail checks retain control/artwork identity and animation clock across repeated render and settings-section changes. Profile checks cover 400×140/20:7 display/edit/crop/animated output, top-aligned scrolling About and removal of status editing while preserving the stored status. Home checks inspect the rendered graphic ASCII, rather than its startup log. Voice checks retain microphone/deafen outside calls, hide the complete extra block when disconnected, verify equal button cells with physical-pixel rounding, and render optimistic connection/cancellation while admission is deliberately held pending.
 
-- Enter отправляет один раз; Shift+Enter добавляет строку. Ошибка отправки сохраняет черновик.
-- На двух ПК аватар появляется справа без голосового соединения; GIF продолжает играть после нескольких циклов. Все аватары круглые, новый профиль показывает Io.
-- Голосовое: записать, остановить, прослушать, поставить на паузу, перемотать и отправить. На втором ПК повторить воспроизведение. Кнопка отмены исчезает после отмены/отправки.
-- Прикрепить изображение, увидеть превью, удалить черновик; затем отправить и получить на втором ПК вне звонка.
-- Клик по голосовому каналу подключает голос, не переключая переписку; отдельная кнопка «Чат» открывает её.
-- Вставить несколько эмодзи между словами, отправить и открыть после перезапуска на обоих ПК: изображения размером со шрифт.
-- Профиль, настройки, выбор демонстрации и её просмотр остаются внутри главного окна; Escape закрывает верхнюю форму.
-- ToolTip читается в обеих темах. Полосы прокрутки узкие, у края, видны только при прокрутке/перетаскивании.
-- Запустить и остановить показ, выйти из канала, вызвать ошибку захвата: текущая надпись показа всегда исчезает. В «Уведомлениях» остаётся история действий.
-
-## Проверки медиатранспорта v2
-
-Автоматически: два WebRTC-пира передают SRTP-голос, отдельный SRTP-звук демонстрации, H.264 с RTP-фрагментацией и файл через SCTP; права отправителя/канала сохраняются. Opus-тесты прогоняют по 300 кадров моно/стерео с тишиной, FEC, DTX, потерями и сменой битрейта; некорректные пакеты отклоняются, следующий правильный декодируется. Windows-тест кодирует и декодирует реальный RGB-кадр через нативные H.264 MFT и проверяет цвет. STA-тест переключает всё окно/mini/fullscreen и проверяет объединение 500 одинаковых уведомлений в одну запись.
-
-Нужны реальные Windows-ПК; эти пункты пока не выполнены:
-
-- Пять участников, запись нескольких минут речи до/во время/после 1080p/60. Голос не должен останавливаться, пакетные ошибки не озвучиваются.
-- 1080p/60 с движением и чтением мелкого текста; замерить FPS, CPU, RAM и исходящий трафик для 1 и 4 зрителей. 60 FPS является целевой частотой, не гарантированным результатом на любом ПК.
-- Загрузка большого файла одновременно с голосом и показом. Проверить ограничение очередей, задержку речи и восстановление на ближайшем IDR при потерях.
-- Звук выбранного приложения слышен, звук другого приложения не передаётся. При показе монитора слышны приложения, но не возвращается звук участников Wisp. Проверить mute микрофона, deafen и mute конкретного плеера. Windows 10 должен объяснить отсутствие process-loopback, сохраняя видео.
-- ⛶/F11/двойной щелчок занимают нужный монитор, Escape возвращает оформление и исходные размеры окна. ↘ оставляет чат доступным, ↖ разворачивает поток. Проверить два монитора с разным DPI.
-- Новый участник начинает смотреть уже запущенный поток, закрытие/повторное открытие просмотра восстанавливается на ключевом кадре, остановка/выход/трей не оставляют старые плееры или системный захват.
-
-## Hardening: автоматические проверки
-
-Историческая базовая линия — 30 core / 4 правила; результаты по фазам и принятые решения — [HARDENING.md](HARDENING.md). Текущие 17 emulator-тестов проверяют запрет чужих legacy-вложений и чтения через родительский профиль, частные файлы/эмодзи, открытые авторизованным аватары, размеры/схемы/неизменяемость, REST conditional PUT/412, пять мест, подделку сессий, SDP/Attempt/TTL, 64 слота кандидатов и wake-маркеры без лишних полей.
-
-Для изолированного эмулятора нужны Java 21 и Node.js 24:
-
-```sh
-cd firebase/rules-tests
-npm ci
-npm run test:emulator
-```
-
-Команда использует `firebase/firebase.json` и `demo-wisp-hardening`, не публикует правила и не обращается к производственным данным. Workflow **Firebase rules** запускает её на Linux; **Windows build** выполняет core/desktop и публикацию приложения. Coturn/relay job отсутствует по ответу владельца «TURN не нужен».
-
-`FirebaseRecoveryTests` использует fake HttpMessageHandler, Date/ETag, SSE и управляемый TimeProvider: неточные часы, 412/403, очистка, потеря места/новое окно, watchdog при недоступном продлении, все четыре backoff до исчерпания, обработка put/patch/keep-alive/cancel/auth_revoked и обновление токена. `AudioRecoveryTests` проверяет последовательности, FEC/PLC при одиночных/серийных потерях, PCM trimming и отсутствие внутренних метаданных в JSON. `MediaTimingTests` — RTP-время, rollover, ограничение IDR/адаптации. Реальные пары без STUN проверяют DTLS/SRTP/SCTP, голос во время H.264 и файла, очередь trickle до SDP и восстановление через новые native peers при неподдержанном restart; это не тест NAT и не тест микрофона.
-
-На Windows реально выполнен software H.264 через Media Foundation (320×192/60 и 1920×1080/60), декодирование/цвет, 3-секундный GOP и запрос IDR. Замер live bitrate в [run 40326858481](https://github.com/daurensky/wisp/actions/runs/40326858481): синтетический шум, 320×192, 30 FPS, CBR/буфер 0,5 с приняты; два окна по 3 секунды до/после запроса 4→1 Мбит/с дали **1 607 899→695 780 байт**, отношение **0,433** (−56,7%). Это короткий тест реакции MFT, не обещание точного 1 Мбит/с, качества 1080p60 или снижения CPU. Измерения аппаратного кодировщика не выполнялись; он отложен.
-
-## Hardening: ручные сценарии на Windows — не выполнены
-
-Все строки ниже имеют статус **не проверено на Windows** до отдельной записи результата/оборудования. Сохраните перед проверкой клиентскую версию, Windows build, CPU/GPU, устройства, драйвер, сеть и настройки качества.
-
-| Сценарий | Проверка и ожидаемое поведение |
-|---|---|
-| Выпуск правил и приватность | Раздать новый клиент → завершить старые через трей → владелец публикует весь файл правил → запустить новые. Два участника обмениваются файлом/голосовым/эмодзи; третья учётная запись вне сообщества получает отказ. Аватар доступен вошедшим; локальные старые вложения сохранены. |
-| Неточные часы | Сдвиг часов тестового Windows-ПК ±1 день: вход, SeenAt и свежесть места используют серверное время. Восстановить часы после теста. |
-| Занятие мест и старое окно | Шесть учётных записей одновременно входят: максимум 5. Повторное окно того же аккаунта не должно позволять старому окну удалить новое место/SDP при закрытии. |
-| Смена сети | Во время речи сменить Wi-Fi на Ethernet/точку доступа; после debounce 1,5 с — ICE restart/новая попытка. В 10.0.17 завершённый checklist сохраняется при restart, поэтому уже номинированная пара сразу заменяется через backoff. Нет дублирующего голоса, 4 одновременных пар максимум. Ограничения прямого NAT сохраняются. |
-| Разрыв UDP | Прервать UDP на 5–10 с: disconnected, попытка restart через 5 с, затем новая пара (для уже номинированной пары 10.0.17 — сразу через backoff). При длительном отказе — четыре повтора 2/5/15/30 с, затем одна итоговая ошибка; нет непрерывного звука ошибок. |
-| Истечение аренды / сбой Firebase | Заблокировать Firebase HTTPS, сохранив UDP: независимо от зависшего запроса через 40 с транспорт остановлен, серверный слот освобождается после 45 с. После восстановления — новый вход. |
-| SSE и токен | Длительный разговор >65 мин, обновление токена не разрывает место; закрытие SSE включает ограниченный polling. По выходу потоки закрыты. Crash оставляет TTL-недоступный SDP; физическая очистка не гарантируется. |
-| STUN и сложный NAT | Настройки → Сеть: Google по умолчанию, собственный UDP STUN и пустой список. Локальная пара host/host; notice содержит типы без IP. При строгом NAT возможен окончательный отказ. Relay не проверяется/не реализован по решению владельца. |
-| Курсор и GPU-окно | WGC захватывает окно и каждый монитор с курсором и рамкой Windows. Проверить аппаратно ускоренный браузер/игру; защищённый контент может быть чёрным. Отключение WGC/объединённый desktop переключает в GDI с уведомлением, курсор сохранён. |
-| Resize и DPI | Изменять размер окна, переносить между мониторами 100/150/200%, отключать монитор. Нет обрезанных строк/зависшего pool; aspect ratio сохранён, источник закрывается понятно. |
-| Сворачивание / закрытие | Свернуть окно источника: повтор последнего кадра раз в секунду + «окно свёрнуто» у зрителя, микрофон продолжает работать. Развернуть: показ продолжен; закрыть: screen-stop и исчезновение индикатора. |
-| IDR / late join | Открыть/закрыть просмотр в середине GOP, потерять RTP-фрагмент/перегрузить decode-очередь: зритель запрашивает IDR не чаще 1/с, показывающий ограничивает входящие запросы; восстановление без ожидания многих секунд. |
-| Адаптация сети | Ограничить исходящий канал/добавить потери; после трёх плохих RTCP-отчётов снижаются битрейт/FPS, появляется статус. Поток общий: проверить слабого и сильного зрителя вместе, cap не превышает выбор пользователя. |
-| 5 участников + 1080p30/60 | 10 мин до/во время/после показа, движение/мелкий текст и передача файла. Речь не обрывается, очереди/память ограничены. Измерить CPU/RAM/фактический FPS/исходящий трафик для 1 и 4 зрителей. |
-| FEC/PLC и буфер | На двух ПК внести 5–15% случайных/серийных потерь, прослушать запись; сравнить провалы/щелчки/задержку с исходной версией. Метаданные gap ограничены; буфер не очищается целиком при перегрузке. |
-| Колонки / системные эффекты | На той же гарнитуре/колонках сравнить исходный WinMM и WASAPI Communications при одинаковой громкости. Записать уровень обратного эха, NS/AGC и настройки enhancements драйвера; не считать запрос категории доказательством AEC. Если результата недостаточно — отдельно согласовать WebRTC Audio Processing. |
-| Выбор / hotplug гарнитуры | В разговоре выбрать input/output, отключить USB/Bluetooth, сменить Windows default Communications, подключить обратно. Место/SDP/канал сохраняются, mic/mute/deafen не сбрасываются, выход голоса переключается; если устройств нет — понятное уведомление без бесконечного retry. |
-| Трей / просмотр | Развернуть видео во всё окно, mini справа снизу, fullscreen на нужном мониторе, затем свернуть Wisp в трей. Голос/показ продолжаются; меню «Закрыть Wisp» завершает устройства и освобождает место. |
-
-Результаты записываются здесь с датой, сборкой, оборудованием и фактическим наблюдением. Пока таких записей нет. Полная серверная очистка аварийных записей, отзываемые приглашения, аппаратные MFT и отдельные AEC/АРУ остаются отдельными работами; исходная и main ветки не изменяются этой доработкой.
-
-## Шумоподавление микрофона RNNoise 0.2
-
-Ветка `codex/noise-suppression` создана от `codex/native-windows-p2p` и
-fast-forward до `codex/hardening` (`e8e014a`), чтобы сохранить уже сделанные
-исправления ETag, устройств и обработки потерь. Новая доработка не меняет RTDB,
-сигналинг, форматы пакетов, настройки Opus и звук демонстрации.
-
-Автотесты: `MicProcessingTests` проверяют порядок этапов, выключение, mute/deafen,
-восстановление частично испорченного кадра после ошибки, однократное уведомление,
-изоляцию отказавшего этапа, Dispose и отсутствие аллокаций. `RnNoiseTests`
-проверяют тишину, ослабление белого шума, ненулевой синус 1 кГц, PCM16 полного
-диапазона, bit-exact bypass, сброс после выкл/вкл, формат кадра, сохранение
-настроек и время/аллокации. В Windows CI `WISP_REQUIRE_RNNOISE=1` запрещает
-пропустить тесты из-за отсутствующей DLL. При локальной сборке без DLL эти
-нативные тесты помечаются skipped; тесты настроек всё равно запускаются.
-STA-тест окна проверяет переключение и немедленное сохранение настройки в модальном
-окне, не создавая отдельного окна Windows.
-
-Предварительное измерение **на Linux**, 2026-10-27, виртуальный AMD EPYC 9V74,
-GCC `-O3`, SSE2, RNNoise 0.2 из того же проверенного архива, ctypes:
-2000 кадров по 20 мс после 200 прогревочных, белый шум ±500 PCM16.
-Среднее 0,345 мс, p95 0,413 мс, максимум 15,207 мс (виртуальная общая машина,
-включая планирование). Средняя доля одного ядра при 50 кадрах/с — **1,73%**;
-это оценка по wall time отдельных вызовов, не измерение CPU Wisp.
-Среднее ниже бюджета 5 мс (25% кадра), но одиночный выброс выше него.
-Нативный код на Linux собран GCC напрямую из исходников, не Windows DLL.
-
-Синтетический амплитудно-модулированный тон 160 Гц: максимум корреляции между
-входом и выходом при сдвиге 950 отсчётов ≈19,79 мс. Это оценка алгоритмической
-задержки с влиянием фильтра/фазы, около **20 мс**, а не измерение речь→наушники.
-Дополнительной очереди Wisp нет; два блока RNNoise обрабатываются внутри
-существующего кадра 960 отсчётов. Windows CI отдельно выводит mean/p95/max
-управляемого `Process`, энергию шума и предупреждение при среднем >5 мс.
-
-**Windows CI выполнен**, run [40466350982](https://github.com/daurensky/wisp/actions/runs/40466350982),
-код `81537dda713885b891ca8d5f74b44d892ced54c3`, 2026-10-27:
-Core **69/69**, Desktop **10/10**, skipped **0**; DLL собрана MSVC x64 из
-проверенного архива, build/publish/package прошли. Нативные тесты выполнились,
-включая сигнал, bypass/reset и нулевые managed-аллокации после прогрева;
-STA-тест немедленного сохранения переключателя прошёл. В TRX:
-среднее **0,314 мс**, p95 **0,387 мс**, максимум **2,788 мс** на кадр 20 мс.
-Средняя оценка доли одного ядра — **1,57%**, это синтетический тест на общем
-Windows runner, не измерение CPU Wisp в реальном звонке. Среднее ниже порога
-5 мс (25% кадра), также все измеренные кадры этой серии ниже 5 мс.
-Доля энергии белого шума после прогрева округляется до `0.000000` при выводе
-шести знаков; это не означает буквального отсутствия шума и не доказывает
-сохранение тихой речи. Первичная переносимая сборка:
-[Wisp-win-x64](https://github.com/daurensky/wisp/actions/runs/40466350982/artifacts/12716009253).
-
-Файлы этой доработки (относительно `e8e014a`):
-
-| Статус | Файлы |
-|---|---|
-| Созданы, ядро | `src/Wisp.Core/MicProcessing.cs`, `tests/Wisp.Core.Tests/MicProcessingTests.cs` |
-| Созданы, native и Desktop | `native/rnnoise/CMakeLists.txt`, `native/rnnoise/README.md`, `docs/licenses/RNNoise.txt`, `src/Wisp.Desktop/Media/RnNoiseProcessor.cs`, `tests/Wisp.Desktop.Tests/RnNoiseTests.cs` |
-| Изменены, приложение и CI | `src/Wisp.Desktop/Media/VoiceService.cs`, `src/Wisp.Desktop/Media/AudioDevices.cs`, `src/Wisp.Desktop/MainWindow.cs`, `src/Wisp.Desktop/Wisp.Desktop.csproj`, `.github/workflows/windows.yml`, `tests/Wisp.Desktop.Tests/ThemeTests.cs` |
-| Изменены, документация | `README.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md` |
-
-**Не проверено на Windows с настоящими аудиоустройствами**:
-
-| Сценарий | Что записать |
-|---|---|
-| Речь + вентилятор + клавиатура/мышь | Один и тот же текст и расстояние до микрофона, RNNoise выкл/вкл; сохранить обе записи, оценить разборчивость и шум. Фоновые голоса могут сохраняться, их удаление не гарантируется. |
-| Тихая речь и окончания слов | Проверить тихие фразы и быстрые согласные; нет отдельного гейта, но модель может влиять на речь. |
-| Переключение в разговоре | Два участника слышат друг друга, изменение применяется сразу; закрыть окно без «Применить», перезапустить Wisp и проверить сохранение. |
-| Мьют/deafen, повторный вход, hotplug | Мьют 5 секунд, вернуться к речи без старого хвоста; быстро выкл/вкл RNNoise; сменить микрофон без выхода из канала. |
-| Повреждённая/отсутствующая DLL | В отдельной распакованной копии переименовать `rnnoise.dll`, запустить: одно уведомление, переключатель «недоступно», голос без обработки; PATH/CWD не заменяют библиотеку. Восстановить DLL и перезапустить. |
-| Демонстрация и входящий голос | Музыка/игры/видео не проходят через RNNoise, параметры отдельных кодеков прежние. |
-| Задержка на двух ПК | Записать прямой и удалённый сигнал в одинаковых условиях выкл/вкл, сравнить задержку корреляцией; отдельно учитывать сеть/устройства. Измеренного результата пока нет. |
-| 5 участников, CPU | На том же Windows ПК 10 минут с обработкой и 10 без, одинаковый микрофон/звук/экран: средний и p95 CPU Wisp, RAM, модель CPU, версия ОС, частота аудиоглюков. Измеренного результата пока нет. |
-
-AEC и АРУ не реализованы в этой задаче. Их добавление требует отдельной работы;
-для AEC нужны также референс воспроизведения и синхронизация. Проверка бытовых
-шумов и качества тихой речи синтетическими тестами не заменяется.
-
-## Исправление чтения ETag
-
-В FirebaseEtagTests воспроизведён отказ старого клиента: response.Headers.ETag возвращал null для заголовка без кавычек (hash и null_etag), хотя заголовок присутствовал. Клиент теперь читает единственное исходное значение через Headers.NonValidated и без изменений передаёт его в if-match. Отсутствующий/пустой ETag по-прежнему запрещает запись. Проверены quoted/unquoted, пустой слот, точное совпадение if-match и 412; emulator REST-тест подтвердил unquoted ETag, успешное продление и отказ устаревшей версии. Linux: core 62/62, emulator 17/17, build 0 warnings/errors. Правила не менялись; достаточно обновить клиент.
-
-
-## UI-рефакторинг WPF
-
-Область изменений и файлы: [UI_REFACTOR.md](UI_REFACTOR.md).
-Локально: решение собирается без предупреждений/ошибок; Core 69/69.
-`python tools/check_ui_resources.py` проверяет ссылки, дубли ключей и сетку
-отступов. В Windows CI проверяются реальные шаблоны WPF, границы всех геометрий,
-остановка замороженных трансформаций, одна шапка модалки, доступность тогглов,
-переключение настроек и цвета двух тем; 1000 строк не должны создавать больше
-50 визуальных строк в окне списка высотой 160 DIP. PNG находятся в test-results.
-
-Ручные проверки **не выполнены на физическом Windows ПК**:
-
-| Проверка | Ожидаемое поведение |
-|---|---|
-| Шапка/окно | Перетаскивание, двойной клик, min/max/restore, изменение размера по всем краям; Win+стрелки и Snap, панель задач не перекрыта при максимизации. |
-| Несколько мониторов/DPI | Перенос между 100/125/150/200%, в том числе монитор с отрицательным origin; текст/иконки не обрезаются; fullscreen и выход из него восстанавливают окно. |
-| Клавиатура/диктор | Tab и Shift+Tab внутри формы, фокус виден, Esc закрывает, Enter сохраняет однострочную форму, Shift+Enter остаётся переносом в чате; диктор читает название и состояние кнопки. |
-| Анимации | При «Уменьшить анимации» и отключённых системных анимациях переходов нет; при alt-tab/сворачивании анимации и GIF останавливаются, видимые GIF возобновляются при возвращении. |
-| Все формы | Создание/вход/приглашение, канал, профиль, устройства, STUN, эмодзи и звуки: один заголовок, одинаковые кнопки снизу, первый ввод получает фокус, длинные поля прокручиваются. |
-| Чат/медиа | Enter/Shift+Enter, вложения, GIF, звуковая панель и запись/пауза/перемотка; прокрутка большой истории не создаёт все медиаконтролы сразу. |
-| Голос/трей | Мьют/deafen обновляют иконку сразу, не разрывают голос; крестик в шапке сворачивает в трей, разговор и показ продолжаются. |
-| Слабый ПК | Сравнить с предыдущей сборкой на том же железе: CPU/RAM/GPU 10 мин в простое/фоне, открытие форм, быстрая прокрутка, 5 участников с показом. Численные результаты пока отсутствуют. |
-
-Системные файловые диалоги, меню трея и аварийный MessageBox запуска сохранены
-как поверхности Windows. Сеть, Core-модели, кодеки, захват/воспроизведение звука
-и SQLite-схема этим рефакторингом не меняются.
-
-Итоговый Windows-прогон: [40476065053](https://github.com/daurensky/wisp/actions/runs/40476065053),
-код `8f3b251cb2e9920a91c92d4a566aa2f94bc4b924`, 2026-10-27.
-Core **69/69**, Desktop **10/10**, skipped **0**. Сборка, проверка 154 ресурсов,
-публикация и упаковка прошли. Проверены все 50 геометрий и UI Automation Toggle
-pattern. Прогон [40475586411](https://github.com/daurensky/wisp/actions/runs/40475586411)
-также прошёл; последний дополнительно убирает пустую строку ошибки входа.
-Из test-results извлечены реальные PNG: тёмное/светлое главное окно, компактное
-окно 800 DIP, форма профиля и светлая авторизация; изображения просмотрены.
-
-[Переносимая Windows x64 сборка](https://github.com/daurensky/wisp/actions/runs/40476065053/artifacts/12721146839)
-и [результаты/PNG](https://github.com/daurensky/wisp/actions/runs/40476065053/artifacts/12721550277).
-Последующий коммит фиксирует только отчёт; приложение в ZIP соответствует
-указанному проверенному коду.
-
-Локальное ограничение: два поздних параллельных Linux-прогона завершились
-таймаутом существующего `RetryBudgetUsesAllFourDelaysThenStopsCreatingPeers`.
-Изолированный запуск этого теста и полный последовательный запуск **69/69**
-прошли. Настройка последовательности применялась только к локальному bin и не
-коммитилась. Сетевой код и тест повторов этим UI-рефакторингом не изменялись;
-Windows CI прошёл в штатной конфигурации. Это не измерение качества реальной сети.
-
-## Выделение сообщений, голосовое присутствие и GIF
-
-Ветка `codex/voice-presence-ui` / PR #5 продолжает UI-рефакторинг.
-
-- Мышь не оставляет обводку кнопки; фокус с клавиатуры остаётся видимым.
-  Фокус строки больше не меняет толщину рамки/расположение сообщения.
-- Сообщение — read-only RichTextBox с FlowDocument: выделение и Copy/Ctrl+C,
-  переносы и inline-эмодзи; фокус не прокручивает сообщение к первой строке.
-- Собственное место и «Соединение» рисуются до сетевого await. Только актуальный
-  запрос подтверждает вход; поздний результат после выхода/смены канала не
-  возвращает старое подключение. Ошибка входа убирает локальное место.
-  Pending-состояние не публикуется в Firebase как подтверждённое присутствие.
-- Состояния микрофона/наушников берутся из существующих s0–s4; в текущем канале
-  обновляются через SSE, для списка других каналов добавлено одно чтение
-  rtcRooms на существующий цикл присутствия (5 с). Новых правил/полей БД нет.
-- Каждый голосовой участник имеет круглый аватар. Энергия обработанного микрофона
-  и декодированного входящего голоса управляет только UI: два последовательных
-  кадра для включения, отпускание 240 мс. Это не шумовой гейт; звук/Opus/пакеты
-  не меняются и новые пакеты активности не отправляются. Таймер обновления
-  индикатора работает только при запущенном голосе, UI получает только переходы.
-- Голосовой GIF играет при речи; GIF в roster — при наведении на строку, в чате —
-  при наведении на сообщение (аватар, emoji и GIF-вложение). GIF-баннер профиля
-  играет, пока открыт профиль. Скрытие, фон и «Уменьшить анимации» приостанавливают
-  GIF; обработчики отписываются при виртуализации/закрытии.
-
-Проверки: Core — onset/тишина/full-scale/таймаут/reset речи, intent/отмена/устаревшее
-завершение, получение живых mute/deafen из RTC-комнаты. Windows STA — выделение и
-Copy с эмодзи, стабильная позиция после фокуса, мышь/клавиатура и focus ring,
-политики GIF, выключенные значки и запрет кольца/анимации при mute/deafen.
-
-Ручные сценарии на двух физических Windows ПК пока не выполнены:
-
-1. Вход при медленном интернете, отказ шестому участнику, быстрое переключение
-   A→B и выход во время соединения: локальное место сразу, «Соединение», корректный
-   откат/очистка без призрачного старого канала.
-2. Два участника по очереди говорят тихо/громко: кольцо и голосовой GIF включаются
-   на речь, выключаются после короткого удержания; стационарный шум/клики не должны
-   постоянно зажигать индикатор. Порог фиксирован (RMS 150 PCM16, peak 300), это
-   дешёвый индикатор энергии, не распознавание человеческой речи.
-3. Мьют/deafen одного клиента виден у другого в канале и снаружи; выключенные
-   микрофон/наушники не зажигают кольцо. При deafen входящий звук не декодируется,
-   поэтому локальная индикация удалённой речи останавливается вместе со звуком.
-4. Навести/увести мышь с участника и длинного сообщения, выделить/скопировать
-   несколько строк, прокрутить; GIF не должен играть вне нужной области, сообщение
-   не сдвигается от клика. Открыть/закрыть профиль с GIF-баннером, свернуть в трей.
-5. Сравнить CPU/RAM на том же ПК с 5 участниками; физических измерений пока нет.
-
-Windows CI: [40485909882](https://github.com/daurensky/wisp/actions/runs/40485909882),
-код `b17793364da25864ced0c3b55000881b0c248322`, 2026-10-27: **73/73 Core**,
-**10/10 Desktop**, skipped **0**; 155 ресурсов, build/publish/ZIP прошли.
-В STA дополнительно проверены реальный MainWindow pending-вход до сетевого await,
-собственная строка с аватаром, «Соединение» и отмена без возврата в старый канал.
-В test-results сохранён `voice-connecting.png`, а также обе темы и компактный чат.
-
-[Windows x64 ZIP](https://github.com/daurensky/wisp/actions/runs/40485909882/artifacts/12725765419)
-и [TRX/PNG](https://github.com/daurensky/wisp/actions/runs/40485909882/artifacts/12725625958).
-Последующий коммит только дополняет этот отчёт. Обновление правил Firebase не нужно.
-
-## SFU branch
-
-`codex/sfu-server` adds an opt-in Go/Pion forwarding service and a native SIPSorcery client transport. No Firebase schema change or deployment is performed by the agent. Run commands and manual VPS/Windows scenarios are in [SFU.md](SFU.md).
-
-Local cross-runtime integration passed with the Go race detector: five native-client transports and all 20 downlinks; microphone Opus, independent share-audio Opus, H264, events and fragmented files; source identity binding; continued microphone packets during video and a 2 MB file; mute/deafen presence, departure and rejoin. Authorization tests reject invalid tokens, non-members, text channels, stale/future seats and mismatched sessions; admission rejects a sixth user and duplicate login. Core adds WSS endpoint and certificate-pin tests. Resource validation still resolves 155 WPF resources.
-
-Hardware voice/screen capture, Kazakhstan/Korea routes and the 1-vCPU production VPS remain untested. Linux unit runs of the pre-existing direct-P2P bulk-transfer test timed out at `RtcTests.cs:81` while Go compiler jobs were active; this does not establish a production regression or a complete green core suite. Final CI results below supersede local build/load-dependent results.
-
-Final local core run: **78 passed, 0 failed, 0 skipped**. The direct-P2P test now accepts both host/host and host/prflx: ICE can discover a peer-reflexive endpoint without external STUN, so requiring host/host was a timing-dependent assertion. Media/file delivery checks and their deadlines were retained. `go vet`, static Linux amd64 build and the 155-resource WPF check passed.
-
-Additional SFU regression check passed with the Go race detector and one shared UDP mux port with rewritten public candidates. The fifth client deliberately delays SDP answers across a maintenance tick; another source leaves while its answer is pending, then rejoins. Early ICE candidates are bounded/queued until SDP, the native client sends SDP before candidates, and late signals for retired connections are ignored within a bounded 64-ID history. Windows CI on application commit 4a5b688 passed 78 core and 10 desktop tests, no skips, then built/published/packaged successfully; the later signaling changes require their own final CI run.
+These checks extend the previous media/audio/backend regressions. They do not replace checks of physical microphones, multiple monitors, capture drivers or real Internet routes.

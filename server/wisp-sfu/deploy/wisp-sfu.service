@@ -1,7 +1,7 @@
 [Unit]
-Description=Wisp small-room media SFU
-After=network-online.target
-Wants=network-online.target
+Description=Wisp PostgreSQL backend and media SFU
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
 StartLimitIntervalSec=60
 StartLimitBurst=3
 

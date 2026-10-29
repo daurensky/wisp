@@ -3,11 +3,13 @@ using Wisp.Core;
 namespace Wisp.Desktop.Media;
 
 /// <summary>Decode in order off the UI thread. When overloaded, wait for an IDR instead of queuing latency.</summary>
-public sealed class ScreenVideoReceiver : IDisposable
+public sealed class ScreenVideoReceiver : IDisposable, IAsyncDisposable
 {
     private readonly Channel<(byte[] Data, bool Reset)> queue = System.Threading.Channels.Channel.CreateBounded<(byte[], bool)>(4);
     private readonly CancellationTokenSource stop = new();
     private readonly object gate = new();
+    private readonly Task worker;
+    public Task Completion => worker;
     private bool waitingForKey = true, closed;
     private readonly CommandRateGate keyRequests = new();
     private readonly Action? requestKey;
@@ -18,7 +20,7 @@ public sealed class ScreenVideoReceiver : IDisposable
         Info = info;
         this.requestKey = requestKey;
         RequestKey();
-        _ = Task.Factory.StartNew(() =>
+        worker = Task.Factory.StartNew(() =>
         {
             Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
             NativeVideoDecoder? decoder = null;
@@ -37,7 +39,15 @@ public sealed class ScreenVideoReceiver : IDisposable
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { if (!stop.IsCancellationRequested) error("Не удалось открыть демонстрацию: " + ex.Message); }
-            finally { decoder?.Dispose(); lock (gate) { closed = true; queue.Writer.TryComplete(); while (queue.Reader.TryRead(out _)) { } } stop.Dispose(); }
+            finally
+            {
+                try { decoder?.Dispose(); }
+                finally
+                {
+                    lock (gate) { closed = true; queue.Writer.TryComplete(); while (queue.Reader.TryRead(out _)) { } }
+                    stop.Dispose();
+                }
+            }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
     public void Enqueue(byte[] h264)
@@ -53,4 +63,9 @@ public sealed class ScreenVideoReceiver : IDisposable
         }
     }
     public void Dispose() { lock (gate) { if (closed) return; closed = true; try { stop.Cancel(); } catch (ObjectDisposedException) { } queue.Writer.TryComplete(); while (queue.Reader.TryRead(out _)) { } } }
+    public async ValueTask DisposeAsync()
+    {
+        Dispose();
+        await worker.ConfigureAwait(false);
+    }
 }

@@ -4,7 +4,7 @@ using static Vortice.MediaFoundation.MediaFactory;
 
 namespace Wisp.Desktop.Media;
 
-public sealed record ScreenStreamInfo(int Width, int Height, int FramesPerSecond, int Bitrate, string SessionId = "")
+public sealed record ScreenStreamInfo(int Width, int Height, int FramesPerSecond, int Bitrate, string SessionId = "", long StartedAtUnixMs = 0)
 {
     public bool IsValid => Width is >= 2 and <= 1920 && Height is >= 2 and <= 1080 && Width % 2 == 0 && Height % 2 == 0 && FramesPerSecond is 15 or 30 or 60 && Bitrate is >= 500000 and <= 8000000 && SessionId is not null && SessionId.Length <= 64;
 }

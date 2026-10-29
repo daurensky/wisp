@@ -35,8 +35,10 @@ public sealed class NotificationArea : UserControl
         if (repeats.TryGetValue(message, out var repeated)) { var count = Math.Min(int.MaxValue - 1, repeated.Count) + 1; repeated.Label.Text = $"{DateTime.Now:HH:mm:ss} · повторов: {count}"; repeats[message] = (repeated.Label, count); return false; }
         var row = new StackPanel { Margin = Ui.Insets(0, 0, 0, Ui.L) };
         var label = Ui.Label(DateTime.Now.ToString("HH:mm:ss"), Ui.Caption, true); row.Children.Add(label); repeats[message] = (label, 1); row.Tag = message;
-        var text = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, Margin = Ui.Insets(0, Ui.Xs, 0, 0) };
-        if (error) text.SetResourceReference(TextBlock.ForegroundProperty, "Danger"); row.Children.Add(text); entries.Children.Insert(0, row);
+        var text = new SelectableChatText { Margin = Ui.Insets(0, Ui.Xs, 0, 0) };
+        text.Paragraph.Inlines.Add(new System.Windows.Documents.Run(message));
+        Ui.Name(text, "Текст уведомления");
+        if (error) text.SetResourceReference(Control.ForegroundProperty, "Danger"); row.Children.Add(text); entries.Children.Insert(0, row);
         while (Count > 100) { var old = (FrameworkElement)entries.Children[Count - 1]; repeats.Remove((string)old.Tag); entries.Children.RemoveAt(Count - 1); } Changed?.Invoke(Count); return true;
     }
 }

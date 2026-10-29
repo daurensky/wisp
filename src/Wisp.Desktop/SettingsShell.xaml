@@ -1,0 +1,47 @@
+<UserControl x:Class="Wisp.Desktop.SettingsShell"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:local="clr-namespace:Wisp.Desktop"
+ HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+ <Grid Background="{DynamicResource Surface}">
+  <Grid.ColumnDefinitions><ColumnDefinition x:Name="NavigationColumn" Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+  <Border BorderBrush="{DynamicResource Border}" BorderThickness="0,0,1,0" Background="{DynamicResource ChannelSurface}">
+   <DockPanel Margin="12">
+    <ContentControl x:Name="FooterHost" DockPanel.Dock="Bottom" Margin="8,16,8,8"/>
+    <ListBox x:Name="Navigation" Background="Transparent" BorderThickness="0" SelectionChanged="NavigationChanged"
+             ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+     <ListBox.ItemContainerStyle>
+      <Style TargetType="ListBoxItem" BasedOn="{StaticResource ListItem.Chat}">
+       <Setter Property="Cursor" Value="Hand"/>
+       <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+       <Setter Property="local:PointerFocus.Track" Value="True"/>
+       <Setter Property="Margin" Value="0,4"/>
+       <Setter Property="Padding" Value="0"/>
+       <Setter Property="Template">
+        <Setter.Value><ControlTemplate TargetType="ListBoxItem">
+         <Border x:Name="Row" CornerRadius="{StaticResource Radius.Control}" Background="Transparent" Padding="12,10">
+          <ContentPresenter/>
+         </Border>
+         <ControlTemplate.Triggers>
+          <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="local:PointerFocus.IsWindowActive" Value="True"/></MultiTrigger.Conditions><Setter TargetName="Row" Property="Background" Value="{DynamicResource Hover}"/></MultiTrigger>
+          <Trigger Property="IsSelected" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource Selected}"/></Trigger>
+          <Trigger Property="local:PointerFocus.KeyboardFocus" Value="True"><Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource Border}"/><Setter TargetName="Row" Property="BorderThickness" Value="1"/></Trigger>
+         </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value>
+       </Setter>
+      </Style>
+     </ListBox.ItemContainerStyle>
+     <ListBox.ItemTemplate><DataTemplate>
+      <DockPanel ToolTip="{Binding Label}">
+       <local:Icon Kind="{Binding Icon}" Width="18" Height="18" Margin="0,0,10,0" DockPanel.Dock="Left"/>
+       <TextBlock Text="{Binding Label}" TextWrapping="Wrap" TextTrimming="None" VerticalAlignment="Center"/>
+      </DockPanel>
+     </DataTemplate></ListBox.ItemTemplate>
+    </ListBox>
+   </DockPanel>
+  </Border>
+  <ScrollViewer x:Name="PageScroll" Grid.Column="1" Background="{DynamicResource Surface}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+   <ContentControl x:Name="PageHost" Margin="24,16,24,24" HorizontalContentAlignment="Stretch"/>
+  </ScrollViewer>
+ </Grid>
+</UserControl>

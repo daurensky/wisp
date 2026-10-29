@@ -5,7 +5,7 @@ using NAudio.Wave;
 
 namespace Wisp.Desktop.Media;
 
-/// <summary>Shared event-driven WASAPI capture, GameChat category (no system ducking), Windows conversion to 48k/16-bit/mono.</summary>
+/// <summary>Shared event-driven neutral WASAPI capture with Windows conversion to 48k/16-bit/mono.</summary>
 internal sealed class CommunicationsCapture(string endpointId, Action<string> status) : IWaveIn
 {
     private readonly CancellationTokenSource stop = new();
@@ -60,7 +60,9 @@ internal sealed class CommunicationsCapture(string endpointId, Action<string> st
             }
             finally { client.Stop(); }
         }
-        catch (Exception ex) when (!stop.IsCancellationRequested) { failure = ex; }
+        // This is a real background Thread. Shutdown/device errors must also be
+        // caught after cancellation, otherwise they terminate the entire process.
+        catch (Exception ex) { if (!stop.IsCancellationRequested) failure = ex; }
         finally
         {
             if (com >= 0) CoUninitialize();
@@ -78,21 +80,13 @@ internal sealed class CommunicationsCapture(string endpointId, Action<string> st
         try
         {
             Marshal.ThrowExceptionForHR(enumerator.GetDevice(id, out endpoint));
-            var iid = typeof(IAudioClient2).GUID;
+            // The capture client uses the ordinary Other/default shared category.
+            // No Communications category or global Windows setting is requested.
+            // The old IAudioClient2.SetClientProperties path failed before init
+            // (AUDCLNT_E_NOT_INITIALIZED). Capture needs neither that category
+            // request nor the derived-interface marshaling path at all.
+            var iid = typeof(IAudioClient).GUID;
             Marshal.ThrowExceptionForHR(endpoint.Activate(ref iid, 23, IntPtr.Zero, out audio));
-            var properties = new AudioClientProperties
-            {
-                cbSize = (uint)Marshal.SizeOf<AudioClientProperties>(),
-                eCategory = AudioStreamCategory.GameChat
-            };
-            var memory = Marshal.AllocHGlobal(Marshal.SizeOf<AudioClientProperties>());
-            try
-            {
-                Marshal.StructureToPtr(properties, memory, false);
-                try { ((IAudioClient2)audio).SetClientProperties(memory); }
-                catch (COMException) { status("Драйвер не принял категорию GameChat; используется обычный WASAPI без изменения системной громкости."); }
-            }
-            finally { Marshal.FreeHGlobal(memory); }
             var result = new AudioClient((IAudioClient)audio);
             audio = null; // Ownership transfers to NAudio.AudioClient.Dispose.
             return result;

@@ -4,7 +4,6 @@
     <AssemblyName>Wisp</AssemblyName><ApplicationIcon>Assets/wisp.ico</ApplicationIcon><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Wisp.Core/Wisp.Core.csproj" /><PackageReference Include="NAudio" Version="2.2.1" /><PackageReference Include="Concentus" Version="2.2.2" /></ItemGroup>
-  <ItemGroup><None Update="firebase.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
   <ItemGroup><PackageReference Include="XamlAnimatedGif" Version="2.3.2" /><Resource Include="Assets/wisp.png" /><Resource Include="Assets/app-logo.png" /><Resource Include="Assets/wisp.ico" /></ItemGroup>
   <ItemGroup><PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" /></ItemGroup>
   <ItemGroup><Content Include="../../docs/licenses/SIPSorcery.md" Link="licenses/SIPSorcery.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
@@ -21,4 +20,6 @@
   <Target Name="RequireRnNoiseForDistribution" BeforeTargets="Publish" Condition="'$(RequireRnNoise)' == 'true'">
     <Error Condition="!Exists('$(RnNoiseBinary)')" Text="Build native/rnnoise before publishing with RequireRnNoise=true." />
   </Target>
+  <ItemGroup><Content Include="Assets/Sounds/*.wav" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /><Content Include="Assets/Sounds/Wisp-Original-README.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Resource Include="Assets/Fonts/*.ttf" /><Resource Include="Assets/Fonts/*.otf" /><Content Include="Assets/Fonts/Onest-OFL.txt" Link="licenses/Onest-OFL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
 </Project>

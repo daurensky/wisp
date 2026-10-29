@@ -1,0 +1,71 @@
+name: WPF cached UI performance comparison
+
+on:
+  push:
+    branches: ['codex/postgres-backend']
+    paths: ['src/**', 'tools/Wisp.Ui.Benchmark/**', '.github/workflows/ui-performance.yml']
+  pull_request:
+    paths: ['src/**', 'tools/Wisp.Ui.Benchmark/**', '.github/workflows/ui-performance.yml']
+  workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: Baseline commit to compare with the current ref
+        required: true
+        default: f7042f8c09166b58c3797d6d50058f08103d1ee2
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: current
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.baseline_ref || 'f7042f8c09166b58c3797d6d50058f08103d1ee2' }}
+          path: baseline
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build identical native RNNoise for both probes
+        shell: pwsh
+        run: |
+          cmake -S current/native/rnnoise -B artifacts/rnnoise-build -A x64 -DCMAKE_INSTALL_PREFIX="$env:GITHUB_WORKSPACE/artifacts/native"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build artifacts/rnnoise-build --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --install artifacts/rnnoise-build --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build baseline and current using identical probe source
+        shell: pwsh
+        run: |
+          if (Test-Path baseline/tools/Wisp.Ui.Benchmark) { Remove-Item -Recurse -Force baseline/tools/Wisp.Ui.Benchmark }
+          Copy-Item -Recurse current/tools/Wisp.Ui.Benchmark baseline/tools/Wisp.Ui.Benchmark
+          $native = Join-Path $env:GITHUB_WORKSPACE 'artifacts/native/rnnoise.dll'
+          dotnet build baseline/tools/Wisp.Ui.Benchmark -c Release -o artifacts/probe-baseline -p:RnNoiseBinary="$native"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build current/tools/Wisp.Ui.Benchmark -c Release -o artifacts/probe-current -p:RnNoiseBinary="$native"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compare on the same Windows runner
+        shell: pwsh
+        run: |
+          $baseline = (git -C baseline rev-parse HEAD).Trim()
+          $current = (git -C current rev-parse HEAD).Trim()
+          & ./current/tools/Wisp.Ui.Benchmark/run-benchmark.ps1 `
+            -BaselineExecutable "$env:GITHUB_WORKSPACE/artifacts/probe-baseline/Wisp.Ui.Benchmark.exe" `
+            -CurrentExecutable "$env:GITHUB_WORKSPACE/artifacts/probe-current/Wisp.Ui.Benchmark.exe" `
+            -BaselineRevision $baseline -CurrentRevision $current `
+            -OutputDirectory "$env:GITHUB_WORKSPACE/artifacts/ui-performance"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Content artifacts/ui-performance/comparison.md | Out-File -Append $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Wisp-ui-performance
+          path: artifacts/ui-performance
+          if-no-files-found: ignore
+          retention-days: 30

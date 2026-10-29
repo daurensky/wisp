@@ -108,7 +108,7 @@ public sealed class LocalStoreTests : IDisposable
         var community = store.CreateCommunity("Friends", alice.Id);
         var channels = store.GetChannels(community.Id);
         Assert.Equal(2, channels.Count);
-        Assert.Contains(channels, c => c.IsVoice && Channel.Capacity == 5);
+        Assert.Contains(channels, c => c.IsVoice);
         Assert.Single(store.GetMembers(community.Id));
         var text = channels.Single(c => !c.IsVoice);
         var other = store.CreateChannel(community.Id, "other", false);

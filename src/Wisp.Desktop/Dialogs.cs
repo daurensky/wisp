@@ -7,29 +7,47 @@ namespace Wisp.Desktop;
 public sealed class AuthWindow : ThemedWindow
 {
     public UserProfile? Profile { get; private set; }
-    public AuthWindow(LocalStore store, FirebaseBackend? cloud = null)
+    public AuthWindow(LocalStore store, ServerBackend? cloud = null)
     {
-        Title = "Wisp · Вход"; Width = Ui.Metric("Width.DialogMedium"); SizeToContent = SizeToContent.Height; MaxHeight = SystemParameters.WorkArea.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        var panel = new StackPanel { Margin = Ui.Insets(Ui.Xxl, Ui.Xl) }; Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        var logo = Brand.Image(64); logo.HorizontalAlignment = HorizontalAlignment.Left; logo.Margin = Ui.Insets(0, 0, 0, Ui.M); panel.Children.Add(logo);
-        panel.Children.Add(new TextBlock { Text = "Рады видеть тебя", FontSize = Ui.Heading, FontWeight = FontWeights.SemiBold });
-        panel.Children.Add(new TextBlock { Text = "Место для своих.", Margin = Ui.Insets(0, Ui.Xs, 0, Ui.Xl) });
-        panel.Children.Add(Ui.Label(cloud is null ? "Имя пользователя" : "Email", Ui.Caption, true)); var user = new TextBox(); panel.Children.Add(user);
-        panel.Children.Add(Ui.Label("Пароль · от 8 символов", Ui.Caption, true)); var pass = new PasswordBox(); panel.Children.Add(pass);
-        var error = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = Ui.Insets(0, Ui.S), Visibility = Visibility.Collapsed }; error.SetResourceReference(TextBlock.ForegroundProperty, "Danger"); panel.Children.Add(error); Ui.Name(user, cloud is null ? "Имя пользователя" : "Email"); Ui.Name(pass, "Пароль");
-        TextBox? username = null;
-        if (cloud is not null) { panel.Children.Add(Ui.Label("Имя пользователя (при регистрации)", Ui.Caption, true)); username = new TextBox { MaxLength = 32 }; panel.Children.Add(username); }
-        async void Submit(bool register)
+        Title="Wisp · Вход";Width=560;MinWidth=400;SizeToContent=SizeToContent.Height;MaxHeight=SystemParameters.WorkArea.Height;ResizeMode=ResizeMode.NoResize;WindowStartupLocation=WindowStartupLocation.CenterScreen;
+        var panel=new StackPanel{Margin=Ui.Insets(Ui.Xxl,Ui.Xl)};Content=new ScrollViewer{Content=panel,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+        var branding=new StackPanel{Orientation=Orientation.Horizontal,Margin=Ui.Insets(0,0,0,Ui.Xl)};
+        branding.Children.Add(Brand.Image(48));var brand=Ui.Label("Wisp",28);brand.FontWeight=FontWeights.Bold;brand.Margin=Ui.Insets(Ui.M,0,0,0);branding.Children.Add(brand);panel.Children.Add(branding);
+        var heading=Ui.Label("Вход",Ui.Heading);heading.FontWeight=FontWeights.SemiBold;panel.Children.Add(heading);
+        var intro=new TextBlock{Text="Введите данные аккаунта.",TextWrapping=TextWrapping.Wrap,Margin=Ui.Insets(0,Ui.S,0,Ui.Xl)};Ui.Secondary(intro);panel.Children.Add(intro);
+        panel.Children.Add(Ui.Label(cloud is null?"Имя пользователя":"Email",Ui.Caption,true));var user=new TextBox{MaxLength=254};Ui.Name(user,cloud is null?"Имя пользователя":"Email");panel.Children.Add(user);
+        var nameLabel=Ui.Label("Имя пользователя",Ui.Caption,true);var username=new TextBox{MaxLength=32};Ui.Name(username,"Имя пользователя при регистрации");panel.Children.Add(nameLabel);panel.Children.Add(username);
+        panel.Children.Add(Ui.Label("Пароль · от 8 символов",Ui.Caption,true));var pass=new PasswordBox{MaxLength=128};Ui.Name(pass,"Пароль");panel.Children.Add(pass);
+        var error=new TextBlock{TextWrapping=TextWrapping.Wrap,Margin=Ui.Insets(0,Ui.S),Visibility=Visibility.Collapsed};error.SetResourceReference(TextBlock.ForegroundProperty,"Danger");panel.Children.Add(error);
+        var progress=new ProgressBar{IsIndeterminate=true,Height=3,Margin=Ui.Insets(0,Ui.S),Visibility=Visibility.Collapsed};panel.Children.Add(progress);
+        bool registering=false,busy=false;
+        Button? submit=null;Button? mode=null;
+        void ChangeMode()
         {
-            try { panel.IsEnabled = false;
-                if (register && pass.Password.Length < 8) throw new ArgumentException("Пароль должен содержать минимум 8 символов.");
-                if (cloud is not null && register && !System.Text.RegularExpressions.Regex.IsMatch(username!.Text, @"^[\p{L}\p{N}_\-.]{3,32}$")) throw new ArgumentException("Имя: 3–32 буквы, цифры, _, - или точка.");
-                Profile = cloud is not null ? await cloud.SignInAsync(user.Text.Trim(), pass.Password, register, username?.Text ?? "user") : register ? store.Register(user.Text.Trim(), pass.Password) : store.Login(user.Text.Trim(), pass.Password); if (Profile is null) throw new InvalidOperationException("Неверное имя или пароль."); DialogResult = true; }
-            catch (Exception ex) { error.Text = ex.Message; error.Visibility = Visibility.Visible; } finally { panel.IsEnabled = true; }
+            heading.Text=registering?"Создать аккаунт":"Вход";intro.Text=registering?"Укажите данные нового аккаунта.":"Введите данные аккаунта.";
+            nameLabel.Visibility=username.Visibility=registering&&cloud is not null?Visibility.Visible:Visibility.Collapsed;
+            Title=registering?"Wisp · Регистрация":"Wisp · Вход";
+            if(submit is not null)Buttons.Label(submit,registering?"Создать аккаунт":"Войти","arrow-right");
+            if(mode is not null)Buttons.Label(mode,registering?"Уже есть аккаунт? Войти":"Нет аккаунта? Зарегистрироваться");
+            error.Visibility=Visibility.Collapsed;
         }
-        var login = Buttons.Create("Войти", () => Submit(false), "Войти · Enter", "arrow-right", "Button.Primary"); login.IsDefault = true; login.Margin = Ui.Insets(0, 0, 0, Ui.S); panel.Children.Add(login);
-        var signup = Buttons.Create("Создать аккаунт", () => Submit(true), "Создать аккаунт", "plus"); signup.Margin = Ui.Insets(0); panel.Children.Add(signup); Loaded += (_, _) => user.Focus();
-        panel.Children.Add(new TextBlock { Text = cloud is null ? "Локальный аккаунт. Вход сохраняется на этом ПК на 90 дней." : "Аккаунт хранится в Firebase. Вход будет сохранён на этом ПК.", FontSize = Ui.Caption, Opacity = .6, TextWrapping = TextWrapping.Wrap, Margin = Ui.Insets(0, Ui.L, 0, 0) });
+        async void Submit()
+        {
+            if(busy)return;busy=true;panel.IsEnabled=false;progress.Visibility=Visibility.Visible;error.Visibility=Visibility.Collapsed;
+            try
+            {
+                if(registering&&pass.Password.Length<8)throw new ArgumentException("Пароль должен содержать минимум 8 символов.");
+                if(cloud is not null&&registering&&!System.Text.RegularExpressions.Regex.IsMatch(username.Text,@"^[\p{L}\p{N}_\-.]{3,32}$"))throw new ArgumentException("Имя: 3–32 буквы, цифры, _, - или точка.");
+                Profile=cloud is not null?await cloud.SignInAsync(user.Text.Trim(),pass.Password,registering,username.Text):registering?store.Register(user.Text.Trim(),pass.Password):store.Login(user.Text.Trim(),pass.Password);
+                if(Profile is null)throw new InvalidOperationException("Неверное имя или пароль.");DialogResult=true;
+            }
+            catch(Exception ex){error.Text=ex.Message;error.Visibility=Visibility.Visible;}
+            finally{busy=false;panel.IsEnabled=true;progress.Visibility=Visibility.Collapsed;}
+        }
+        submit=Buttons.Create("Войти",Submit,"Войти · Enter","arrow-right","Button.Primary");submit.IsDefault=true;submit.Margin=Ui.Insets(0,Ui.S,0,Ui.S);panel.Children.Add(submit);
+        mode=Buttons.Create("Нет аккаунта? Зарегистрироваться",()=>{registering=!registering;ChangeMode();},style:"Button.Ghost");panel.Children.Add(mode);
+        var footer=new TextBlock{Text=cloud is null?"Локальный аккаунт. Вход сохраняется на этом ПК.":"Сервер: "+cloud.Config.BaseUri().Authority+"\nВход сохранится на этом компьютере.",FontSize=Ui.Caption,TextWrapping=TextWrapping.Wrap,Margin=Ui.Insets(0,Ui.L,0,0)};Ui.Secondary(footer);panel.Children.Add(footer);
+        ChangeMode();Loaded+=(_,_)=>user.Focus();
     }
 }
 

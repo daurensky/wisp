@@ -6,7 +6,6 @@ namespace Wisp.Core;
 /// <summary>SRTP Opus voice, separate SRTP share audio/H.264 video; SCTP only carries control/files.</summary>
 public sealed class RtcPeer : IRtcPeer
 {
-    public const string GoogleStun = "stun:stun.l.google.com:19302";
     private readonly RTCPeerConnection pc;
     private readonly SemaphoreSlim sendLock = new(1);
     private readonly RtcFragments controlFragments = new(32 * 1024 * 1024);
@@ -45,7 +44,7 @@ public sealed class RtcPeer : IRtcPeer
     public RtcPeer(string remoteId, string channelId, IReadOnlyList<RTCIceServer>? iceServers = null)
     {
         this.remoteId = remoteId; this.channelId = channelId;
-        pc = new RTCPeerConnection(new RTCConfiguration { iceServers = iceServers?.ToList() ?? FileIceServerProvider.Defaults.Select(url => new RTCIceServer { urls = url }).ToList() });
+        pc = new RTCPeerConnection(new RTCConfiguration { iceServers = iceServers?.ToList() ?? new List<RTCIceServer>() });
         pc.addTrack(new MediaStreamTrack(new AudioFormat(111, "opus", 48000, 2, "minptime=10;useinbandfec=1")));
         pc.addTrack(new MediaStreamTrack(new AudioFormat(112, "opus", 48000, 2, "stereo=1;minptime=10")));
         pc.addTrack(new MediaStreamTrack(new VideoFormat(96, "H264", 90000, "packetization-mode=1;profile-level-id=42e02a;level-asymmetry-allowed=1")));
