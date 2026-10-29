@@ -35,6 +35,8 @@ internal static class ChannelRowChecks
             {
                 if(ThemeManager.IsLight!=useLight)ThemeManager.Toggle();Pump(probe);
                 Move(probe,new Point(10,probe.ActualHeight-20));
+                Wait(probe,()=>!voiceRow.IsMouseOver&&voiceRow.SettingsButton.Visibility==Visibility.Hidden,
+                    $"voice gear idle: over={voiceRow.IsMouseOver}, keyboard={PointerFocus.GetKeyboardFocus(voiceRow)}, focusWithin={voiceRow.IsKeyboardFocusWithin}, source={DependencyPropertyHelper.GetValueSource(voiceRow.SettingsButton,UIElement.VisibilityProperty).BaseValueSource}");
                 Assert.Equal(Visibility.Hidden,voiceRow.SettingsButton.Visibility);
                 Assert.Equal(Visibility.Visible,textRow.SettingsButton.Visibility);
                 Assert.Equal(Visibility.Collapsed,memberRow.SettingsButton.Visibility);
@@ -96,6 +98,7 @@ internal static class ChannelRowChecks
     {
         var screen=owner.PointToScreen(local);Assert.True(SetCursorPos((int)Math.Round(screen.X),(int)Math.Round(screen.Y)));
         Mouse.Synchronize();Pump(owner);
+        Wait(owner,()=>{var current=Mouse.GetPosition(owner);return Math.Abs(current.X-local.X)<=2&&Math.Abs(current.Y-local.Y)<=2;},"native mouse position delivered");
     }
     private static void Click(){mouse_event(0x0002,0,0,0,UIntPtr.Zero);mouse_event(0x0004,0,0,0,UIntPtr.Zero);}
     private static void Pump(Window window){window.UpdateLayout();window.Dispatcher.Invoke(()=>{},DispatcherPriority.ApplicationIdle);window.UpdateLayout();}
