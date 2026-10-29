@@ -44,6 +44,72 @@ public sealed class ServerBackendTests
         await Assert.ThrowsAsync<ArgumentException>(()=>backend.JoinCommunityAsync("wisp://old-invitation"));
         Assert.Equal(2,calls);
     }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CancellingOneRequestDoesNotCancelTheSharedSessionRefresh(bool cancelRefreshStarter)
+    {
+        var clock=new Clock();
+        var refreshStarted=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRefresh=new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int refreshes=0,dataRequests=0;
+        CancellationToken refreshCancellation=default;
+        using var backend=new ServerBackend(Config,new Handler(async (request,token)=>
+        {
+            if(request.RequestUri!.AbsolutePath=="/v1/auth/login")return Session('a','b');
+            if(request.RequestUri.AbsolutePath=="/v1/auth/refresh")
+            {
+                Interlocked.Increment(ref refreshes);refreshCancellation=token;refreshStarted.TrySetResult();
+                return await releaseRefresh.Task.WaitAsync(token);
+            }
+            Interlocked.Increment(ref dataRequests);
+            Assert.Equal(new string('c',43),request.Headers.Authorization!.Parameter);
+            return Reply(7);
+        }),clock);
+        await backend.SignInAsync("tester@example.com","fixture-password",false,"tester");
+        clock.Advance(TimeSpan.FromMinutes(2));
+        using var firstCancellation=new CancellationTokenSource();
+        using var secondCancellation=new CancellationTokenSource();
+        var first=backend.GetAsync<int>("users/user/first",firstCancellation.Token);
+        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second=backend.GetAsync<int>("users/user/second",secondCancellation.Token);
+        try
+        {
+            (cancelRefreshStarter?firstCancellation:secondCancellation).Cancel();
+            var cancelled=cancelRefreshStarter?first:second;
+            var remaining=cancelRefreshStarter?second:first;
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>cancelled.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.False(refreshCancellation.IsCancellationRequested);
+            Assert.False(remaining.IsCompleted);
+            releaseRefresh.SetResult(Session('c','d'));
+            Assert.Equal(7,await remaining.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(1,refreshes);Assert.Equal(1,dataRequests);
+            Assert.Equal(new string('d',43),backend.RefreshToken);
+        }
+        finally
+        {
+            releaseRefresh.TrySetResult(Session('c','d'));
+            try { await Task.WhenAll(first,second); } catch(OperationCanceledException) { }
+        }
+    }
+    [Fact]
+    public async Task PrecancelledRequestsDoNotStartSessionRefresh()
+    {
+        var clock=new Clock();int calls=0;
+        using var backend=new ServerBackend(Config,new Handler(request=>
+        {
+            Interlocked.Increment(ref calls);return Session('a','b');
+        }),clock);
+        await backend.SignInAsync("tester@example.com","fixture-password",false,"tester");
+        clock.Advance(TimeSpan.FromMinutes(2));
+        using var cancellation=new CancellationTokenSource();cancellation.Cancel();
+        Func<Task>[] requests=[()=>backend.GetAccessTokenAsync(cancellation.Token),
+            ()=>backend.GetAsync<object>("users/user/data",cancellation.Token),
+            ()=>backend.PutAsync("users/user/data",7,cancellation.Token),
+            ()=>backend.DeleteAsync("users/user/data",cancellation.Token)];
+        foreach(var request in requests)await Assert.ThrowsAnyAsync<OperationCanceledException>(request);
+        Assert.Equal(1,calls);
+    }
     [Fact]
     public void CachesAndSessionsAreIsolatedByServerAndOldDataIsNotDeleted()
     {
@@ -59,8 +125,18 @@ public sealed class ServerBackendTests
         Assert.Equal(12,RoomRoster.ActiveParticipants(JsonSerializer.SerializeToElement(seats),DateTimeOffset.FromUnixTimeMilliseconds(now)).Count);
     }
     private static HttpResponseMessage Reply(object data)=>new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(data))};
-    private sealed class Handler(Func<HttpRequestMessage,HttpResponseMessage> send):HttpMessageHandler
+    private static HttpResponseMessage Session(char access,char refresh)=>Reply(new{accessToken=new string(access,43),refreshToken=new string(refresh,43),expiresIn=180,profile=new UserProfile("user","tester")});
+    private sealed class Handler:HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)=>Task.FromResult(send(request));
+        private readonly Func<HttpRequestMessage,CancellationToken,Task<HttpResponseMessage>> send;
+        public Handler(Func<HttpRequestMessage,HttpResponseMessage> send):this((request,_)=>Task.FromResult(send(request))) { }
+        public Handler(Func<HttpRequestMessage,CancellationToken,Task<HttpResponseMessage>> send)=>this.send=send;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)=>send(request,token);
+    }
+    private sealed class Clock:TimeProvider
+    {
+        private DateTimeOffset now=DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow()=>now;
+        public void Advance(TimeSpan elapsed)=>now+=elapsed;
     }
 }

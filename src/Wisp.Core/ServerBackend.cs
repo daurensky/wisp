@@ -72,7 +72,7 @@ public sealed class ServerBackend:IDisposable
     }
     public async Task LogoutAsync(){if(RefreshToken is null)return;using var response=await http.PostAsJsonAsync("/v1/auth/logout",new{refreshToken=RefreshToken});using var result=await Read(response);RefreshToken=accessToken=null;}
     public async Task<UserProfile> RestoreAsync(string refreshToken){RefreshToken=refreshToken;expires=default;await TokenAsync();return Profile!;}
-    public Task<string> GetAccessTokenAsync(CancellationToken token=default)=>TokenAsync().WaitAsync(token);
+    public Task<string> GetAccessTokenAsync(CancellationToken token=default)=>token.IsCancellationRequested?Task.FromCanceled<string>(token):TokenAsync().WaitAsync(token);
     private async Task<string> TokenAsync()
     {
         await refreshGate.WaitAsync();
@@ -85,20 +85,22 @@ public sealed class ServerBackend:IDisposable
         }
         finally{refreshGate.Release();}
     }
-    private async Task<HttpRequestMessage> Request(HttpMethod method,string path,object? value=null)
+    private async Task<HttpRequestMessage> Request(HttpMethod method,string path,object? value=null,CancellationToken token=default)
     {
+        token.ThrowIfCancellationRequested();
         if(path.Split('/').Any(p=>!Regex.IsMatch(p,"^[A-Za-z0-9_-]{1,128}$")))throw new ArgumentException("Некорректный путь данных.");
-        var request=new HttpRequestMessage(method,"/v1/data/"+path);request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",await TokenAsync());
+        var access=await GetAccessTokenAsync(token);
+        var request=new HttpRequestMessage(method,"/v1/data/"+path);request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",access);
         if(value is not null)request.Content=JsonContent.Create(value,options:new JsonSerializerOptions());return request;
     }
     public async Task<T?> GetAsync<T>(string path,CancellationToken token=default)
     {
-        using var request=await Request(HttpMethod.Get,path);using var response=await http.SendAsync(request,token);using var json=await Read(response);
+        using var request=await Request(HttpMethod.Get,path,token:token);using var response=await http.SendAsync(request,token);using var json=await Read(response);
         return json.RootElement.ValueKind==JsonValueKind.Null?default:json.RootElement.Deserialize<T>();
     }
     public async Task PutAsync<T>(string path,T value,CancellationToken token=default)
     {
-        using var request=await Request(HttpMethod.Put,path,value);using var response=await http.SendAsync(request,token);using var json=await Read(response);
+        using var request=await Request(HttpMethod.Put,path,value,token);using var response=await http.SendAsync(request,token);using var json=await Read(response);
     }
     public async Task<bool> TryCreateAsync<T>(string path,T value)
     {
@@ -107,7 +109,7 @@ public sealed class ServerBackend:IDisposable
     }
     public async Task DeleteAsync(string path,CancellationToken token=default)
     {
-        using var request=await Request(HttpMethod.Delete,path);using var response=await http.SendAsync(request,token);using var json=await Read(response);
+        using var request=await Request(HttpMethod.Delete,path,token:token);using var response=await http.SendAsync(request,token);using var json=await Read(response);
     }
     public async Task SaveProfileAsync(UserProfile profile){if(profile.Id!=Profile?.Id)throw new InvalidOperationException("Чужой профиль.");await PutAsync($"profiles/{profile.Id}/Info",profile with{AvatarPath=null,BannerPath=null});Profile=profile;}
     public Task CreateCommunityAsync(CommunitySnapshot snapshot)=>PutAsync($"communities/{snapshot.Community.Id}/snapshot",snapshot with{Members=snapshot.Members.Select(p=>p with{AvatarPath=null,BannerPath=null}).ToList()});
@@ -115,7 +117,8 @@ public sealed class ServerBackend:IDisposable
     public Task ManageCommunityAsync(string communityId, CommunityManagement command) => PutAsync($"communities/{communityId}/management",command);
     private async Task<JsonDocument> ApiPost(string path,object value)
     {
-        using var request=new HttpRequestMessage(HttpMethod.Post,path){Content=JsonContent.Create(value)};request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",await TokenAsync());using var response=await http.SendAsync(request);return await Read(response);
+        var access=await TokenAsync();
+        using var request=new HttpRequestMessage(HttpMethod.Post,path){Content=JsonContent.Create(value)};request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",access);using var response=await http.SendAsync(request);return await Read(response);
     }
     public async Task<string> CreateInviteAsync(string community){using var json=await ApiPost("/v1/invites/create",new{community});return "wisp-invite:"+json.RootElement.GetProperty("token").GetString();}
     public async Task<string> JoinCommunityAsync(string invite)

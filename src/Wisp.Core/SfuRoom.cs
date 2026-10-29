@@ -39,13 +39,21 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
     public event Action<Exception>? DiagnosticError;
     public event Action? Changed;
 
-    private sealed class Link(IRtcPeer peer, string remote)
+    private sealed class Link(IRtcPeer peer, string remote) : IDisposable
     {
         public IRtcPeer Peer { get; } = peer;
         public string Remote { get; } = remote;
         public HashSet<string> Sent { get; } = new();
         public bool Answered;
         public volatile bool LocalPublished;
+        public Action<WireMessage>? MessageHandler;
+        public Action<string>? StateHandler;
+        public void Dispose()
+        {
+            Peer.MessageReceived-=MessageHandler;
+            Peer.StateChanged-=StateHandler;
+            Peer.Dispose();
+        }
     }
     private static TaskCompletionSource Completion() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private void Queue(object value)
@@ -132,9 +140,8 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
     {
         var peer = peerFactory?.Invoke(remote, channel!, servers) ?? new RtcPeer(remote, channel!, servers);
         var link = new Link(peer, remote);
-        if (!links.TryAdd(id, link)) { peer.Dispose(); throw new InvalidDataException("Повторное соединение SFU."); }
-        peer.MessageReceived += m => { if (Joined && remote != uid && links.TryGetValue(id, out var active) && ReferenceEquals(active, link)) MessageReceived?.Invoke(m); };
-        peer.StateChanged += state =>
+        link.MessageHandler = m => { if (Joined && remote != uid && links.TryGetValue(id, out var active) && ReferenceEquals(active, link)) MessageReceived?.Invoke(m); };
+        link.StateHandler = state =>
         {
             if (stop?.IsCancellationRequested != false || !links.TryGetValue(id,out var active) || !ReferenceEquals(active,link)) return;
             lastPeerState=SfuProtocol.SafeLabel(state);
@@ -142,6 +149,9 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
             if (id == "pub" && peer.Connected) published?.TrySetResult();
             Changed?.Invoke();
         };
+        peer.MessageReceived+=link.MessageHandler;
+        peer.StateChanged+=link.StateHandler;
+        if (!links.TryAdd(id, link)) { link.Dispose(); throw new InvalidDataException("Повторное соединение SFU."); }
         return link;
     }
     private async Task WriteAsync(CancellationToken token)
@@ -201,7 +211,7 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
                         var answer = await sub.Peer.AnswerAsync(m.GetProperty("sdp").GetString()!, token);
                         Queue(new { type = "answer", id, sdp = answer }); sub.LocalPublished = true; break;
                     case "remove":
-                        if (links.TryRemove(m.GetProperty("id").GetString()!, out var removed)) removed.Peer.Dispose();
+                        if (links.TryRemove(m.GetProperty("id").GetString()!, out var removed)) removed.Dispose();
                         Changed?.Invoke(); break;
                     case "report":
                         string viewer = m.GetProperty("peer").GetString()!;
@@ -258,14 +268,43 @@ public sealed class SfuRoom(ServerBackend cloud, VoiceServerSettings settings, R
     }
     private async Task LeaveCoreAsync()
     {
-        joined = false; stop?.Cancel(); socket?.Abort();
-        foreach (var l in links.Values) l.Peer.Dispose();
-        try { await Task.WhenAll(new[] { reader, writer, maintenance, health }.OfType<Task>()); } catch (OperationCanceledException) { }
-        links.Clear();
-        Volatile.Write(ref participants, Array.Empty<RtcSeat>());
-        socket?.Dispose(); socket = null; stop?.Dispose(); stop = null;
-        outbound = null; reader = writer = maintenance = health = null;
-        Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Disconnected)); channel = community = null;phase="disconnected";
+        var context=DiagnosticContext();
+        List<Exception>? errors=null;
+        void Cleanup(Action action)
+        {
+            try { action(); } catch(Exception ex) { (errors??=new()).Add(ex); }
+        }
+        void DrainLinks()
+        {
+            foreach(var entry in links)
+                if(links.TryRemove(entry.Key,out var link))Cleanup(link.Dispose);
+        }
+        joined = false;
+        try
+        {
+            Cleanup(()=>stop?.Cancel());
+            Cleanup(()=>socket?.Abort());
+            DrainLinks();
+            var workers=Task.WhenAll(new[] { reader, writer, maintenance, health }.OfType<Task>());
+            try { await workers; }
+            catch(OperationCanceledException) { }
+            catch(Exception ex) { (errors??=new()).Add(workers.Exception??ex); }
+        }
+        finally
+        {
+            // A reader already handling an offer can add its link while cancellation unwinds.
+            DrainLinks();
+            links.Clear();
+            Volatile.Write(ref participants, Array.Empty<RtcSeat>());
+            Cleanup(()=>socket?.Dispose());
+            Cleanup(()=>stop?.Dispose());
+            socket = null; stop = null;
+            outbound = null; reader = writer = maintenance = health = null;
+            ready = published = null;servers = Array.Empty<RTCIceServer>();session = "";
+            Volatile.Write(ref connectionInfo, new(settings.Url, ServerConnectionState.Disconnected)); channel = community = null;phase="disconnected";
+        }
+        if(errors is not null)
+            DiagnosticError?.Invoke(new SfuDiagnosticException("Не удалось полностью освободить ресурсы SFU.",context,errors.Count==1?errors[0]:new AggregateException(errors)));
         Changed?.Invoke();
     }
     public async ValueTask DisposeAsync() => await LeaveAsync();
