@@ -5,7 +5,7 @@
   <Grid>
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="Auto"/>
-      <ColumnDefinition Width="{StaticResource Width.ServerPillGap}"/>
+      <ColumnDefinition x:Name="PillGapColumn" Width="Auto"/>
       <ColumnDefinition Width="*"/>
     </Grid.ColumnDefinitions>
     <Border x:Name="ActivePill" Width="{StaticResource Width.ServerPill}" Height="0"

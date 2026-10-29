@@ -21,6 +21,7 @@ public sealed partial class ServerRailItem : UserControl
     public ServerRailItem(string title, string? iconPath, bool selected, Action activate, ContextMenu? menu = null, int coverFrame = 0)
     {
         InitializeComponent();
+        PillGapColumn.Width = new GridLength(Ui.Metric("Width.ServerPillGap"));
         ServerButton.Click += (_, _) => { if (!IsSelected) this.activate(); };
         MouseEnter += (_, _) => UpdatePill(); MouseLeave += (_, _) => UpdatePill();
         Loaded += (_, _) => UpdatePill(false);
