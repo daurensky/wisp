@@ -330,18 +330,29 @@ public sealed class ThemeTests
             localVoice.Dispose();
             phase("optimistic voice entry and cancellation");
             var voiceChannel = store.GetChannels(community.Id).First(c => c.IsVoice);
-            var joinTask = (Task)typeof(MainWindow).GetMethod("JoinVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, new object[] { voiceChannel, false, CancellationToken.None })!;
-            Assert.False(joinTask.IsCompleted);
-            CheckVoiceActionLayout(main,true);
-            Assert.Contains(Descendants(main).OfType<TextBlock>(), text => text.Text == "SFU · Подключение");
-            main.UpdateLayout();
-            Assert.Contains(Descendants(main).OfType<VoiceParticipantRow>(), row => System.Windows.Automation.AutomationProperties.GetName(row).StartsWith(profile.Username));
-            SaveSnapshot(main, "voice-connecting");
-            var leaveTask = (Task)typeof(MainWindow).GetMethod("LeaveVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, null)!;
-            PumpLayout(main);
-            Assert.True(joinTask.IsCompletedSuccessfully); Assert.True(leaveTask.IsCompletedSuccessfully);
-            CheckVoiceActionLayout(main,false);
-            Assert.DoesNotContain(Descendants(main).OfType<TextBlock>(), text => text.Text == "SFU · Подключение");
+            // Keep admission pending while actual dispatcher/rendering work runs.
+            // This local fixture has no backend, so allowing admission to finish
+            // would correctly reject the join before the optimistic UI is checked.
+            var transitionGate = (SemaphoreSlim)typeof(MainWindow).GetField("voiceTransitions", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(main)!;
+            Assert.True(transitionGate.Wait(0));
+            bool gateHeld = true;
+            try
+            {
+                var joinTask = (Task)typeof(MainWindow).GetMethod("JoinVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, new object[] { voiceChannel, false, CancellationToken.None })!;
+                Assert.False(joinTask.IsCompleted);
+                CheckVoiceActionLayout(main,true);
+                Assert.Contains(Descendants(main).OfType<TextBlock>(), text => text.Text == "SFU · Подключение");
+                main.UpdateLayout();
+                Assert.Contains(Descendants(main).OfType<VoiceParticipantRow>(), row => System.Windows.Automation.AutomationProperties.GetName(row).StartsWith(profile.Username));
+                SaveSnapshot(main, "voice-connecting");
+                var leaveTask = (Task)typeof(MainWindow).GetMethod("LeaveVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, null)!;
+                transitionGate.Release(); gateHeld = false;
+                PumpUntil(main, () => joinTask.IsCompleted && leaveTask.IsCompleted, "pending voice entry cancellation");
+                Assert.True(joinTask.IsCompletedSuccessfully); Assert.True(leaveTask.IsCompletedSuccessfully);
+                CheckVoiceActionLayout(main,false);
+                Assert.DoesNotContain(Descendants(main).OfType<TextBlock>(), text => text.Text == "SFU · Подключение");
+            }
+            finally { if (gateHeld) transitionGate.Release(); }
             using (var exclusive = new FileStream(emoji.LocalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) Assert.True(exclusive.Length > 0);
             Assert.Equal(Visibility.Collapsed, Descendants(main).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetName(button) == "Отменить запись").Visibility);
             phase("responsive layout"); main.Width = Ui.Metric("Width.WindowMinimum"); PumpLayout(main); SaveSnapshot(main, "main-compact-dark");
