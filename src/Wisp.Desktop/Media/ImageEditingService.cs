@@ -70,13 +70,14 @@ public static class ImageEditingService
     public static EditedImage Save(ImageEditingDocument document, Rect crop, ImageEditKind kind, int coverFrame, CancellationToken cancellation = default)
     {
         ArgumentNullException.ThrowIfNull(document);
-        double ratio = kind == ImageEditKind.ProfileBanner ? 16d / 9 : 1;
+        bool banner = kind == ImageEditKind.ProfileBanner;
+        double ratio = banner ? ProfileLayout.BannerRatio : 1;
         if (!double.IsFinite(crop.X) || !double.IsFinite(crop.Y) || !double.IsFinite(crop.Width) || !double.IsFinite(crop.Height) ||
             crop.Width <= 0 || crop.Height <= 0 || crop.X < -.001 || crop.Y < -.001 || crop.Right > document.Width + .001 || crop.Bottom > document.Height + .001 || Math.Abs(crop.Width / crop.Height - ratio) > .0001)
             throw new ArgumentException("Область обрезки находится вне изображения или имеет неверные пропорции.", nameof(crop));
         if (coverFrame < 0 || coverFrame >= document.FrameCount) throw new ArgumentOutOfRangeException(nameof(coverFrame));
         cancellation.ThrowIfCancellationRequested();
-        int width = kind == ImageEditKind.ProfileBanner ? Math.Clamp((int)(crop.Width / 16) * 16, 16, 960) : Math.Clamp((int)Math.Round(crop.Width), 1, 512);
+        int width = banner ? ProfileLayout.BannerWidth : Math.Clamp((int)Math.Round(crop.Width), 1, 512);
         var directory = Path.Combine(Path.GetTempPath(), "wisp-image-editor-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, document.Animated ? "edited.gif" : "edited.png");
@@ -85,7 +86,7 @@ public static class ImageEditingService
             while (true)
             {
                 cancellation.ThrowIfCancellationRequested();
-                int height = kind == ImageEditKind.ProfileBanner ? width / 16 * 9 : width;
+                int height = banner ? ProfileLayout.BannerHeight : width;
                 try
                 {
                     using var output = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
@@ -106,18 +107,21 @@ public static class ImageEditingService
                         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(Bitmap(CropAndScale(pixels, document.Width, document.Height, crop, width, height, cancellation), width, height))); encoder.Save(output);
                     }
                 }
-                catch (InvalidDataException error) when (error.Message.Contains("превышает допустимый размер", StringComparison.Ordinal) && width > (kind == ImageEditKind.ProfileBanner ? 160 : 64))
+                catch (InvalidDataException error) when (!banner && error.Message.Contains("превышает допустимый размер", StringComparison.Ordinal) && width > 64)
                 {
-                    width = kind == ImageEditKind.ProfileBanner ? Math.Max(160, width / 4 * 3 / 16 * 16) : Math.Max(64, width * 3 / 4); continue;
+                    width = Math.Max(64, width * 3 / 4); continue;
                 }
                 cancellation.ThrowIfCancellationRequested();
                 long size = new FileInfo(path).Length;
                 if (size > MaximumBytes) throw new InvalidDataException("После обработки изображение больше 4 МиБ. Выберите меньшую область.");
                 // Large frame expansion is avoided by retrying a smaller animated canvas.
                 // All frames remain present; there is no hidden conversion to a still image.
-                if (document.Animated && size > Math.Max(512 * 1024, document.Encoded.Length * 3L) && width > (kind == ImageEditKind.ProfileBanner ? 160 : 64))
+                if (document.Animated && size > Math.Max(512 * 1024, document.Encoded.Length * 3L) && (banner || width > 64))
                 {
-                    width = kind == ImageEditKind.ProfileBanner ? Math.Max(160, width / 4 * 3 / 16 * 16) : Math.Max(64, width * 3 / 4); continue;
+                    // A banner has an exact 400×140 output contract. Keep animation
+                    // and dimensions; report growth rather than silently shrinking it.
+                    if(banner)throw new InvalidDataException("После обрезки GIF-баннер стал слишком большим. Выберите менее детализированную область или другой файл.");
+                    width = Math.Max(64, width * 3 / 4); continue;
                 }
                 return new EditedImage(path, document.Animated ? coverFrame : 0, width, height, document.FrameCount);
             }

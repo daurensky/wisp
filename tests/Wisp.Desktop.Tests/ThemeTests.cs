@@ -201,15 +201,21 @@ public sealed class ThemeTests
             Assert.Null(typeof(MainWindow).GetField("community",privateFlags)!.GetValue(main));
             Assert.Null(typeof(MainWindow).GetField("selectedChannel",privateFlags)!.GetValue(main));
             Assert.True(Assert.IsType<ScrollViewer>(typeof(MainWindow).GetField("homeWorkspace",privateFlags)!.GetValue(main)).IsVisible);
+            CheckHomeAscii(main);
             SaveSnapshot(main, "startup-home-dark");
             typeof(MainWindow).GetMethod("SetCommunity",privateFlags)!.Invoke(main,new object[]{community});PumpLayout(main);
             Assert.Equal(288d,Ui.Metric("Width.Channels"));
             phase("Grayscale, chosen GIF cover and popup controls");DesignRegressionChecks.Check(main,root);
+            phase("stable keyed server rail and rounded square artwork");RailStabilityChecks.Check(main,store,profile,community);
+            phase("channel hover path, gear input and contiguous row highlight");ChannelRowChecks.Check(main);
+            phase("focus-visible input modality, window reactivation and popup dismissal");FocusVisibleChecks.Check(main);
+            phase("opaque settings transitions, inset and header");ModalLifecycleChecks.Check(main,profile,name=>SaveSnapshot(main,name));
+            phase("20:7 profile artwork, top aligned bio and preserved status");ProfileLayoutChecks.Check(main,profile,gif);
             phase("server settings roles, stale replies and real sound gain");SettingsIntegrationChecks.Check(main,store,profile,community);
             phase("stream audience, gain and cleanup");StreamIntegrationChecks.Check(main,store,profile,community);
             phase("native image editor save, cover and cancel");CheckImageEditor(main,gif);
             phase("live recording waveform from PCM");CheckRecordingWaveform(main,root);
-            CheckComposerState(main,channel);
+            CheckComposerState(main,channel);CheckVoiceActionLayout(main,false);
             SaveSnapshot(main, "main-dark");
             CheckCaptionButtons(main);
             Assert.NotNull(System.Windows.Shell.WindowChrome.GetWindowChrome(main));
@@ -298,6 +304,7 @@ public sealed class ThemeTests
             phase("existing chat avatar refresh");CheckChatAvatarRefresh(main,body,gif);
             phase("connection status, brand and smooth scrolling"); CheckDesktopPolish(main, community.Id, store.GetChannels(community.Id).First(c => c.IsVoice).Id);
             phase("navigation during call and redesigned screens");CheckNavigationAndScreens(main,store,profile,community,gif);
+            main.Activate();PumpLayout(main);
             var inputButton = Descendants(main).OfType<Button>().First(button => Equals(System.Windows.Automation.AutomationProperties.GetName(button), "Настройки Wisp"));
             inputButton.Focus(); PointerFocus.SetKeyboardFocus(inputButton, true); main.UpdateLayout();
             Assert.Equal(1, ((Border)inputButton.Template.FindName("FocusRing", inputButton)).Opacity);
@@ -317,6 +324,7 @@ public sealed class ThemeTests
             var voiceChannel = store.GetChannels(community.Id).First(c => c.IsVoice);
             var joinTask = (Task)typeof(MainWindow).GetMethod("JoinVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, new object[] { voiceChannel, false, CancellationToken.None })!;
             Assert.False(joinTask.IsCompleted);
+            CheckVoiceActionLayout(main,true);
             Assert.Contains(Descendants(main).OfType<TextBlock>(), text => text.Text == "SFU · Подключение");
             main.UpdateLayout();
             Assert.Contains(Descendants(main).OfType<VoiceParticipantRow>(), row => System.Windows.Automation.AutomationProperties.GetName(row).StartsWith(profile.Username));
@@ -324,6 +332,7 @@ public sealed class ThemeTests
             var leaveTask = (Task)typeof(MainWindow).GetMethod("LeaveVoice", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(main, null)!;
             PumpLayout(main);
             Assert.True(joinTask.IsCompletedSuccessfully); Assert.True(leaveTask.IsCompletedSuccessfully);
+            CheckVoiceActionLayout(main,false);
             Assert.DoesNotContain(Descendants(main).OfType<TextBlock>(), text => text.Text == "SFU · Подключение");
             using (var exclusive = new FileStream(emoji.LocalPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) Assert.True(exclusive.Length > 0);
             Assert.Equal(Visibility.Collapsed, Descendants(main).OfType<Button>().Single(button => System.Windows.Automation.AutomationProperties.GetName(button) == "Отменить запись").Visibility);
@@ -343,6 +352,41 @@ public sealed class ThemeTests
             timer.Start(); Dispatcher.PushFrame(frame);
             Assert.False(main.IsVisible, "Quit must finish after the initial Closing callback returns.");
         }
+    }
+
+    private static void CheckHomeAscii(MainWindow main)
+    {
+        const System.Reflection.BindingFlags flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+        var home=Assert.IsType<ScrollViewer>(typeof(MainWindow).GetField("homeWorkspace",flags)!.GetValue(main));
+        double width=main.Width;bool light=ThemeManager.IsLight;
+        try
+        {
+            foreach(bool theme in new[]{false,true})
+            {
+                if(ThemeManager.IsLight!=theme)ThemeManager.Toggle();
+                foreach(var size in new[]{("minimum",Ui.Metric("Width.WindowMinimum")),("normal",Ui.Metric("Width.Window"))})
+                {
+                    main.Width=size.Item2;PumpLayout(main);
+                    var ascii=Assert.Single(Descendants(home).OfType<TextBlock>(),text=>text.Text==BrandAscii.Art);
+                    Assert.True(ascii.IsVisible);Assert.True(ascii.ActualWidth>0);Assert.True(ascii.ActualHeight>0);
+                    Assert.Equal(TextWrapping.NoWrap,ascii.TextWrapping);
+                    Assert.Contains("Consolas",ascii.FontFamily.Source,StringComparison.OrdinalIgnoreCase);
+                    var typeface=new Typeface(ascii.FontFamily,ascii.FontStyle,ascii.FontWeight,ascii.FontStretch);
+                    double TextWidth(string value)=>new FormattedText(value,System.Globalization.CultureInfo.InvariantCulture,FlowDirection.LeftToRight,typeface,ascii.FontSize,ascii.Foreground,VisualTreeHelper.GetDpi(ascii).PixelsPerDip).Width;
+                    Assert.InRange(TextWidth("iiii")-TextWidth("WWWW"),-.01,.01);
+                    Assert.DoesNotContain("WISP",ascii.Text,StringComparison.OrdinalIgnoreCase);
+                    Assert.All(ascii.Text,letter=>Assert.InRange((int)letter,0,127));
+                    var visible=ascii.TransformToAncestor(home).TransformBounds(new Rect(new Size(ascii.ActualWidth,ascii.ActualHeight)));
+                    Assert.InRange(visible.Left,-1,home.ActualWidth+1);Assert.InRange(visible.Top,-1,home.ActualHeight+1);
+                    Assert.True(visible.Right<=home.ActualWidth+1);Assert.True(visible.Bottom<=home.ActualHeight+1);
+                    var actions=Descendants(home).OfType<Button>().ToArray();
+                    Assert.Contains(actions,button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Создать сервер"&&button.IsEnabled);
+                    Assert.Contains(actions,button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Присоединиться"&&button.IsEnabled);
+                    SaveSnapshot(main,"home-ascii-"+(theme?"light":"dark")+"-"+size.Item1);
+                }
+            }
+        }
+        finally{main.Width=width;if(ThemeManager.IsLight!=light)ThemeManager.Toggle();PumpLayout(main);}
     }
 
     private static void CheckChatAvatarRefresh(MainWindow main,SelectableChatText body,string gif)
@@ -427,7 +471,7 @@ public sealed class ThemeTests
         var bannerEditor=Assert.Single(Descendants(main).OfType<ImageEditor>());
         PumpUntil(main,()=>bannerEditor.ViewModel.CanEdit,"banner editor decoded GIF");
         Assert.Equal(1,bannerEditor.ViewModel.CoverFrame);
-        Assert.InRange(bannerEditor.SourceCrop.Width/bannerEditor.SourceCrop.Height,16d/9-.001,16d/9+.001);
+        Assert.InRange(bannerEditor.SourceCrop.Width/bannerEditor.SourceCrop.Height,20d/7-.001,20d/7+.001);
         bannerEditor.ViewModel.Zoom=2;PumpLayout(main);SaveSnapshot(main,"image-editor-banner-dark");
         Assert.Single(Descendants(bannerEditor).OfType<Button>(),button=>Equals(button.ToolTip,"Отмена · Esc")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         PumpUntil(main,()=>cancelled.IsCompleted,"image editor cancel");
@@ -476,6 +520,35 @@ public sealed class ThemeTests
             if(recorder.IsRecording){var stopping=recorder.StopAsync();PumpUntil(main,()=>stopping.IsCompleted,"waveform cleanup");stopping.GetAwaiter().GetResult();}
             handle.Close();PumpLayout(main);File.Delete(path);File.Delete(retry);
         }
+    }
+
+    private static void CheckVoiceActionLayout(MainWindow main,bool connected)
+    {
+        const System.Reflection.BindingFlags flags=System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic;
+        var block=Assert.IsType<Border>(typeof(MainWindow).GetField("voiceActionBlock",flags)!.GetValue(main));
+        PumpLayout(main);
+        Assert.Equal(connected?Visibility.Visible:Visibility.Collapsed,block.Visibility);
+        Assert.True(Assert.IsType<ToggleIconButton>(typeof(MainWindow).GetField("micButton",flags)!.GetValue(main)).IsVisible);
+        Assert.True(Assert.IsType<ToggleIconButton>(typeof(MainWindow).GetField("deafenButton",flags)!.GetValue(main)).IsVisible);
+        if(!connected){Assert.Equal(0,block.DesiredSize.Height);return;}
+        var grid=Assert.Single(Descendants(block).OfType<System.Windows.Controls.Primitives.UniformGrid>(),element=>element.Name=="VoiceActionsGrid");
+        Assert.Equal(4,grid.Columns);Assert.Equal(1,grid.Rows);
+        var buttons=grid.Children.OfType<Button>().ToArray();Assert.Equal(4,buttons.Length);
+        double width=buttons[0].ActualWidth,height=buttons[0].ActualHeight;
+        Assert.True(width>24);Assert.True(height>24);
+        var positions=new List<Rect>();
+        foreach(var button in buttons)
+        {
+            Assert.InRange(button.ActualWidth,width-.05,width+.05);Assert.InRange(button.ActualHeight,height-.05,height+.05);
+            var content=Assert.IsAssignableFrom<FrameworkElement>(button.Content);
+            var iconCenter=content.TranslatePoint(new Point(content.ActualWidth/2,content.ActualHeight/2),button);
+            Assert.InRange(iconCenter.X,button.ActualWidth/2-1,button.ActualWidth/2+1);
+            Assert.InRange(iconCenter.Y,button.ActualHeight/2-1,button.ActualHeight/2+1);
+            positions.Add(new Rect(button.TranslatePoint(new Point(),grid),new Size(button.ActualWidth,button.ActualHeight)));
+        }
+        Assert.InRange(positions[0].Left-(grid.ActualWidth-positions[^1].Right),-.1,.1);
+        double gap=positions[1].Left-positions[0].Right;
+        for(int index=2;index<positions.Count;index++)Assert.InRange(positions[index].Left-positions[index-1].Right,gap-.1,gap+.1);
     }
 
     private static void CheckComposerState(MainWindow main,Channel channel)
@@ -685,7 +758,7 @@ public sealed class ThemeTests
         try
         {
             Set("rtc",room);Set("voiceCommunity",original);Set("voiceChannelId",voiceChannel.Id);Set("activeVoiceFailed",false);Set("sharing",true);
-            Invoke("UpdateStatus");Invoke("RenderServers");PumpLayout(main);
+            Invoke("UpdateStatus");Invoke("RenderServers");PumpLayout(main);CheckVoiceActionLayout(main,true);
             var originalSource=(Wisp.Desktop.Media.ScreenShareService)Get("screen")!;
             var originalGeneration=Get("shareGeneration");
             var rail=(VirtualRows)Get("servers")!;
@@ -758,7 +831,7 @@ public sealed class ThemeTests
             var sample=profile with{About="Native Windows client",Game="Dota 2",AvatarPath=gif,BannerPath=gif};
             var profileView=new ProfileView(sample,gif,gif);
             var profileScroll=new ScrollViewer{Content=profileView,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
-            var profileHandle=ModalHost.Open(main,"",profileScroll,600,new ModalOptions(Headerless:true));PumpLayout(main);
+            var profileHandle=ModalHost.Open(main,"",profileScroll,ProfileLayout.CardWidth,new ModalOptions(Headerless:true));PumpLayout(main);
             var profileCard=Assert.IsType<Border>(LogicalTreeHelper.GetParent(Assert.IsType<DockPanel>(LogicalTreeHelper.GetParent(profileScroll))));
             Assert.DoesNotContain(Descendants(profileCard).OfType<Button>(),button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Закрыть · Esc");
             Assert.DoesNotContain(Descendants(profileCard).OfType<Image>(),image=>ReferenceEquals(image.Source,Brand.Logo));
@@ -768,9 +841,13 @@ public sealed class ThemeTests
             Assert.Equal(2,animated.Length);Assert.All(animated,i=>Assert.Equal(GifPlaybackMode.Always,GifPlayback.GetMode(i)));
             Assert.Contains(animated,image=>image.Width==Ui.Metric("Size.ProfileAvatar")*2);
             var bannerFrame=Assert.Single(Descendants(profileView).OfType<AspectRatioFrame>());
-            Assert.InRange(bannerFrame.ActualWidth/bannerFrame.ActualHeight,16d/9-.01,16d/9+.01);
+            Assert.InRange(bannerFrame.ActualWidth,399.99,400.01);Assert.InRange(bannerFrame.ActualHeight,139.99,140.01);
+            Assert.InRange(bannerFrame.ActualWidth/bannerFrame.ActualHeight,20d/7-.01,20d/7+.01);
             Assert.All(animated,i=>Assert.Equal(RepeatBehavior.Forever,AnimationBehavior.GetRepeatBehavior(i)));
             SaveSnapshot(main,"profile-redesign-dark");
+            ThemeManager.Toggle();PumpLayout(main);
+            Assert.InRange(bannerFrame.ActualWidth,399.99,400.01);Assert.InRange(bannerFrame.ActualHeight,139.99,140.01);
+            SaveSnapshot(main,"profile-redesign-light");ThemeManager.Toggle();PumpLayout(main);
             var escape=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(main),Environment.TickCount,Key.Escape){RoutedEvent=Keyboard.PreviewKeyDownEvent};
             profileView.RaiseEvent(escape);Assert.True(escape.Handled);PumpUntil(main,()=>!Descendants(main).Contains(profileView),"headerless profile Escape close");
             CheckProfileEditing(main,sample,gif);
@@ -792,8 +869,8 @@ public sealed class ThemeTests
             var navigation=Assert.Single(Descendants(settings).OfType<ListBox>());
             navigation.SelectedIndex=1;PumpLayout(main);Assert.Equal(SettingsSection.Appearance,settings.SelectedSection);
             var fullCard=Assert.IsType<Border>(LogicalTreeHelper.GetParent(Assert.IsType<DockPanel>(LogicalTreeHelper.GetParent(settings))));
-            Assert.Equal(Ui.Insets(Ui.L),fullCard.Margin);Assert.Equal(HorizontalAlignment.Stretch,fullCard.HorizontalAlignment);
-            Assert.InRange(fullCard.ActualWidth,ModalHost.Surface(main).ActualWidth-Ui.L*2-1,ModalHost.Surface(main).ActualWidth-Ui.L*2+1);
+            Assert.Equal(Ui.Insets(Ui.L*3),fullCard.Margin);Assert.Equal(HorizontalAlignment.Stretch,fullCard.HorizontalAlignment);
+            Assert.InRange(fullCard.ActualWidth,ModalHost.Surface(main).ActualWidth-Ui.L*6-1,ModalHost.Surface(main).ActualWidth-Ui.L*6+1);
             settings.SelectSection(SettingsSection.Appearance);PumpLayout(main);
             var themes=Assert.Single(Descendants(settings).OfType<ComboBox>());
             themes.SelectedIndex=1;Assert.True(ThemeManager.IsLight);
@@ -826,7 +903,7 @@ public sealed class ThemeTests
     {
         UserProfile? saved=null;
         var editor=new ProfileEditor(profile,gif,gif,value=>{saved=value;return Task.FromResult(value);});
-        var handle=ModalHost.Open(main,"Аккаунт и профиль",editor,520);PumpLayout(main);
+        var handle=ModalHost.Open(main,"Аккаунт и профиль",editor,ProfileLayout.CardWidth);PumpLayout(main);
         Button FindProfileButton(string label)=>Assert.Single(Descendants(editor).OfType<Button>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)==label);
         void Click(string label){FindProfileButton(label).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));PumpLayout(main);}
         try
@@ -842,10 +919,14 @@ public sealed class ThemeTests
             name=Assert.Single(Descendants(editor).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Имя пользователя");
             Assert.Equal(profile.Username,name.Text);Assert.Equal(2,Descendants(editor).OfType<Image>().Count());
             name.Text="UpdatedName";
-            var about=Assert.Single(Descendants(editor).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="О себе");about.Text="Line one\nLine two";
+            var about=Assert.Single(Descendants(editor).OfType<TextBox>(),b=>System.Windows.Automation.AutomationProperties.GetName(b)=="О себе");
+            Assert.Equal(VerticalAlignment.Top,about.VerticalContentAlignment);Assert.Equal(HorizontalAlignment.Left,about.HorizontalContentAlignment);
+            Assert.True(about.AcceptsReturn);Assert.Equal(ScrollBarVisibility.Auto,about.VerticalScrollBarVisibility);
+            Assert.Empty(Descendants(editor).OfType<ComboBox>());
+            about.Text="Line one\nLine two";
             Click("Удалить аватар");Click("Сохранить");
             Assert.False(editor.IsEditing);Assert.NotNull(saved);Assert.Equal("UpdatedName",saved.Username);Assert.Equal("Line one\nLine two",saved.About);
-            Assert.Null(saved.AvatarPath);Assert.Equal(gif,saved.BannerPath);
+            Assert.Null(saved.AvatarPath);Assert.Equal(gif,saved.BannerPath);Assert.Equal(profile.Status,saved.Status);
             Assert.Throws<ArgumentException>(()=>ProfileEditor.ValidateDraft("x","",null,null));
             Assert.Throws<ArgumentException>(()=>ProfileEditor.ValidateDraft("ValidName",new string('x',2001),null,null));
             ProfileEditor.ValidateImage(gif);

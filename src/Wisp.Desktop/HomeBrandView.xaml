@@ -1,0 +1,12 @@
+<UserControl x:Class="Wisp.Desktop.HomeBrandView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:local="clr-namespace:Wisp.Desktop"
+ MaxWidth="400" MaxHeight="280" IsHitTestVisible="False"
+ AutomationProperties.Name="ASCII-рисунок графического логотипа Wisp">
+ <Viewbox Stretch="Uniform" StretchDirection="DownOnly">
+  <TextBlock x:Name="AsciiArt" Text="{x:Static local:BrandAscii.Art}"
+             FontFamily="Consolas" FontSize="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
+             TextWrapping="NoWrap" TextTrimming="None" Foreground="{DynamicResource HomeArtForeground}"/>
+ </Viewbox>
+</UserControl>

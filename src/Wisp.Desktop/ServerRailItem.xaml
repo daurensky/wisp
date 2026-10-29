@@ -5,12 +5,13 @@
   <Grid>
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="Auto"/>
+      <ColumnDefinition Width="{StaticResource Width.ServerPillGap}"/>
       <ColumnDefinition Width="*"/>
     </Grid.ColumnDefinitions>
     <Border x:Name="ActivePill" Width="{StaticResource Width.ServerPill}" Height="0"
             Background="{DynamicResource TextPrimary}" CornerRadius="2" VerticalAlignment="Center"
             IsHitTestVisible="False"/>
-    <Button x:Name="ServerButton" Grid.Column="1" Style="{StaticResource Button.Ghost}"
+    <Button x:Name="ServerButton" Grid.Column="2" Style="{StaticResource Button.Ghost}"
             Width="{StaticResource Size.RailItem}" Height="{StaticResource Size.RailItem}"
             Padding="0" Margin="0" BorderThickness="0" HorizontalAlignment="Center"
             VerticalAlignment="Center"/>

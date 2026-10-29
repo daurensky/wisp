@@ -35,9 +35,14 @@ public partial class ImageEditor : UserControl, IDisposable
         ViewModel.PropertyChanged += StateChanged;
         Loaded += Load; Unloaded += (_, _) => Dispose();
         Viewport.LostMouseCapture += (_, _) => dragging = false;
-        OutputShape.Text = kind == ImageEditKind.ProfileBanner ? "Баннер 16:9" : "Аватар 1:1";
-        if (kind != ImageEditKind.ProfileBanner) ResultBorder.Clip = new EllipseGeometry(new Point(72, 72), 72, 72);
-        else ResultBorder.Height = 81;
+        OutputShape.Text = kind == ImageEditKind.ProfileBanner ? $"Баннер {ProfileLayout.BannerWidth}×{ProfileLayout.BannerHeight} · 20:7" : "Аватар 1:1";
+        if(kind==ImageEditKind.UserAvatar)ResultBorder.Clip=new EllipseGeometry(new Point(72,72),72,72);
+        else if(kind==ImageEditKind.ServerIcon)
+        {
+            double radius=Ui.Radius("Radius.ServerAvatar").TopLeft;
+            ResultBorder.CornerRadius=new CornerRadius(radius);ResultBorder.Clip=new RectangleGeometry(new Rect(0,0,144,144),radius,radius);
+        }
+        else ResultBorder.Height=ResultBorder.Width/ProfileLayout.BannerRatio;
     }
 
     public static EditedImage? Show(Window owner, string sourcePath, ImageEditKind kind, int initialCoverFrame = 0)
@@ -117,7 +122,7 @@ public partial class ImageEditor : UserControl, IDisposable
     private void UpdateCrop()
     {
         if (ViewModel.Document is not { } document || Viewport.ActualWidth <= 0 || Viewport.ActualHeight <= 0) return;
-        double ratio = ViewModel.Kind == ImageEditKind.ProfileBanner ? 16d / 9 : 1;
+        double ratio = ViewModel.Kind == ImageEditKind.ProfileBanner ? ProfileLayout.BannerRatio : 1;
         double width = Math.Max(1, Math.Min(Viewport.ActualWidth * .82, Viewport.ActualHeight * .82 * ratio)), height = width / ratio;
         var opening = new Rect((Viewport.ActualWidth - width) / 2, (Viewport.ActualHeight - height) / 2, width, height);
         displayScale = Math.Max(width / document.Width, height / document.Height) * ViewModel.Zoom;
@@ -126,7 +131,12 @@ public partial class ImageEditor : UserControl, IDisposable
         crop = new(center.X * document.Width - cropWidth / 2, center.Y * document.Height - cropHeight / 2, cropWidth, cropHeight);
         SourceImage.Width = document.Width; SourceImage.Height = document.Height;
         SourceImage.RenderTransform = new MatrixTransform(displayScale, 0, 0, displayScale, opening.X - crop.X * displayScale, opening.Y - crop.Y * displayScale);
-        Geometry inside = ViewModel.Kind == ImageEditKind.ProfileBanner ? new RectangleGeometry(opening) : new EllipseGeometry(opening);
+        Geometry inside=ViewModel.Kind switch
+        {
+            ImageEditKind.ProfileBanner=>new RectangleGeometry(opening),
+            ImageEditKind.ServerIcon=>new RectangleGeometry(opening,Ui.Radius("Radius.ServerAvatar").TopLeft,Ui.Radius("Radius.ServerAvatar").TopLeft),
+            _=>new EllipseGeometry(opening)
+        };
         CropOutline.Data = inside;
         OutsideShade.Data = new CombinedGeometry(GeometryCombineMode.Exclude, new RectangleGeometry(new Rect(0, 0, Viewport.ActualWidth, Viewport.ActualHeight)), inside);
         ResultBrush.Viewbox = new(crop.X / document.Width, crop.Y / document.Height, crop.Width / document.Width, crop.Height / document.Height);

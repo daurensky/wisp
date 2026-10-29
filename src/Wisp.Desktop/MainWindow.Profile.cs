@@ -8,7 +8,7 @@ public sealed partial class MainWindow
         avatars.Resolve(profile, store), profile.BannerPath ?? (profile.BannerAssetId is null ? null : store.GetAsset(profile.BannerAssetId)?.LocalPath),
         SaveEditedProfile, initialEditing,message=>Notify(message,true));
 
-    private void EditProfile() => ModalHost.Open(this, "Мой профиль", CreateProfileEditor(true), 600);
+    private void EditProfile() => ModalHost.Open(this, "Мой профиль", new System.Windows.Controls.ScrollViewer{Content=CreateProfileEditor(true),VerticalScrollBarVisibility=System.Windows.Controls.ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=System.Windows.Controls.ScrollBarVisibility.Disabled}, ProfileLayout.CardWidth);
 
     private async Task<UserProfile> SaveEditedProfile(UserProfile proposed)
     {

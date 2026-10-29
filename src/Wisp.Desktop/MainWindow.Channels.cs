@@ -1,6 +1,4 @@
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
 using Wisp.Core;
 
 namespace Wisp.Desktop;
@@ -52,17 +50,4 @@ public sealed partial class MainWindow
         dialog.Accept("Закрыть");dialog.ShowDialog();
     }
 
-    private Button ChannelSettingsButton(Channel channel,FrameworkElement scope)
-    {
-        var button=Tool("settings","Настройки канала · "+channel.Name,()=>EditChannel(channel));
-        if(!channel.IsVoice)return button;
-        var style=new Style(typeof(Button),(Style)Application.Current.FindResource("Button.Icon"));
-        style.Setters.Add(new Setter(VisibilityProperty,Visibility.Hidden));
-        foreach(string property in new[]{nameof(IsMouseOver),nameof(IsKeyboardFocusWithin)})
-        {
-            var trigger=new DataTrigger{Binding=new Binding(property){Source=scope},Value=true};
-            trigger.Setters.Add(new Setter(VisibilityProperty,Visibility.Visible));style.Triggers.Add(trigger);
-        }
-        button.Style=style;return button;
-    }
 }

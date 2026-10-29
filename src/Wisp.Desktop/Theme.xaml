@@ -18,6 +18,9 @@
     <Setter Property="Margin" Value="{StaticResource Margin.Section}"/>
   </Style>
   <Style TargetType="Control">
+    <Setter Property="local:PointerFocus.Track" Value="True"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="ToolTipService.ShowsToolTipOnKeyboardFocus" Value="False"/>
     <Setter Property="FontFamily" Value="{DynamicResource Font.App}"/>
     <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
     <Setter Property="TextOptions.TextRenderingMode" Value="Grayscale"/>
@@ -59,15 +62,15 @@
             <Border x:Name="FocusRing" BorderBrush="{DynamicResource Accent}" BorderThickness="2" CornerRadius="{StaticResource Radius.Control}" Opacity="0" IsHitTestVisible="False"/>
           </Grid>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsMouseOver" Value="True">
+            <Trigger Property="local:PointerFocus.PointerOver" Value="True">
               <Setter TargetName="HoverSurface" Property="Opacity" Value=".7"/>
             </Trigger>
-            <Trigger Property="IsPressed" Value="True">
+            <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsPressed" Value="True"/><Condition Property="local:PointerFocus.IsWindowActive" Value="True"/></MultiTrigger.Conditions>
               <Setter TargetName="HoverSurface" Property="Opacity" Value="1"/>
-            </Trigger>
-            <Trigger Property="local:PointerFocus.KeyboardFocus" Value="True">
+            </MultiTrigger>
+            <MultiTrigger><MultiTrigger.Conditions><Condition Property="local:PointerFocus.KeyboardFocus" Value="True"/><Condition Property="local:PointerFocus.IsWindowActive" Value="True"/></MultiTrigger.Conditions>
               <Setter TargetName="FocusRing" Property="Opacity" Value="1"/>
-            </Trigger>
+            </MultiTrigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Root" Property="Opacity" Value=".4"/>
             </Trigger>
@@ -113,26 +116,29 @@
       <Setter.Value>
         <ControlTemplate TargetType="Button">
           <Border x:Name="CaptionSurface" Background="{TemplateBinding Background}" CornerRadius="0">
-            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <Grid><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              <Border x:Name="FocusRing" BorderBrush="{DynamicResource FocusRing}" BorderThickness="1" Margin="4" Opacity="0" IsHitTestVisible="False"/>
+            </Grid>
           </Border>
           <ControlTemplate.Triggers>
+            <Trigger Property="local:PointerFocus.KeyboardFocus" Value="True"><Setter TargetName="FocusRing" Property="Opacity" Value="1"/></Trigger>
             <Trigger Property="IsEnabled" Value="False"><Setter TargetName="CaptionSurface" Property="Opacity" Value=".4"/></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
     <Style.Triggers>
-      <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{DynamicResource Hover}"/></Trigger>
-      <Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="{DynamicResource Selected}"/></Trigger>
+      <Trigger Property="local:PointerFocus.PointerOver" Value="True"><Setter Property="Background" Value="{DynamicResource Hover}"/></Trigger>
+      <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsPressed" Value="True"/><Condition Property="local:PointerFocus.IsWindowActive" Value="True"/></MultiTrigger.Conditions><Setter Property="Background" Value="{DynamicResource Selected}"/></MultiTrigger>
     </Style.Triggers>
   </Style>
   <Style x:Key="Button.CaptionClose" TargetType="Button" BasedOn="{StaticResource Button.Caption}">
     <Style.Triggers>
-      <Trigger Property="IsMouseOver" Value="True">
+      <Trigger Property="local:PointerFocus.PointerOver" Value="True">
         <Setter Property="Background" Value="{DynamicResource CaptionCloseHover}"/>
         <Setter Property="Foreground" Value="{DynamicResource OnAccent}"/>
       </Trigger>
-      <Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="{DynamicResource CaptionCloseHover}"/></Trigger>
+      <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsPressed" Value="True"/><Condition Property="local:PointerFocus.IsWindowActive" Value="True"/></MultiTrigger.Conditions><Setter Property="Background" Value="{DynamicResource CaptionCloseHover}"/></MultiTrigger>
     </Style.Triggers>
   </Style>
   <Style x:Key="WispWindowStyle" TargetType="Window">
@@ -199,12 +205,13 @@
       <Setter.Value>
         <ControlTemplate TargetType="TextBox">
           <Border x:Name="Field" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{StaticResource Radius.Control}">
-            <ScrollViewer x:Name="PART_ContentHost" Padding="{TemplateBinding Padding}"/>
+            <ScrollViewer x:Name="PART_ContentHost" Padding="{TemplateBinding Padding}" VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsKeyboardFocusWithin" Value="True">
               <Setter TargetName="Field" Property="BorderBrush" Value="{Binding (local:InputChrome.FocusBrush), RelativeSource={RelativeSource TemplatedParent}}"/>
             </Trigger>
+            <Trigger Property="local:PointerFocus.IsWindowActive" Value="False"><Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource Border}"/></Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Field" Property="Opacity" Value=".4"/>
             </Trigger>
@@ -231,12 +238,13 @@
       <Setter.Value>
         <ControlTemplate TargetType="PasswordBox">
           <Border x:Name="Field" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{StaticResource Radius.Control}">
-            <ScrollViewer x:Name="PART_ContentHost" Padding="{TemplateBinding Padding}"/>
+            <ScrollViewer x:Name="PART_ContentHost" Padding="{TemplateBinding Padding}" VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsKeyboardFocusWithin" Value="True">
               <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
             </Trigger>
+            <Trigger Property="local:PointerFocus.IsWindowActive" Value="False"><Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource Border}"/></Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter TargetName="Field" Property="Opacity" Value=".4"/>
             </Trigger>
@@ -277,7 +285,7 @@
             <Trigger Property="IsSelected" Value="True">
               <Setter TargetName="Item" Property="Background" Value="{DynamicResource Selected}"/>
             </Trigger>
-            <Trigger Property="IsMouseOver" Value="True">
+            <Trigger Property="local:PointerFocus.PointerOver" Value="True">
               <Setter TargetName="Item" Property="Background" Value="{DynamicResource Hover}"/>
             </Trigger>
           </ControlTemplate.Triggers>
@@ -345,13 +353,14 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="MenuItem">
-          <Border x:Name="Row" Background="Transparent" Padding="{TemplateBinding Padding}" CornerRadius="{StaticResource Radius.Small}">
+          <Border x:Name="Row" Background="Transparent" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}" CornerRadius="{StaticResource Radius.Small}">
             <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"/>
           </Border>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsHighlighted" Value="True">
+            <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsHighlighted" Value="True"/><Condition Property="local:PointerFocus.IsWindowActive" Value="True"/></MultiTrigger.Conditions>
               <Setter TargetName="Row" Property="Background" Value="{DynamicResource Hover}"/>
-            </Trigger>
+            </MultiTrigger>
+            <Trigger Property="local:PointerFocus.KeyboardFocus" Value="True"><Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource FocusRing}"/></Trigger>
             <Trigger Property="IsEnabled" Value="False">
               <Setter Property="Foreground" Value="{DynamicResource TextDisabled}"/>
             </Trigger>
@@ -436,9 +445,9 @@
             <ContentPresenter/>
           </Border>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsHighlighted" Value="True">
+            <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsHighlighted" Value="True"/><Condition Property="local:PointerFocus.IsWindowActive" Value="True"/></MultiTrigger.Conditions>
               <Setter TargetName="Item" Property="Background" Value="{DynamicResource Hover}"/>
-            </Trigger>
+            </MultiTrigger>
             <Trigger Property="IsSelected" Value="True">
               <Setter TargetName="Item" Property="Background" Value="{DynamicResource Selected}"/>
             </Trigger>
@@ -457,7 +466,7 @@
       <Setter.Value>
         <ControlTemplate TargetType="ComboBox">
           <Grid>
-            <ToggleButton IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" ClickMode="Press" Focusable="False">
+            <ToggleButton local:PointerFocus.Track="True" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" ClickMode="Press" Focusable="False">
               <ToggleButton.Template>
                 <ControlTemplate TargetType="ToggleButton">
                   <Border x:Name="Field" Background="{DynamicResource SurfaceElevated}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="{StaticResource Radius.Control}" Padding="{StaticResource Padding.Control}">
@@ -467,7 +476,7 @@
                     </DockPanel>
                   </Border>
                   <ControlTemplate.Triggers>
-                    <Trigger Property="IsMouseOver" Value="True">
+                    <Trigger Property="local:PointerFocus.PointerOver" Value="True">
                       <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
                     </Trigger>
                   </ControlTemplate.Triggers>
@@ -483,7 +492,7 @@
             </Popup>
           </Grid>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+            <Trigger Property="local:PointerFocus.KeyboardFocus" Value="True">
               <Setter Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
@@ -515,11 +524,11 @@
             <Trigger Property="IsChecked" Value="True">
               <Setter TargetName="Mark" Property="Opacity" Value="1"/>
             </Trigger>
-            <Trigger Property="IsKeyboardFocused" Value="True">
+            <Trigger Property="local:PointerFocus.KeyboardFocus" Value="True">
               <Setter TargetName="Box" Property="BorderThickness" Value="2"/>
               <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
             </Trigger>
-            <Trigger Property="IsMouseOver" Value="True">
+            <Trigger Property="local:PointerFocus.PointerOver" Value="True">
               <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource FocusRing}"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
@@ -556,7 +565,7 @@
             </Track>
           </Grid>
           <ControlTemplate.Triggers>
-            <Trigger Property="IsKeyboardFocused" Value="True">
+            <Trigger Property="local:PointerFocus.KeyboardFocus" Value="True">
               <Setter Property="Foreground" Value="{DynamicResource AccentHover}"/>
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">

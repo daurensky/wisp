@@ -21,6 +21,14 @@ public partial class SettingsShell : UserControl
     {
         InitializeComponent(); Navigation.ItemsSource = Sections;
         AutomationProperties.SetName(Navigation, "Разделы настроек");
+        SizeChanged += (_, _) =>
+        {
+            // Keep the exact-size profile usable at the app's minimum width.
+            // Only the navigation column gives up space; banners stay 400×140.
+            var inset = PageHost.Margin;
+            double available = ActualWidth - ProfileLayout.ContentWidth - inset.Left - inset.Right;
+            NavigationColumn.Width = new GridLength(Math.Clamp(available, Ui.Metric("Width.SettingsSidebar"), 220));
+        };
     }
     public void Select(string key)
     {

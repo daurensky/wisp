@@ -91,20 +91,40 @@ public sealed class ImageEditorTests
     [Fact]
     public void StaticAvatarAndBannerHaveExactProportionsAndLeaveSourceUntouched() => Sta(() =>
     {
-        var original = Enumerable.Range(0, 48 * 27).Select(i => 0xff000000u | (uint)(i % 48 * 5) << 16 | (uint)(i / 48 * 9) << 8 | 19u).ToArray();
-        WithSource(Png(original, 48, 27), source =>
+        const int width=ProfileLayout.BannerWidth,height=ProfileLayout.BannerHeight;
+        var original = Enumerable.Range(0,width*height).Select(i=>0xff000000u|(uint)(i%width*5)<<16|(uint)(i/width*9)<<8|19u).ToArray();
+        WithSource(Png(original,width,height), source =>
         {
             var document = new ImageEditingDocument(source);
-            using var banner = ImageEditingService.Save(document, new Rect(0, 0, 48, 27), ImageEditKind.ProfileBanner, 0);
+            using var banner=ImageEditingService.Save(document,new Rect(0,0,width,height),ImageEditKind.ProfileBanner,0);
             using var avatar = ImageEditingService.Save(document, new Rect(10, 5, 12, 12), ImageEditKind.UserAvatar, 0);
-            Assert.Equal(48, banner.Width); Assert.Equal(27, banner.Height); Assert.Equal(1, banner.FrameCount); Assert.Equal(0, banner.CoverFrame);
+            Assert.Equal(width,banner.Width);Assert.Equal(height,banner.Height);Assert.Equal(1,banner.FrameCount);Assert.Equal(0,banner.CoverFrame);
             Assert.Equal(original, Pixels(new ImageEditingDocument(banner.Path).GetFrame(0)));
             Assert.Equal(12, avatar.Width); Assert.Equal(12, avatar.Height);
-            Assert.Equal(Enumerable.Range(0, 12).SelectMany(y => original.Skip((y + 5) * 48 + 10).Take(12)).ToArray(), Pixels(new ImageEditingDocument(avatar.Path).GetFrame(0)));
+            Assert.Equal(Enumerable.Range(0,12).SelectMany(y=>original.Skip((y+5)*width+10).Take(12)).ToArray(),Pixels(new ImageEditingDocument(avatar.Path).GetFrame(0)));
             Assert.Equal(original, Pixels(new ImageEditingDocument(source).GetFrame(0)));
             var tiny = new ImageEditingDocument(avatar.Path);
             using var zoomed = ImageEditingService.Save(tiny, new Rect(5.75, 5.75, .5, .5), ImageEditKind.ServerIcon, 0);
             Assert.Equal(1, zoomed.Width); Assert.Equal(1, zoomed.Height);
+        });
+    });
+
+    [Fact]
+    public void AnimatedBannerIsAlways400By140WithOriginalTimingAndCover() => Sta(() =>
+    {
+        WithSource(Convert.FromBase64String(DisposalGif),source=>
+        {
+            byte[] original=File.ReadAllBytes(source);
+            var document=new ImageEditingDocument(source);
+            using var edited=ImageEditingService.Save(document,new Rect(0,1,8,8/ProfileLayout.BannerRatio),ImageEditKind.ProfileBanner,2);
+            Assert.Equal(ProfileLayout.BannerWidth,edited.Width);Assert.Equal(ProfileLayout.BannerHeight,edited.Height);
+            Assert.Equal(document.FrameCount,edited.FrameCount);Assert.Equal(2,edited.CoverFrame);
+            var output=new ImageEditingGifDocument(File.ReadAllBytes(edited.Path));
+            Assert.Equal(400,output.Width);Assert.Equal(140,output.Height);Assert.Equal(document.Delays,output.Delays);Assert.Equal(document.FrameCount,output.FrameCount);
+            Assert.Equal(new ImageEditingGifDocument(original).LoopCount,output.LoopCount);
+            Assert.Equal(original,File.ReadAllBytes(source));
+            // The former 16:9 crop no longer satisfies the shared profile contract.
+            Assert.Throws<ArgumentException>(()=>ImageEditingService.Save(document,new Rect(0,0,8,4.5),ImageEditKind.ProfileBanner,0));
         });
     });
 

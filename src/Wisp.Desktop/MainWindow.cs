@@ -108,6 +108,7 @@ public sealed partial class MainWindow : ThemedWindow
     private readonly Border memberPanel;
     private readonly ColumnDefinition memberColumn;
     private readonly Button micButton, deafenButton, recordButton, shareButton, leaveButton, watchButton, soundboardButton;
+    private readonly Border voiceActionBlock;
     private Button emojiButton = null!;
     private EmojiPicker? emojiPicker;
     private ChatTextSelection chatTextSelection=null!;
@@ -196,13 +197,14 @@ public sealed partial class MainWindow : ThemedWindow
         var identityContent=new DockPanel();var identityPicture=new ContentControl{Name="IdentityPicture",Width=32,Height=32,Margin=Ui.Insets(0,0,Ui.S,0)};DockPanel.SetDock(identityPicture,Dock.Left);identityContent.Children.Add(identityPicture);
         userName.VerticalAlignment=VerticalAlignment.Center;userName.TextTrimming=TextTrimming.CharacterEllipsis;identityContent.Children.Add(userName);identityAvatar.Content=identityContent;identity.Children.Add(identityAvatar);
 
-        var voiceTools=new StackPanel{Orientation=Orientation.Horizontal,Margin=Ui.Insets(0,Ui.Xs,0,0)};
+        var voiceTools=new System.Windows.Controls.Primitives.UniformGrid{Name="VoiceActionsGrid",Columns=4,Rows=1,Margin=Ui.Insets(0,Ui.Xs,0,0)};
         shareButton=VoiceToggle("screen-share","screen-share-off","Начать демонстрацию","Остановить демонстрацию",ShareScreen);
         ((ToggleIconButton)shareButton).SetResourceReference(ToggleIconButton.CheckedBrushProperty,"Danger");voiceTools.Children.Add(shareButton);
         watchButton=Tool("monitor","Смотреть демонстрации",WatchScreens);voiceTools.Children.Add(watchButton);
         soundboardButton=Tool("volume-2","Звуковая панель",SoundPanel);voiceTools.Children.Add(soundboardButton);
         leaveButton=Tool("phone-hangup","Выйти из голосового канала",LeaveVoice);voiceTools.Children.Add(leaveButton);voiceBlock.Children.Add(voiceTools);
-        var voiceSurface=new Border{Child=voiceBlock,Padding=Ui.Insets(0,0,0,Ui.S),BorderThickness=new Thickness(0,0,0,Ui.Metric("Size.Hairline")),Margin=Ui.Insets(0,0,0,Ui.S)};voiceSurface.SetResourceReference(Border.BorderBrushProperty,"Border");self.Children.Add(voiceSurface);self.Children.Add(identity);
+        foreach(var action in new[]{shareButton,watchButton,soundboardButton,leaveButton}){action.Width=double.NaN;action.HorizontalAlignment=HorizontalAlignment.Stretch;action.HorizontalContentAlignment=HorizontalAlignment.Center;action.VerticalContentAlignment=VerticalAlignment.Center;action.Margin=Ui.Insets(Ui.Xs,0);}
+        voiceActionBlock=new Border{Name="VoiceActionsBlock",Child=voiceBlock,Padding=Ui.Insets(0,0,0,Ui.S),BorderThickness=new Thickness(0,0,0,Ui.Metric("Size.Hairline")),Margin=Ui.Insets(0,0,0,Ui.S),Visibility=Visibility.Collapsed};voiceActionBlock.SetResourceReference(Border.BorderBrushProperty,"Border");self.Children.Add(voiceActionBlock);self.Children.Add(identity);
         var selfPanel=Ui.Panel(self,"SurfaceElevated",false);selfPanel.BorderThickness=new Thickness(0,Ui.Metric("Size.Hairline"),0,0);selfPanel.SetResourceReference(Border.BorderBrushProperty,"Border");DockPanel.SetDock(selfPanel,Dock.Bottom);side.Children.Add(selfPanel);
         side.Children.Add(channels);var sidebar=Ui.Panel(side,"ChannelSurface");sidebar.BorderThickness=new Thickness(0,0,Ui.Metric("Size.Hairline"),0);sidebar.SetResourceReference(Border.BorderBrushProperty,"Border");Grid.SetColumn(sidebar,1);root.Children.Add(sidebar);
 
@@ -365,68 +367,60 @@ public sealed partial class MainWindow : ThemedWindow
     private List<Community> MyCommunities() => cloud is null ? store.GetCommunities() : store.GetCommunities().Where(c => store.GetMembers(c.Id).Any(m => m.Id == profile.Id)).ToList();
     private void RenderServers()
     {
-        servers.Clear();
-        foreach (var c in MyCommunities()) servers.Add(c.Id, () =>
+        servers.Reconcile(MyCommunities().Select(c=>
         {
             var asset=c.IconAssetId is null?null:store.GetAsset(c.IconAssetId);
-            return new ServerRailItem(c.Name,asset?.LocalPath,community?.Id==c.Id,()=>{try{SetCommunity(c);}catch(Exception error){Notify(error.Message,true);}},store.CanManageCommunity(c.Id,profile.Id)?CommunityContextMenu(c):null,c.IconCoverFrame);
-
-        });
+            Action activate=()=>{try{SetCommunity(c);}catch(Exception error){Notify(error.Message,true);}};
+            ContextMenu? Menu()=>store.CanManageCommunity(c.Id,profile.Id)?CommunityContextMenu(c):null;
+            return new UiRow(c.Id,()=>new ServerRailItem(c.Name,asset?.LocalPath,community?.Id==c.Id,activate,Menu(),c.IconCoverFrame),
+                Update:element=>((ServerRailItem)element).Update(c.Name,asset?.LocalPath,community?.Id==c.Id,activate,Menu(),c.IconCoverFrame));
+        }));
     }
     private void SetCommunity(Community c) { if(community?.Id==c.Id)return;EnsureNoRecording();soundboardPopup?.Close();emojiPicker?.Close();if(community?.Id!=c.Id){cloudPresence=Array.Empty<PeerPresence>();presence=Array.Empty<PeerPresence>();cloudVoiceRooms=new();voiceRoomsCommunityId=null;memberRenderKey="";channelRenderKey="";} community = c;chatWorkspace.Visibility=Visibility.Visible;homeWorkspace.Visibility=Visibility.Collapsed;serverTitle.Text = c.Name; RenderServers(); RenderChannels(); var first = store.GetChannels(c.Id).FirstOrDefault(); if (first is not null) SelectChannel(first); RenderMembers(); UpdateStatus(); }
     private void EnsureNoRecording() { if (recorder.IsRecording || recordedPath is not null) throw new InvalidOperationException("Сначала отправь голосовую запись."); }
     private void RenderChannels()
     {
-        var visiblePresence = DisplayPresence;
+        var visiblePresence=DisplayPresence;
         bool canManage=community is not null&&store.CanManageCommunity(community.Id,profile.Id);
-        var nextKey = (community?.Id ?? "") + ":" + canManage + ":" + selectedChannel?.Id + ":" + voiceChannelId + ":" + voiceIntent.Connecting + ":" +
-            string.Join("|", community is null ? Array.Empty<string>() : store.GetChannels(community.Id).Select(c => $"{c.Id}:{c.Name}:{c.IsVoice}")) + ":" +
-            sharing+":"+string.Join("|",remoteStreams.Select(p=>p.Key+":"+p.Value.SessionId))+":"+string.Join("|", visiblePresence.OrderBy(p => p.Profile.Id).Select(p => $"{p.Profile.Id}:{p.Profile.Username}:{p.Profile.AvatarRevision}:{p.Profile.AvatarCoverFrame}:{avatars.Resolve(p.Profile, store)}:{p.VoiceChannelId}:{p.Muted}:{p.Deafened}"));
-        if (nextKey == channelRenderKey) return;
-        channelRenderKey = nextKey; channels.Clear(); if (community is null) return;
-        foreach (bool voiceKind in new[] { false, true })
+        var nextKey=(community?.Id??"")+":"+canManage+":"+selectedChannel?.Id+":"+voiceChannelId+":"+voiceIntent.Connecting+":"+
+            string.Join("|",community is null?Array.Empty<string>():store.GetChannels(community.Id).Select(c=>$"{c.Id}:{c.Name}:{c.IsVoice}"))+":"+
+            sharing+":"+string.Join("|",remoteStreams.Select(p=>p.Key+":"+p.Value.SessionId))+":"+
+            string.Join("|",visiblePresence.OrderBy(p=>p.Profile.Id).Select(p=>$"{p.Profile.Id}:{p.Profile.Username}:{p.Profile.AvatarRevision}:{p.Profile.AvatarCoverFrame}:{avatars.Resolve(p.Profile,store)}:{p.VoiceChannelId}:{p.Muted}:{p.Deafened}"));
+        if(nextKey==channelRenderKey)return;
+        channelRenderKey=nextKey;
+        var rows=new List<UiRow>();
+        if(community is null){channels.Reconcile(rows);return;}
+        foreach(bool voiceKind in new[]{false,true})
         {
-            channels.Add(voiceKind ? "voice-heading" : "text-heading", () =>
+            rows.Add(new UiRow(voiceKind?"voice-heading":"text-heading",()=>
             {
                 var row=new DockPanel{Margin=Ui.Insets(Ui.S,Ui.S,Ui.Xs,0)};
                 if(canManage){var add=Tool("plus",voiceKind?"Создать голосовой канал":"Создать текстовый канал",()=>CreateChannel(voiceKind));DockPanel.SetDock(add,Dock.Right);row.Children.Add(add);}
                 var heading=Ui.Label(voiceKind?"ГОЛОСОВЫЕ КАНАЛЫ":"ТЕКСТОВЫЕ КАНАЛЫ");Ui.Style(heading,"Text.Section");heading.VerticalAlignment=VerticalAlignment.Center;row.Children.Add(heading);return row;
-            });
-            foreach (var c in store.GetChannels(community.Id).Where(x => x.IsVoice == voiceKind))
+            }));
+            foreach(var channel in store.GetChannels(community.Id).Where(c=>c.IsVoice==voiceKind))
             {
-                int count = DisplayPresence.Count(p => p.VoiceChannelId == c.Id);
-                channels.Add(c.Id, () =>
-                {
-                    var button = Btn(c.Name, async () => { if (c.IsVoice) await JoinVoice(c); else SelectChannel(c); });
-                    Ui.Style(button, "Button.Row");
-                    var row = new DockPanel();
-                    if(canManage&&(voiceKind||selectedChannel?.Id==c.Id))
-                    {var gear=ChannelSettingsButton(c,row);DockPanel.SetDock(gear,Dock.Right);row.Children.Add(gear);}
-                    if (voiceKind)
-                    {
-                        var chat = Tool("message-square", "Открыть текстовый чат голосового канала", () => SelectChannel(c)); DockPanel.SetDock(chat, Dock.Right); row.Children.Add(chat);
-                    }
-                    var label = new Grid(); label.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); label.ColumnDefinitions.Add(new ColumnDefinition()); label.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                    label.Children.Add(new Icon { Kind = voiceKind ? "volume-2" : "hash", Margin = Ui.Insets(0, 0, Ui.S, 0), VerticalAlignment = VerticalAlignment.Center });
-                    var name = Ui.Label(c.Name);name.TextTrimming=TextTrimming.CharacterEllipsis; Grid.SetColumn(name, 1); label.Children.Add(name);
-                    if (voiceKind) { var capacity = Ui.Label($"{count}", Ui.Caption, true); capacity.Margin = Ui.Insets(Ui.S, 0, 0, 0); Grid.SetColumn(capacity, 2); label.Children.Add(capacity); }
-                    button.Content = label;
-                    if (!voiceKind && selectedChannel?.Id == c.Id) button.SetResourceReference(Control.BackgroundProperty, "Selected");
-                    row.Children.Add(button); return row;
-                });
-                if (voiceKind) foreach (var p in visiblePresence.Where(p => p.VoiceChannelId == c.Id))
-                    channels.Add(c.Id + ":" + p.Profile.Id, () =>
+                int count=visiblePresence.Count(p=>p.VoiceChannelId==channel.Id);
+                bool selected=selectedChannel?.Id==channel.Id;
+                Action openChat=()=>Run(()=>{SelectChannel(channel);return Task.CompletedTask;});
+                Action activate=channel.IsVoice?()=>Run(()=>JoinVoice(channel)):openChat;
+                Action edit=()=>Run(()=>{EditChannel(channel);return Task.CompletedTask;});
+                rows.Add(new UiRow(channel.Id,()=>new ChannelRow(channel,count,selected,canManage,activate,edit,openChat),
+                    Update:element=>((ChannelRow)element).Update(channel,count,selected,canManage,activate,edit,openChat)));
+                if(voiceKind)foreach(var person in visiblePresence.Where(p=>p.VoiceChannelId==channel.Id))
+                    rows.Add(new UiRow(channel.Id+":"+person.Profile.Id,()=>
                     {
                         var row=new DockPanel();
-                        if((p.Profile.Id==profile.Id&&sharing)||remoteStreams.ContainsKey(p.Profile.Id))
+                        if((person.Profile.Id==profile.Id&&sharing)||remoteStreams.ContainsKey(person.Profile.Id))
                         {
-                            var live=Btn("В ЭФИРЕ",()=>WatchStream(p.Profile.Id),"Смотреть демонстрацию");Ui.Style(live,"Button.Danger");live.Padding=Ui.Insets(Ui.Xs,0);live.Margin=Ui.Insets(0,0,Ui.Xs,0);live.FontSize=Ui.Caption;live.MinHeight=0;live.VerticalAlignment=VerticalAlignment.Center;
+                            var live=Btn("В ЭФИРЕ",()=>WatchStream(person.Profile.Id),"Смотреть демонстрацию");Ui.Style(live,"Button.Danger");live.Padding=Ui.Insets(Ui.Xs,0);live.Margin=Ui.Insets(0,0,Ui.Xs,0);live.FontSize=Ui.Caption;live.MinHeight=0;live.VerticalAlignment=VerticalAlignment.Center;
                             DockPanel.SetDock(live,Dock.Right);row.Children.Add(live);
                         }
-                        row.Children.Add(new VoiceParticipantRow(p,avatars.Resolve(p.Profile,store),voice,p.Profile.Id==profile.Id,()=>ViewProfile(p.Profile),()=>voice.SavePeerVolumes()));return row;
-                    });
+                        row.Children.Add(new VoiceParticipantRow(person,avatars.Resolve(person.Profile,store),voice,person.Profile.Id==profile.Id,()=>ViewProfile(person.Profile),()=>voice.SavePeerVolumes()));return row;
+                    }));
             }
         }
+        channels.Reconcile(rows);
     }
     private void ClearMessages() { messages.Clear();messageAvatarViews.Clear(); renderedMessages.Clear(); lastRenderedMessage = null; }
     private void LoadHistory(IEnumerable<ChatMessage> history)
@@ -470,6 +464,7 @@ public sealed partial class MainWindow : ThemedWindow
     private void UpdateStatus()
     {
         bool inVoice = voiceChannelId is not null;
+        voiceActionBlock.Visibility=inVoice||voiceIntent.Connecting?Visibility.Visible:Visibility.Collapsed;
         inviteButton.IsEnabled=community is not null&&cloud is not null;serverSettingsButton.Visibility=community is not null&&store.CanManageCommunity(community.Id,profile.Id)?Visibility.Visible:Visibility.Collapsed;
         leaveButton.Visibility=inVoice||cloudChannelId is not null?Visibility.Visible:Visibility.Collapsed;
         micButton.Visibility=deafenButton.Visibility=shareButton.Visibility=Visibility.Visible;
@@ -937,7 +932,7 @@ public sealed partial class MainWindow : ThemedWindow
     private void ViewProfile(UserProfile p)
     {
         var body=new ProfileView(p,avatars.Resolve(p.Id==profile.Id?profile:p,store),p.BannerPath,p.Id==profile.Id?EditProfile:null);
-        ModalHost.Open(this,p.Username,new ScrollViewer{Content=body,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled},600,new ModalOptions(Headerless:true));
+        ModalHost.Open(this,p.Username,new ScrollViewer{Content=body,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled},ProfileLayout.CardWidth,new ModalOptions(Headerless:true));
     }
     private static BitmapImage LoadImage(string path, int width) { using var stream = File.OpenRead(path); var b = new BitmapImage(); b.BeginInit(); b.CacheOption = BitmapCacheOption.OnLoad; b.DecodePixelWidth = width; b.StreamSource = stream; b.EndInit(); b.Freeze(); return b; }
     private async Task RefreshCloud()

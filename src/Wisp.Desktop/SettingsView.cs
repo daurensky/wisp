@@ -60,6 +60,9 @@ public sealed class SettingsView : UserControl
         }) shell.Sections.Add(new(section.ToString(),label,icon));
         shell.SectionSelected += key => { if (Enum.TryParse<SettingsSection>(key,out var section)) SelectSection(section); };
         var content = new DockPanel();
+        SetResourceReference(BackgroundProperty,"Surface");
+        content.SetResourceReference(Panel.BackgroundProperty,"Surface");
+        page.SetResourceReference(BackgroundProperty,"Surface");
         feedback.SetResourceReference(TextBlock.ForegroundProperty, "Danger"); feedback.Margin=Ui.Insets(0,Ui.M,0,0);DockPanel.SetDock(feedback,Dock.Bottom);content.Children.Add(feedback);content.Children.Add(page);
         shell.PageContent=content;Content=shell;SelectSection(SettingsSection.Account);
     }
@@ -70,13 +73,16 @@ public sealed class SettingsView : UserControl
         shell.Select(section.ToString());
         try
         {
-            page.Content = section switch
+            var next = section switch
             {
                 SettingsSection.Account => Account(),
                 SettingsSection.Appearance => Appearance(), SettingsSection.Audio => Audio(),
                 SettingsSection.Notifications => Notifications(), _ => throw new ArgumentOutOfRangeException(nameof(section))
             };
-            Motion.Enter(page);
+            // Replace a fully constructed page in one dispatcher turn. Fading
+            // the persistent presenter to zero exposes the previous surface.
+            Motion.Stop(page); page.Opacity = 1; page.RenderTransform = Transform.Identity;
+            page.Content = next;
         }
         catch (Exception ex) { Error(ex); }
     }

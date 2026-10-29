@@ -37,7 +37,7 @@ public sealed partial class MainWindow
         serverTitle.Text="Wisp";channelTitle.Text="Главная";chatWorkspace.Visibility=Visibility.Collapsed;homeWorkspace.Visibility=Visibility.Visible;
         var body=new StackPanel{Margin=Ui.Insets(Ui.Xl),HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Center};
         var brand=new StackPanel{HorizontalAlignment=HorizontalAlignment.Center,Margin=Ui.Insets(0,0,0,Ui.Xl)};
-        brand.Children.Add(Brand.Image(88));var wordmark=Ui.Label("Wisp",40);wordmark.FontWeight=FontWeights.SemiBold;wordmark.HorizontalAlignment=HorizontalAlignment.Center;brand.Children.Add(wordmark);
+        brand.Children.Add(new HomeBrandView());var wordmark=Ui.Label("Wisp",32);wordmark.FontWeight=FontWeights.SemiBold;wordmark.HorizontalAlignment=HorizontalAlignment.Center;wordmark.Margin=Ui.Insets(0,Ui.M,0,0);brand.Children.Add(wordmark);
         brand.Loaded+=(_,_)=>Motion.Enter(brand);brand.Unloaded+=(_,_)=>Motion.Stop(brand);body.Children.Add(brand);
         var actions=new WrapPanel{HorizontalAlignment=HorizontalAlignment.Center};
         actions.Children.Add(Btn("Создать сервер",CreateCommunity));actions.Children.Add(Btn("Присоединиться",JoinCommunity));body.Children.Add(actions);

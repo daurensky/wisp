@@ -22,7 +22,7 @@
   <sys:Double x:Key="Size.Avatar">32</sys:Double>
   <sys:Double x:Key="Size.VoiceAvatar">28</sys:Double>
   <sys:Double x:Key="Size.ProfileAvatar">80</sys:Double>
-  <sys:Double x:Key="Size.RailItem">48</sys:Double>
+  <sys:Double x:Key="Size.RailItem">40</sys:Double>
   <sys:Double x:Key="Size.TitleBar">40</sys:Double>
   <sys:Double x:Key="Size.SectionHeader">56</sys:Double>
   <sys:Double x:Key="Size.Hairline">1</sys:Double>
@@ -59,10 +59,12 @@
   <Thickness x:Key="Margin.Button">4,0</Thickness>
   <Thickness x:Key="Margin.Section">12,16,12,8</Thickness>
   <Thickness x:Key="Margin.Check">0,8</Thickness>
+  <Thickness x:Key="Margin.SettingsModal">48</Thickness>
   <Thickness x:Key="Margin.Icon">0,0,8,0</Thickness>
   <CornerRadius x:Key="Radius.Small">4</CornerRadius>
   <CornerRadius x:Key="Radius.Control">8</CornerRadius>
   <CornerRadius x:Key="Radius.Dialog">12</CornerRadius>
+  <CornerRadius x:Key="Radius.ServerAvatar">8</CornerRadius>
   <Duration x:Key="Motion.Fast">0:0:0.120</Duration>
   <Duration x:Key="Motion.Normal">0:0:0.200</Duration>
   <Duration x:Key="Motion.Slow">0:0:0.300</Duration>
@@ -78,6 +80,7 @@
   <sys:Double x:Key="Width.ShareDialog">1040</sys:Double>
   <sys:Double x:Key="Width.SourceCardMinimum">240</sys:Double>
   <sys:Double x:Key="Width.ServerPill">4</sys:Double>
+  <sys:Double x:Key="Width.ServerPillGap">8</sys:Double>
   <sys:Double x:Key="Height.ServerPillActive">36</sys:Double>
   <sys:Double x:Key="Height.ServerPillHover">20</sys:Double>
 </ResourceDictionary>

@@ -10,9 +10,10 @@ public sealed class ProfileView : UserControl
 {
     public ProfileView(UserProfile profile, string? avatarPath, string? bannerPath, Action? editProfile = null)
     {
+        Width=ProfileLayout.ContentWidth;HorizontalAlignment=HorizontalAlignment.Left;
         var panel = new StackPanel();
-        panel.Children.Add(new ProfileArtwork(avatarPath,bannerPath,profile.AvatarCoverFrame,profile.BannerCoverFrame));
-        var body = new StackPanel { Margin=Ui.Insets(Ui.L,Ui.L,Ui.L,Ui.Xl) };
+        panel.Children.Add(new ProfileArtwork(avatarPath,bannerPath,profile.AvatarCoverFrame,profile.BannerCoverFrame){Margin=ProfileLayout.ContentInsets});
+        var body = new StackPanel { Margin=Ui.Insets(ProfileLayout.Inset,0,ProfileLayout.Inset,ProfileLayout.Inset) };
         body.Children.Add(new TextBlock { Text=profile.Username,FontSize=Ui.Heading,FontWeight=FontWeights.SemiBold,TextWrapping=TextWrapping.Wrap });
         var presence=new StackPanel{Orientation=Orientation.Horizontal,Margin=Ui.Insets(0,Ui.S,0,Ui.L)};
         string status=profile.Status switch{"idle"=>"Нет на месте","dnd"=>"Не беспокоить","offline" or "invisible"=>"Не в сети",_=>"В сети"};
@@ -21,7 +22,7 @@ public sealed class ProfileView : UserControl
         presence.Children.Add(dot);presence.Children.Add(Ui.Label(status,Ui.Caption,true));body.Children.Add(presence);
         void Section(string title,string text)
         {
-            var label=Ui.Label(title,Ui.Caption,true);label.FontWeight=FontWeights.SemiBold;label.Margin=Ui.Insets(0,Ui.M,0,Ui.S);body.Children.Add(label);
+            var label=Ui.Label(title,Ui.Caption,true);label.FontWeight=FontWeights.SemiBold;label.Margin=ProfileLayout.SectionMargin;body.Children.Add(label);
             body.Children.Add(new TextBlock{Text=text,TextWrapping=TextWrapping.Wrap,FontSize=Ui.Body});
         }
         if(!string.IsNullOrWhiteSpace(profile.Game))Section("АКТИВНОСТЬ","Играет в "+profile.Game);
@@ -34,7 +35,7 @@ public sealed class ProfileView : UserControl
     }
 }
 
-/// <summary>One shared 16:9 banner and overlapping avatar composition for view and edit.</summary>
+/// <summary>One shared 400×140 logical banner and overlapping avatar composition for view and edit.</summary>
 internal sealed class ProfileArtwork : Grid
 {
     public ProfileArtwork(string? avatarPath,string? bannerPath,int avatarCover,int bannerCover,Action? editAvatar=null,Action? editBanner=null)
@@ -47,16 +48,16 @@ internal sealed class ProfileArtwork : Grid
         {
             try
             {
-                var image=AvatarCatalog.Image(bannerPath,Ui.Metric("Width.DialogMedium"),mode:GifPlaybackMode.Always,coverFrame:bannerCover);
+                var image=AvatarCatalog.Image(bannerPath,ProfileLayout.BannerWidth,mode:GifPlaybackMode.Always,coverFrame:bannerCover);
                 image.Width=image.Height=double.NaN;image.Stretch=Stretch.UniformToFill;banner.Child=image;
             }
             catch(Exception error)when(error is IOException or NotSupportedException or ArgumentException){DiagnosticLog.Write("profile-image",error);}
         }
         FrameworkElement bannerContent=editBanner is null?banner:EditableImage(banner,"Изменить баннер",editBanner,false);
-        Children.Add(new AspectRatioFrame{Ratio=16d/9,Child=bannerContent});
+        Children.Add(new AspectRatioFrame{Name="ProfileBanner",Width=ProfileLayout.BannerWidth,Height=ProfileLayout.BannerHeight,Ratio=ProfileLayout.BannerRatio,Child=bannerContent});
         var avatarImage=AvatarCatalog.Circle(avatarPath,size,GifPlaybackMode.Always,coverFrame:avatarCover);
         FrameworkElement avatarContent=editAvatar is null?avatarImage:EditableImage(avatarImage,"Изменить аватар",editAvatar,true);
-        var avatar=new Border{Child=avatarContent,Width=size+8,Height=size+8,BorderThickness=new Thickness(4),CornerRadius=new CornerRadius(size/2+4),HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Top,Margin=Ui.Insets(Ui.L,-size/2-4,0,0)};
+        var avatar=new Border{Child=avatarContent,Width=size+Ui.S,Height=size+Ui.S,BorderThickness=Ui.Insets(Ui.Xs),CornerRadius=new CornerRadius(size/2+Ui.Xs),HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Top,Margin=Ui.Insets(0,-size/2-Ui.Xs,0,0)};
         avatar.SetResourceReference(Border.BorderBrushProperty,"Surface");avatar.SetResourceReference(Border.BackgroundProperty,"Surface");Grid.SetRow(avatar,1);Children.Add(avatar);
     }
 
@@ -91,7 +92,21 @@ public sealed class ProfileEditor : UserControl
     public ProfileEditor(UserProfile profile,string? avatarPath,string? bannerPath,Func<UserProfile,Task<UserProfile>> save,bool initialEditing=false,Action<string>? reportError=null)
     {
         this.profile=profile;this.avatarPath=avatarPath;this.bannerPath=bannerPath;this.save=save;this.reportError=reportError;
-        var root=new StackPanel();root.Children.Add(body);feedback.SetResourceReference(TextBlock.ForegroundProperty,"Danger");feedback.Margin=Ui.Insets(Ui.L,Ui.S);root.Children.Add(feedback);Content=root;
+        Width=ProfileLayout.ContentWidth;HorizontalAlignment=HorizontalAlignment.Left;
+        var fieldStyle=new Style(typeof(TextBox),(Style)Application.Current.FindResource(typeof(TextBox)));
+        fieldStyle.Setters.Add(new Setter(MarginProperty,ProfileLayout.FieldMargin));
+        Resources.Add("Profile.Field",fieldStyle);
+        var aboutStyle=new Style(typeof(TextBox),fieldStyle);
+        aboutStyle.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty,VerticalAlignment.Top));
+        aboutStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty,HorizontalAlignment.Left));
+        aboutStyle.Setters.Add(new Setter(TextBox.TextAlignmentProperty,TextAlignment.Left));
+        aboutStyle.Setters.Add(new Setter(TextBox.AcceptsReturnProperty,true));
+        aboutStyle.Setters.Add(new Setter(TextBox.TextWrappingProperty,TextWrapping.Wrap));
+        aboutStyle.Setters.Add(new Setter(TextBox.VerticalScrollBarVisibilityProperty,ScrollBarVisibility.Auto));
+        aboutStyle.Setters.Add(new Setter(TextBox.HorizontalScrollBarVisibilityProperty,ScrollBarVisibility.Disabled));
+        aboutStyle.Setters.Add(new Setter(HeightProperty,Ui.Metric("Height.Multiline")));
+        Resources.Add("Profile.About",aboutStyle);
+        var root=new StackPanel();root.Children.Add(body);feedback.SetResourceReference(TextBlock.ForegroundProperty,"Danger");feedback.Margin=Ui.Insets(ProfileLayout.Inset,Ui.S);root.Children.Add(feedback);Content=root;
         Loaded+=(_,_)=>unloaded=false;Unloaded+=(_,_)=>{unloaded=true;if(!saving)CleanupImages();};
         if(initialEditing)BeginEdit();else View();
     }
@@ -100,7 +115,7 @@ public sealed class ProfileEditor : UserControl
     private void BeginEdit()
     {
         if(saving)return;IsEditing=true;feedback.Visibility=Visibility.Collapsed;
-        var panel=new StackPanel();var artwork=new ContentControl();panel.Children.Add(artwork);
+        var panel=new StackPanel();var artwork=new ContentControl{Margin=ProfileLayout.ContentInsets,HorizontalContentAlignment=HorizontalAlignment.Left};panel.Children.Add(artwork);
         string? draftAvatar=avatarPath,draftBanner=bannerPath;
         int avatarCover=profile.AvatarCoverFrame,bannerCover=profile.BannerCoverFrame;
         void Error(Exception error){feedback.Text=error.Message;feedback.Visibility=Visibility.Visible;DiagnosticLog.Write("profile-editor",error);reportError?.Invoke(error.Message);}
@@ -120,25 +135,25 @@ public sealed class ProfileEditor : UserControl
             }
             catch(Exception error){Error(error);}
         }
-        RenderImages();var fields=new StackPanel{Margin=Ui.Insets(Ui.L,Ui.M,Ui.L,Ui.L)};
-        var imageActions=new WrapPanel();
-        imageActions.Children.Add(Buttons.Create("Удалить аватар",()=>{draftAvatar=null;avatarCover=0;RenderImages();},style:"Button.Ghost"));
-        imageActions.Children.Add(Buttons.Create("Удалить баннер",()=>{draftBanner=null;bannerCover=0;RenderImages();},style:"Button.Ghost"));fields.Children.Add(imageActions);
-        fields.Children.Add(Ui.Label("Имя пользователя",Ui.Caption,true));name=new TextBox{Text=profile.Username,MaxLength=32,Margin=Ui.Insets(0,Ui.Xs,0,Ui.M)};Ui.Name(name,"Имя пользователя");fields.Children.Add(name);
-        fields.Children.Add(Ui.Label("Статус",Ui.Caption,true));string[] codes=["online","idle","dnd","invisible"];
-        var status=new ComboBox{ItemsSource=new[]{"В сети","Нет на месте","Не беспокоить","Невидимый"},SelectedIndex=Math.Max(0,Array.IndexOf(codes,profile.Status)),Margin=Ui.Insets(0,Ui.Xs,0,Ui.M)};Ui.Name(status,"Статус профиля");fields.Children.Add(status);
-        fields.Children.Add(Ui.Label("О себе",Ui.Caption,true));about=new TextBox{Text=profile.About,MaxLength=2000,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,MinHeight=Ui.Metric("Height.Multiline"),VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Margin=Ui.Insets(0,Ui.Xs,0,Ui.M)};Ui.Name(about,"О себе");fields.Children.Add(about);
+        RenderImages();var fields=new StackPanel{Margin=Ui.Insets(ProfileLayout.Inset,0,ProfileLayout.Inset,ProfileLayout.Inset)};
+        Button ActionButton(string label,Action action,string style="Button.Ghost")
+        {var button=Buttons.Create(label,action,style:style);button.Margin=ProfileLayout.ActionMargin;return button;}
+        var imageActions=new WrapPanel{Margin=Ui.Insets(0,0,0,Ui.M)};
+        imageActions.Children.Add(ActionButton("Удалить аватар",()=>{draftAvatar=null;avatarCover=0;RenderImages();}));
+        imageActions.Children.Add(ActionButton("Удалить баннер",()=>{draftBanner=null;bannerCover=0;RenderImages();}));fields.Children.Add(imageActions);
+        fields.Children.Add(Ui.Label("Имя пользователя",Ui.Caption,true));name=new TextBox{Text=profile.Username,MaxLength=32};name.SetResourceReference(StyleProperty,"Profile.Field");Ui.Name(name,"Имя пользователя");fields.Children.Add(name);
+        fields.Children.Add(Ui.Label("О себе",Ui.Caption,true));about=new TextBox{Text=profile.About,MaxLength=2000};about.SetResourceReference(StyleProperty,"Profile.About");Ui.Name(about,"О себе");fields.Children.Add(about);
         fields.Children.Add(Ui.Label("PNG, JPEG или GIF · до 4 МБ · до 2048×2048",Ui.Caption,true));
         var actions=new StackPanel{Orientation=Orientation.Horizontal,Margin=Ui.Insets(0,Ui.L,0,0)};
-        var cancel=Buttons.Create("Отмена",()=>{if(saving)return;CleanupImages();feedback.Visibility=Visibility.Collapsed;View();},style:"Button.Ghost");
-        var accept=Buttons.Create("Сохранить",()=>{},style:"Button.Primary");
+        var cancel=ActionButton("Отмена",()=>{if(saving)return;CleanupImages();feedback.Visibility=Visibility.Collapsed;View();});
+        var accept=ActionButton("Сохранить",()=>{},"Button.Primary");
         accept.Click+=async(_,_)=>
         {
             if(saving)return;
             try
             {
                 saving=true;body.IsEnabled=false;Buttons.Label(accept,"Сохранение…","check");ValidateDraft(name.Text,about.Text,draftAvatar,draftBanner);
-                var proposed=profile with{Username=name.Text.Trim(),About=about.Text,Status=codes[status.SelectedIndex],AvatarPath=draftAvatar,BannerPath=draftBanner,AvatarCoverFrame=avatarCover,BannerCoverFrame=bannerCover};
+                var proposed=profile with{Username=name.Text.Trim(),About=about.Text,AvatarPath=draftAvatar,BannerPath=draftBanner,AvatarCoverFrame=avatarCover,BannerCoverFrame=bannerCover};
                 var saved=await save(proposed);profile=saved;avatarPath=saved.AvatarPath;bannerPath=saved.BannerPath;CleanupImages();feedback.Visibility=Visibility.Collapsed;View();Saved?.Invoke(saved);
             }
             catch(Exception error){Error(error);}

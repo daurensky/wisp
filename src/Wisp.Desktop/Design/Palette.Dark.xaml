@@ -38,6 +38,7 @@
   <SolidColorBrush x:Key="Speaking" Color="#23C483" po:Freeze="True"/>
   <SolidColorBrush x:Key="ServerPlaceholderBackground" Color="#087EA4" po:Freeze="True"/>
   <SolidColorBrush x:Key="ServerPlaceholderForeground" Color="#FFFFFF" po:Freeze="True"/>
+  <SolidColorBrush x:Key="HomeArtForeground" Color="#69D6FF" po:Freeze="True"/>
   <SolidColorBrush x:Key="VideoForeground" Color="#FFFFFF" po:Freeze="True"/>
   <SolidColorBrush x:Key="VideoControlSurface" Color="#DD181818" po:Freeze="True"/>
   <SolidColorBrush x:Key="VideoControlHover" Color="#DD303030" po:Freeze="True"/>

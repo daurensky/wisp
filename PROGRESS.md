@@ -1,3 +1,19 @@
+# Wisp — исправления UI/UX (29.10.2026)
+
+Новое [ТЗ пользователя](docs/UI_UX_FIXES_SPECIFICATION.md). Ветка `codex/postgres-backend`, исходный commit **de98934aca2d86867fec6e8bf63d94197d30b84c**, дерево было чистым. Предыдущее ТЗ завершено, повторно не выполняется. Banнер400×140/20:7 заменяет прежние16:9; Onest/Grayscale/голос/SFU/данные сохраняются.
+
+## Текущий этап — аудит завершён, реализация
+
+- Изучены `ModalHost`, `SettingsShell/SettingsView`, `PointerFocus/Motion/Theme`, `ServerRailItem/VirtualRows`, `ProfileView/ImageEditor/ImageEditingService`, `MainWindow` voice/rail/channels/Home. Изменения распределены по независимым компонентам; MainWindow и итоговая интеграция выполняются отдельно.
+- **Подтверждено кодом:** RenderServers очищает список, Loaded сбрасывает pillHeight в0, hover заново создаёт анимацию неизменившейся цели. `PointerFocus.PreviewKeyDown` делает визуальный focus на любом keydown (включая Alt), обработчика деактивации нет. About наследует TextBox.VerticalContentAlignment=Center;16:9 продублировано в3компонентах; statuspicker явно создаётся в edit. Голосовые действия остаются видимыми вне звонка. Gear и mainButton имеют раздельные границы/фон, строки пересоздаются при обновлениях.
+- **Пока не доказана точная причина именно белого кадра:** opacity применяется и к card, и к содержащему его shade, а при смене секции fade используется для page. Это подтверждает просвечивание, но источник белого требует работающей WPFпроверки. Утверждать драйверную/системную причину без доказательств нельзя.
+- Изменены этот журнал и копия ТЗ; компоненты в работе. Новые результаты не выдаются за предыдущие141PASS.
+- **Этап реализации завершён:** общий48px inset и headerseparator/opaque modal lifecycle; key-preserved rail/channelrows; serveravatars40px/radius8; banner400×140/20:7/единые16pxinsets/TopAbout/безstatuseditor; focus-visible/cleanupactivation; voiceactionsCollapsed/UniformGrid; HomeASCII. Изменены `ModalHost`, `Settings*`, `Design/{PointerFocus,Motion,Tokens,VirtualRows,Palette*}`, `ServerRailItem*`, `ChannelRow*`, `ProfileLayout/ProfileView/ImageEditor/ImageEditingService`, `HomeBrandView*`, `MainWindow*` и UItests. Сборка solution **0warnings/errors**,195WPFресурсов/diffcheckPASS. При интеграции исправлен missingSystem.IO в новом тесте.
+- Новые checks выполняют настоящие pointermove/click, native activation/focus/keyboard, counterfactual старого whiteopacity/hovergap, кадры CompositionTarget.Rendering сконтрастной подложкой, обе темы/800×560 иобычныйразмер. Пока только скомпилированы: **WindowsUIисполнение ещё не подтверждено**.
+- **Следующее конкретное действие:** опубликовать checkpoint и выполнить WindowsCI; разобрать реальные ошибки/TRX/ui-evidence/snapshots, исправить обнаруженное, затем проверитьportable и отдельно описать подтверждённые4причины. ProductionVPS не меняется; backendвэтомТЗнепереписывается.
+
+---
+
 # Wisp — комплексная доработка WPF, голоса и демонстрации (29.10.2026)
 
 Новое пользовательское [ТЗ](docs/NATIVE_EXPANSION_SPECIFICATION.md), дополнение к предыдущим требованиям. Исходный commit `4058b21`, ветка `codex/postgres-backend`, исходное дерево было чистым. Шрифт **Onest** сохраняется.

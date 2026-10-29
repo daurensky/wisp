@@ -61,7 +61,7 @@ internal static class DesignRegressionChecks
             Assert.Equal(rail.IsMouseOver ? Ui.Metric("Height.ServerPillHover") : 0, pill.Height);
             Assert.Equal(width, rail.Button.ActualWidth); Assert.Equal(height, rail.Button.ActualHeight);
             var placeholder = Assert.IsType<Border>(rail.Button.Content);
-            Assert.Equal(placeholder.Width / 2, placeholder.CornerRadius.TopLeft);
+            Assert.Equal(Ui.Radius("Radius.ServerAvatar"), placeholder.CornerRadius);
             Assert.Equal("WI", Assert.IsType<TextBlock>(placeholder.Child).Text);
             Assert.Equal((Brush)Application.Current.FindResource("ServerPlaceholderBackground"), placeholder.Background);
 
