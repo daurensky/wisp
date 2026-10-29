@@ -60,7 +60,7 @@ internal static class ChannelRowChecks
                 voiceRow.Update(voice with{Name="Обновлённый канал"},4,false,true,()=>joins++,()=>edits++,()=>chats++);
                 Pump(probe);Assert.Same(oldButton,voiceRow.SettingsButton);Assert.True(voiceRow.SettingsButton.IsMouseOver);
                 Assert.True(voiceRow.SettingsButton.IsVisible);Assert.Equal(stableWidth,voiceRow.MainButton.ActualWidth);
-                int before=edits;Click();Wait(probe,()=>edits==before+1,"gear click opens settings only");Assert.Equal(0,joins);Assert.Equal(0,chats);
+                int before=edits;int chatsBefore=chats;Click();Wait(probe,()=>edits==before+1,"gear click opens settings only");Assert.Equal(0,joins);Assert.Equal(chatsBefore,chats);
 
                 var chrome=Assert.IsType<Border>(textRow.FindName("RowChrome"));
                 Assert.Same(Application.Current.FindResource("Selected"),chrome.Background);

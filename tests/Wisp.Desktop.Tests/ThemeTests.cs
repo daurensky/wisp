@@ -206,11 +206,19 @@ public sealed class ThemeTests
             typeof(MainWindow).GetMethod("SetCommunity",privateFlags)!.Invoke(main,new object[]{community});PumpLayout(main);
             Assert.Equal(288d,Ui.Metric("Width.Channels"));
             phase("Grayscale, chosen GIF cover and popup controls");DesignRegressionChecks.Check(main,root);
-            phase("stable keyed server rail and rounded square artwork");RailStabilityChecks.Check(main,store,profile,community);
-            phase("channel hover path, gear input and contiguous row highlight");ChannelRowChecks.Check(main);
-            phase("focus-visible input modality, window reactivation and popup dismissal");FocusVisibleChecks.Check(main);
-            phase("opaque settings transitions, inset and header");ModalLifecycleChecks.Check(main,profile,name=>SaveSnapshot(main,name));
-            phase("20:7 profile artwork, top aligned bio and preserved status");ProfileLayoutChecks.Check(main,profile,gif);
+            var uiFailures=new List<Exception>();
+            void CheckUi(string name,Action check)
+            {
+                phase(name);
+                try{check();}
+                catch(Exception error){UiCheckEvidence.Write("failed_"+name,error.ToString());uiFailures.Add(new InvalidOperationException(name,error));}
+            }
+            CheckUi("stable keyed server rail and rounded square artwork",()=>RailStabilityChecks.Check(main,store,profile,community));
+            CheckUi("channel hover path, gear input and contiguous row highlight",()=>ChannelRowChecks.Check(main));
+            CheckUi("focus-visible input modality, window reactivation and popup dismissal",()=>FocusVisibleChecks.Check(main));
+            CheckUi("opaque settings transitions, inset and header",()=>ModalLifecycleChecks.Check(main,profile,name=>SaveSnapshot(main,name)));
+            CheckUi("20:7 profile artwork, top aligned bio and preserved status",()=>ProfileLayoutChecks.Check(main,profile,gif));
+            if(uiFailures.Count>0)throw new AggregateException("Native UI regression checks failed",uiFailures);
             phase("server settings roles, stale replies and real sound gain");SettingsIntegrationChecks.Check(main,store,profile,community);
             phase("stream audience, gain and cleanup");StreamIntegrationChecks.Check(main,store,profile,community);
             phase("native image editor save, cover and cancel");CheckImageEditor(main,gif);
